@@ -76,8 +76,8 @@ pub struct Swww {
     pub transition_fps: u32,
     /// 过渡步长（越小越平滑）
     pub transition_step: u8,
-    /// 填充模式: fit, fill, center, stretch
-    pub fill_mode: String,
+    /// 缩放模式: crop, fit, stretch, no
+    pub resize_mode: String,
 }
 
 impl Swww {
@@ -87,7 +87,7 @@ impl Swww {
             transition_duration: 2.0,
             transition_fps: 60,
             transition_step: 20,
-            fill_mode: "fill".to_string(),
+            resize_mode: "crop".to_string(),
         }
     }
 
@@ -150,7 +150,7 @@ impl PaperEngine for Swww {
                 "--transition-duration", &self.transition_duration.to_string(),
                 "--transition-fps", &self.transition_fps.to_string(),
                 "--transition-step", &self.transition_step.to_string(),
-                "--fill", &self.fill_mode,
+                "--resize", &self.resize_mode,
             ])
             .status();
 
