@@ -25,6 +25,20 @@
 
 > 推荐放在 `~/.local/bin` 下
 
+###### 依赖
+
+LianWall 依赖以下壁纸引擎，请确保已安装：
+
+- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** - 动态壁纸引擎，基于 mpv 播放视频壁纸
+- **[swww](https://github.com/LGFae/swww)** - 静态壁纸引擎，支持丰富的过渡动画
+
+```bash
+# Arch Linux
+paru -S mpvpaper swww
+
+# 或手动编译安装
+```
+
 ###### 自行编译
 
 ```bash
