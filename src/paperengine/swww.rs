@@ -99,19 +99,18 @@ impl Swww {
         }
     }
 
-    fn ensure_daemon(&self) -> Result<(), String> {
-        let check = Command::new("pgrep")
+    fn is_daemon_running(&self) -> bool {
+        Command::new("pgrep")
             .arg("-x")
             .arg("swww-daemon")
-            .output();
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
 
-        if let Ok(output) = check {
-            if output.status.success() {
-                return Ok(());
-            }
-        }
-
+    fn start_daemon(&self) -> Result<(), String> {
         let result = Command::new("swww-daemon")
+            .arg("--no-cache")  // 不加载缓存，避免启动时显示旧壁纸
             .spawn();
 
         match result {
@@ -140,8 +139,30 @@ impl PaperEngine for Swww {
     }
 
     fn set_wallpaper(&self, path: &Path) -> Result<(), String> {
-        self.ensure_daemon()?;
+        let daemon_was_running = self.is_daemon_running();
+        
+        if !daemon_was_running {
+            // 首次启动：使用 swww init 直接加载壁纸，避免闪烁
+            self.start_daemon()?;
+            
+            // 首次启动时使用 none 过渡，瞬间显示
+            let result = Command::new("swww")
+                .arg("img")
+                .arg(path)
+                .args([
+                    "--transition-type", "none",
+                    "--resize", &self.resize_mode,
+                ])
+                .status();
+            
+            return match result {
+                Ok(status) if status.success() => Ok(()),
+                Ok(status) => Err(format!("swww 命令失败，退出码: {:?}", status.code())),
+                Err(e) => Err(format!("执行 swww 失败: {}", e)),
+            };
+        }
 
+        // daemon 已运行，正常过渡切换
         let result = Command::new("swww")
             .arg("img")
             .arg(path)

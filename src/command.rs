@@ -35,9 +35,9 @@ pub enum Commands {
     
     /// 显示当前状态和壁纸列表
     Status {
-        /// 指定模式: video 或 picture，默认 video
-        #[arg(short, long, default_value = "video")]
-        mode: String,
+        /// 指定模式: video 或 picture，不指定则显示当前模式
+        #[arg(short, long)]
+        mode: Option<String>,
     },
     
     /// 停止所有壁纸引擎
