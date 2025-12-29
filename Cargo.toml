@@ -13,6 +13,8 @@ dirs = "6.0.0"
 clap = { version = "4.4", features = ["derive"] }
 
 [profile.release]
+opt-level = "z"
 lto = true
+codegen-units = 1
+strip = true
 panic = "abort"
-debug = false
