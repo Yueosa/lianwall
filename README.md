@@ -47,6 +47,7 @@ lianwall daemon              # 启动守护进程（动态壁纸模式，循环�
 lianwall next                # 立即切换到下一张壁纸（根据当前模式）
 lianwall video               # 切换到动态壁纸模式（自动停止 swww）
 lianwall picture             # 切换到静态壁纸模式（自动停止 mpvpaper）
+lianwall kill                # 停止所有壁纸引擎（mpvpaper + swww）
 lianwall reset -m <mode>     # 热重载指定模式的壁纸目录
 lianwall status -m <mode>    # 显示指定模式的状态和壁纸列表
 ```
@@ -60,6 +61,7 @@ exec-once = lianwall daemon
 # 快捷键
 bind = SUPER ALT, W, exec, lianwall next # 下一张壁纸
 bind = SUPER ALT, E, exec, lianwall video # 视频模式
+bind = SUPER ALT, Q, exec, lianwall kill # 停止壁纸
 bind = SUPER ALT, R, exec, lianwall picture # 图片模式
 ```
 

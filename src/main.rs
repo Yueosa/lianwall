@@ -95,6 +95,23 @@ fn main() {
             println!("{}", manager.status());
             println!("{}", manager.list_wallpapers());
         }
+
+        Commands::Kill => {
+            // 停止 mpvpaper
+            let mpv_result = std::process::Command::new("pkill")
+                .arg("mpvpaper")
+                .status();
+            
+            // 停止 swww
+            let swww_result = std::process::Command::new("swww")
+                .arg("kill")
+                .status();
+            
+            match (mpv_result, swww_result) {
+                (Ok(_), Ok(_)) => println!("✅ 已停止所有壁纸引擎"),
+                _ => println!("⚠️  尝试停止壁纸引擎（部分可能未运行）"),
+            }
+        }
     }
 }
 

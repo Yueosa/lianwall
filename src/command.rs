@@ -39,6 +39,9 @@ pub enum Commands {
         #[arg(short, long, default_value = "video")]
         mode: String,
     },
+    
+    /// 停止所有壁纸引擎
+    Kill,
 }
 
 impl Cli {
