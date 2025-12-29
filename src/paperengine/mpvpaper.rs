@@ -6,7 +6,6 @@ use std::process::Command;
 
 /// mpvpaper 动态壁纸引擎
 pub struct MpvPaper {
-    /// mpvpaper 的额外参数
     pub options: String,
 }
 
@@ -23,7 +22,6 @@ impl MpvPaper {
         }
     }
 
-    /// 支持的视频格式
     pub fn supported_extensions() -> &'static [&'static str] {
         &["mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "gif"]
     }
@@ -41,10 +39,8 @@ impl PaperEngine for MpvPaper {
     }
 
     fn set_wallpaper(&self, path: &Path) -> Result<(), String> {
-        // 先停止现有的 mpvpaper
         self.stop()?;
 
-        // 启动新的 mpvpaper
         let result = Command::new("mpvpaper")
             .args(["-o", &self.options, "*"])
             .arg(path)
@@ -62,7 +58,7 @@ impl PaperEngine for MpvPaper {
             .status();
 
         match result {
-            Ok(_) => Ok(()), // pkill 返回非零也没关系，可能没有进程在运行
+            Ok(_) => Ok(()),
             Err(e) => Err(format!("停止 mpvpaper 失败: {}", e)),
         }
     }

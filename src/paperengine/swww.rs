@@ -67,7 +67,6 @@ impl TransitionType {
 }
 
 /// swww 静态壁纸引擎
-/// 支持 jpg, jpeg, png, gif, pnm, tga, tiff, webp, bmp, farbfeld
 pub struct Swww {
     /// 过渡效果类型
     pub transition_type: TransitionType,
@@ -100,9 +99,7 @@ impl Swww {
         }
     }
 
-    /// 确保 swww-daemon 正在运行
     fn ensure_daemon(&self) -> Result<(), String> {
-        // 检查 daemon 是否已运行
         let check = Command::new("pgrep")
             .arg("-x")
             .arg("swww-daemon")
@@ -110,17 +107,15 @@ impl Swww {
 
         if let Ok(output) = check {
             if output.status.success() {
-                return Ok(()); // daemon 已在运行
+                return Ok(());
             }
         }
 
-        // 启动 daemon
         let result = Command::new("swww-daemon")
             .spawn();
 
         match result {
             Ok(_) => {
-                // 等待 daemon 启动
                 thread::sleep(Duration::from_millis(500));
                 Ok(())
             }
@@ -128,7 +123,6 @@ impl Swww {
         }
     }
 
-    /// 支持的图片格式
     pub fn supported_extensions() -> &'static [&'static str] {
         &["jpg", "jpeg", "png", "gif", "pnm", "tga", "tiff", "tif", "webp", "bmp", "ff"]
     }
@@ -146,10 +140,8 @@ impl PaperEngine for Swww {
     }
 
     fn set_wallpaper(&self, path: &Path) -> Result<(), String> {
-        // 确保 daemon 运行
         self.ensure_daemon()?;
 
-        // 设置壁纸
         let result = Command::new("swww")
             .arg("img")
             .arg(path)

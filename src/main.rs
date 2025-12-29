@@ -26,6 +26,7 @@ fn main() {
         Commands::Daemon => {
             let mut manager = WallManager::new(config.clone(), WallpaperMode::Video);
             let interval = config.interval(WallpaperMode::Video);
+            Config::save_current_mode(WallpaperMode::Video);
             
             println!("🎬 LianWall 守护进程启动 (动态壁纸模式)");
             println!("引擎: {}", manager.engine.name());
@@ -43,15 +44,25 @@ fn main() {
         }
 
         Commands::Next => {
-            let mut manager = WallManager::new(config, WallpaperMode::Video);
+            let current_mode = Config::load_current_mode();
+            let mut manager = WallManager::new(config, current_mode);
+            let mode_desc = match current_mode {
+                WallpaperMode::Video => "动态壁纸",
+                WallpaperMode::Image => "静态壁纸",
+            };
             match manager.next() {
-                Ok(_) => println!("✅ 动态壁纸切换成功"),
+                Ok(_) => println!("✅ {}切换成功", mode_desc),
                 Err(e) => eprintln!("❌ 切换失败: {}", e),
             }
         }
 
         Commands::Video => {
-            let mut manager = WallManager::new(config, WallpaperMode::Video);
+            let _ = std::process::Command::new("swww")
+                .arg("kill")
+                .status();
+            
+            let mut manager = WallManager::new(config.clone(), WallpaperMode::Video);
+            Config::save_current_mode(WallpaperMode::Video);
             match manager.next() {
                 Ok(_) => println!("🎬 切换到动态壁纸模式"),
                 Err(e) => eprintln!("❌ 切换失败: {}", e),
@@ -59,12 +70,12 @@ fn main() {
         }
 
         Commands::Picture => {
-            let mut manager = WallManager::new(config, WallpaperMode::Image);
-            // 先停止 mpvpaper
             let _ = std::process::Command::new("pkill")
                 .arg("mpvpaper")
                 .status();
             
+            let mut manager = WallManager::new(config.clone(), WallpaperMode::Image);
+            Config::save_current_mode(WallpaperMode::Image);
             match manager.next() {
                 Ok(_) => println!("🖼️ 切换到静态壁纸模式"),
                 Err(e) => eprintln!("❌ 切换失败: {}", e),

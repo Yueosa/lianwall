@@ -51,10 +51,8 @@ impl WallManager {
         let scan_dir = self.config.wallpaper_dir(self.mode);
         let engine_type = self.config.engine_type(self.mode);
 
-        // 获取引擎支持的文件扩展名
         let extensions = supported_extensions(engine_type);
 
-        // 读取现有缓存
         let cached: Vec<Wallpaper> = if cache_path.exists() {
             let content = fs::read_to_string(&cache_path).unwrap_or_default();
             serde_json::from_str(&content).unwrap_or_default()
@@ -62,13 +60,11 @@ impl WallManager {
             Vec::new()
         };
 
-        // 创建路径到壁纸的映射
         let cached_map: std::collections::HashMap<PathBuf, Wallpaper> = cached
             .into_iter()
             .map(|w| (w.path.clone(), w))
             .collect();
 
-        // 扫描目录中所有支持的文件
         let mut scanned_files: Vec<(PathBuf, SystemTime)> = Vec::new();
         
         for entry in WalkDir::new(&scan_dir)
@@ -102,7 +98,6 @@ impl WallManager {
             return;
         }
 
-        // 计算文件年龄比例（用于初始权重）
         let (oldest, newest) = scanned_files.iter().fold(
             (SystemTime::UNIX_EPOCH, SystemTime::now()),
             |(oldest, newest), (_, mtime)| {
@@ -119,7 +114,6 @@ impl WallManager {
             .unwrap_or(1.0)
             .max(1.0);
 
-        // 计算现有壁纸的平均权重（用于新文件）
         let avg_value = if cached_map.is_empty() {
             self.weight_calc.base_weight()
         } else {
@@ -127,22 +121,18 @@ impl WallManager {
             sum / cached_map.len() as f64
         };
 
-        // 合并壁纸列表
         self.wallpapers = scanned_files
             .into_iter()
             .map(|(path, mtime)| {
                 if let Some(cached_wallpaper) = cached_map.get(&path) {
-                    // 保留旧权重
                     cached_wallpaper.clone()
                 } else {
-                    // 新文件：根据修改时间计算初始权重，或使用平均值
                     let file_age = newest
                         .duration_since(mtime)
                         .map(|d| d.as_secs_f64())
                         .unwrap_or(0.0);
                     let age_ratio = file_age / time_range;
 
-                    // 新发现文件使用平均值和时间戳混合
                     let time_based_weight = self.weight_calc.calculate_initial_weight(age_ratio);
                     let initial_value = (avg_value + time_based_weight) / 2.0;
 
@@ -165,17 +155,14 @@ impl WallManager {
             return None;
         }
 
-        // 使用二分选择算法，tolerance 设为 5.0
         let idx = WallpaperSelector::select(&mut self.wallpapers, 5.0)?;
         Some(self.wallpapers[idx].clone())
     }
 
     /// 设置壁纸并更新权重
     pub fn set_wallpaper(&mut self, wallpaper: &Wallpaper) -> Result<(), String> {
-        // 调用引擎设置壁纸
         self.engine.set_wallpaper(&wallpaper.path)?;
 
-        // 更新权重
         self.update_weights(&wallpaper.path);
 
         Ok(())
@@ -264,7 +251,6 @@ impl WallManager {
     fn save(&self) {
         let cache_path = self.config.cache_path(self.mode);
 
-        // 确保目录存在
         if let Some(parent) = cache_path.parent() {
             fs::create_dir_all(parent).ok();
         }
@@ -272,10 +258,5 @@ impl WallManager {
         let content = serde_json::to_string_pretty(&self.wallpapers)
             .expect("序列化失败");
         fs::write(&cache_path, content).expect("无法写入缓存文件");
-    }
-
-    /// 获取当前模式
-    pub fn get_mode(&self) -> WallpaperMode {
-        self.mode
     }
 }

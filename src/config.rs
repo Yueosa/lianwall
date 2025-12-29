@@ -59,13 +59,15 @@ pub struct Config {
     pub video_engine: VideoEngineConfig,
     pub image_engine: ImageEngineConfig,
     pub weight: WeightConfig,
+    #[serde(skip)]
+    pub current_mode: Option<String>,
 }
 
 /// 壁纸模式
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WallpaperMode {
-    Video,  // 动态壁纸
-    Image,  // 静态壁纸
+    Video,
+    Image,
 }
 
 impl Default for Config {
@@ -92,19 +94,18 @@ impl Default for Config {
                 select_penalty: 10.0,
                 skip_reward_max: 5.0,
             },
+            current_mode: None,
         }
     }
 }
 
 impl Config {
-    /// 获取配置文件路径
     pub fn config_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("~/.config"))
             .join("lianwall/config.toml")
     }
 
-    /// 加载配置文件，如果不存在则创建默认配置
     pub fn load() -> Self {
         let config_path = Self::config_path();
         
@@ -120,11 +121,9 @@ impl Config {
         }
     }
 
-    /// 保存配置到文件
     pub fn save(&self) {
         let config_path = Self::config_path();
         
-        // 确保目录存在
         if let Some(parent) = config_path.parent() {
             fs::create_dir_all(parent).ok();
         }
@@ -135,7 +134,6 @@ impl Config {
             .expect("无法写入配置文件");
     }
 
-    /// 展开路径中的 ~ 为实际 home 目录
     pub fn expand_path(path: &str) -> PathBuf {
         if path.starts_with("~/") {
             dirs::home_dir()
@@ -186,5 +184,38 @@ impl Config {
     /// 获取展开后的图片目录路径（兼容旧代码）
     pub fn image_path(&self) -> Option<PathBuf> {
         Some(Self::expand_path(&self.paths.image_dir))
+    }
+
+    /// 获取当前模式状态文件路径
+    pub fn mode_state_path() -> PathBuf {
+        dirs::cache_dir()
+            .unwrap_or_else(|| PathBuf::from("~/.cache"))
+            .join("lianwall/current_mode")
+    }
+
+    /// 保存当前模式
+    pub fn save_current_mode(mode: WallpaperMode) {
+        let path = Self::mode_state_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).ok();
+        }
+        let mode_str = match mode {
+            WallpaperMode::Video => "video",
+            WallpaperMode::Image => "image",
+        };
+        fs::write(&path, mode_str).ok();
+    }
+
+    /// 读取当前模式
+    pub fn load_current_mode() -> WallpaperMode {
+        let path = Self::mode_state_path();
+        if let Ok(content) = fs::read_to_string(&path) {
+            match content.trim() {
+                "image" => WallpaperMode::Image,
+                _ => WallpaperMode::Video,
+            }
+        } else {
+            WallpaperMode::Video
+        }
     }
 }
