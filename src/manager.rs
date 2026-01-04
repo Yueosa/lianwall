@@ -7,7 +7,6 @@ use walkdir::WalkDir;
 use crate::algorithm::{WallpaperSelector, WeightCalculator};
 use crate::config::{Config, WallpaperMode};
 use crate::paperengine::{PaperEngine, create_engine, supported_extensions};
-use crate::transcode::{PreloadQueue, TranscodeConfig, get_or_transcode_video};
 
 /// 壁纸数据结构
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -25,8 +24,6 @@ pub struct WallManager {
     pub wallpapers: Vec<Wallpaper>,
     pub engine: Box<dyn PaperEngine>,
     weight_calc: WeightCalculator,
-    transcode_config: Option<TranscodeConfig>,
-    preload_queue: Option<PreloadQueue>,
 }
 
 impl WallManager {
@@ -34,17 +31,8 @@ impl WallManager {
     pub fn new(config: Config, mode: WallpaperMode) -> Self {
         let engine_type = config.engine_type(mode);
         let engine = create_engine(engine_type);
-        let weight_calc = WeightCalculator::new(config.weight.clone());
 
-        // 仅在动态壁纸模式且启用优化时，初始化转码配置
-        let (transcode_config, preload_queue) =
-            if mode == WallpaperMode::Video && config.video_optimization.enabled {
-                let tc = TranscodeConfig::from_video_optimization(&config.video_optimization);
-                let pq = PreloadQueue::new(config.video_optimization.preload_count);
-                (Some(tc), Some(pq))
-            } else {
-                (None, None)
-            };
+        let weight_calc = WeightCalculator::new(config.weight.clone());
 
         let mut manager = Self {
             config,
@@ -52,8 +40,6 @@ impl WallManager {
             wallpapers: Vec::new(),
             engine,
             weight_calc,
-            transcode_config,
-            preload_queue,
         };
 
         manager.load_and_scan();
@@ -172,42 +158,9 @@ impl WallManager {
 
         let perturbation_ratio = self.config.weight.perturbation_ratio;
         let idx = WallpaperSelector::select(&mut self.wallpapers, 5.0, perturbation_ratio)?;
-        let mut selected = self.wallpapers[idx].clone();
-
-        // 如果是视频模式且启用了转码优化，则检查/转码视频
-        if self.mode == WallpaperMode::Video {
-            if let Some(ref tc) = self.transcode_config {
-                match get_or_transcode_video(&selected.path, tc) {
-                    Ok(transcoded_path) => {
-                        // 使用转码后的路径
-                        selected.path = transcoded_path;
-                    }
-                    Err(e) => {
-                        eprintln!("转码失败 {}: {}", selected.path.display(), e);
-                        // 转码失败时使用原文件
-                    }
-                }
-
-                // 启动预加载：预测接下来可能播放的视频
-                let next_n = self.predict_next_n(tc.preload_count);
-                if let Some(ref mut pq) = self.preload_queue {
-                    pq.enqueue_batch(next_n, tc);
-                }
-            }
-        }
+        let selected = self.wallpapers[idx].clone();
 
         Some(selected)
-    }
-
-    /// 预测接下来最可能播放的 N 个壁纸
-    fn predict_next_n(&self, n: usize) -> Vec<PathBuf> {
-        let mut sorted = self.wallpapers.clone();
-        sorted.sort_by(|a, b| {
-            b.value
-                .partial_cmp(&a.value)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        sorted.iter().take(n).map(|w| w.path.clone()).collect()
     }
 
     /// 设置壁纸并更新权重

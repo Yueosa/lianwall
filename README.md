@@ -11,8 +11,6 @@
 > - 支持 **动态壁纸**（视频）和 **静态壁纸**（图片）两种模式
 > - 权重数据持久化，重启后继续接着之前的状态轮换
 > - 适配 Hyprland，使用 mpvpaper 和 swww 作为底层引擎
-> 
-> **最佳使用场景：** 5～30 个壁纸时算法最稳定（更多壁纸支持开发中）
 
 ## ✨ 特性
 
@@ -75,7 +73,6 @@ exec-once = lianwall daemon
 # 快捷键
 bind = SUPER ALT, W, exec, lianwall next # 下一张壁纸
 bind = SUPER ALT, E, exec, lianwall video # 视频模式
-bind = SUPER ALT, Q, exec, lianwall kill # 停止壁纸
 bind = SUPER ALT, R, exec, lianwall picture # 图片模式
 ```
 
@@ -93,8 +90,8 @@ video_dir = "~/Videos/background"             # 动态壁纸目录
 image_dir = "~/Pictures/wallpapers"           # 静态壁纸目录
 
 [video_engine]
-type = "mpvpaper"    # 动态壁纸引擎
-interval = 600       # 切换间隔（秒），默认 10 分钟
+type = "mpvpaper"          # 动态壁纸引擎
+interval = 600             # 切换间隔（秒），默认 10 分钟
 
 [image_engine]
 type = "swww"                  # 静态壁纸引擎
@@ -111,70 +108,12 @@ normalization_target = 100.0       # 归一化目标值
 shuffle_period = 100               # 洗牌周期（轮数）
 shuffle_intensity = 0.1            # 洗牌强度（10%）
 
-[video_optimization]
-enabled = true                              # 启用自动视频转码优化
-cache_dir = "~/.cache/lianwall/transcoded"  # 转码缓存目录
-max_cache_size_mb = 10240                   # 缓存大小限制（MB）
-target_resolution = "auto"                  # 目标分辨率（auto/2560/1920等）
-target_fps = 30                             # 目标帧率
-preload_count = 3                           # 预加载队列大小
-encoder = "auto"                            # 编码器（auto/nvenc/vaapi/libx264）
-crf = 23                                    # 编码质量（18-51）
-preset = "fast"                             # 编码速度预设
+[vram]
+enabled = true           # 启用显存监控
+threshold_percent = 25   # 显存剩余低于 25% 时切换到静态壁纸
+recovery_percent = 40    # 显存剩余高于 40% 时恢复动态壁纸
+check_interval = 10      # 检测间隔（秒）
 ```
-
-### 核心配置说明
-
-#### 路径配置 `[paths]`
-- **video_cache / image_cache**：权重数据持久化文件，支持重启后继续记忆
-- **video_dir / image_dir**：壁纸文件目录，支持递归扫描子目录
-
-#### 引擎配置 `[video_engine]` / `[image_engine]`
-- **interval**：自动切换间隔，建议视频 10 分钟，图片 5 分钟
-- **transition**（仅图片）：支持 fade、left、right、wave、random 等多种过渡效果
-
-#### 权重算法配置 `[weight]`（高级用户）
-
-| 参数                      | 默认值 | 说明                | 调整建议             |
-| ------------------------- | ------ | ------------------- | -------------------- |
-| `base`                    | 100.0  | 基础权重基准值      | ⚠️ 不建议修改         |
-| `select_penalty`          | 10.0   | 选中后的权重惩罚    | 增大 → 冷却期更长    |
-| `perturbation_ratio`      | 0.03   | 动态扰动强度（±3%） | 增大 → 随机性增强    |
-| `normalization_threshold` | 500.0  | 触发权重缩放的阈值  | 防止数值溢出         |
-| `normalization_target`    | 100.0  | 归一化后的目标权重  | 与 base 保持一致     |
-| `shuffle_period`          | 100    | 洗牌周期（每 N 轮） | 0 = 禁用，100 = 推荐 |
-| `shuffle_intensity`       | 0.1    | 每次洗牌重置的比例  | 0.05-0.20 合理范围   |
-
-**实战调优示例：**
-- **壁纸多（30+）**：增大 `perturbation_ratio` 到 0.05，增强随机性
-- **偏好固定循环**：减小 `perturbation_ratio` 到 0.01，降低 `shuffle_period` 到 200
-- **追求极致随机**：增大 `shuffle_intensity` 到 0.2，缩短 `shuffle_period` 到 50
-
-#### 视频转码优化配置 `[video_optimization]`（新功能）
-
-| 参数                | 默认值                       | 说明                 | 调整建议                            |
-| ------------------- | ---------------------------- | -------------------- | ----------------------------------- |
-| `enabled`           | true                         | 是否启用自动转码     | false = 禁用优化                    |
-| `cache_dir`         | ~/.cache/lianwall/transcoded | 转码文件缓存目录     | 建议使用 SSD 路径                   |
-| `max_cache_size_mb` | 10240                        | 缓存大小限制（MB）   | 根据磁盘空间调整                    |
-| `target_resolution` | "auto"                       | 目标分辨率           | auto/1920/2560/3840 或 "宽x高"      |
-| `target_fps`        | 30                           | 目标帧率             | 24/30/60，越低文件越小              |
-| `preload_count`     | 3                            | 后台预转码队列大小   | 增大 → 等待时间 ↓，CPU/IO 占用 ↑    |
-| `encoder`           | "auto"                       | 视频编码器           | auto/nvenc/vaapi/libx264            |
-| `crf`               | 23                           | 恒定质量因子（0-51） | 18-20=高质量，28-30=中等质量        |
-| `preset`            | "fast"                       | 编码速度预设         | ultrafast/fast/medium/slow/veryslow |
-
-**性能优化效果：**
-- **4K 视频 → 2.5K 屏幕**：VRAM 占用从 1.3GB 降至 ~300MB（减少 77%）
-- **转码策略**：仅当原始分辨率高于屏幕时才转码，避免画质损失
-- **缓存清理**：优先删除最近使用的文件（配合零和博弈算法，冷门文件权重回升）
-- **硬件加速**：自动检测 NVIDIA（nvenc）、Intel/AMD（vaapi）GPU 加速
-
-**使用场景：**
-- ✅ **4K/8K 原片在低分辨率屏幕播放**：显著降低 VRAM 和解码负载
-- ✅ **高帧率视频（60fps+）降帧**：减少 GPU 占用
-- ✅ **多显示器环境**：自动适配最小分辨率
-- ❌ **原始分辨率 ≤ 屏幕分辨率**：自动跳过转码，直接使用原文件
 
 ---
 
@@ -503,17 +442,6 @@ $$
 | **破循环能力** | 天然随机    | 部分       | ❌ 易锁定                      | ✅ **周期洗牌**                  |
 | **持久化成本** | -           | 需存概率   | JSON 文件                     | JSON 文件                       |
 
-├── algorithm/          # 算法模块
-│   ├── mod.rs
-│   ├── weight.rs       # 权重计算（零和博弈）
-│   └── selector.rs     # 动态扰动选择
-└── transcode/          # 视频转码优化（NEW）
-    ├── mod.rs          # 模块入口
-    ├── config.rs       # 转码配置
-    ├── detector.rs     # 硬件检测（分辨率/编码器）
-    ├── cache.rs        # 缓存管理
-    ├── encoder.rs      # FFmpeg 转码
-    └── preloader.rs    # 预加载队列
 - **时间复杂度**：$O(N \log N)$（排序主导）
 - **空间复杂度**：$O(N)$（权重数组）
 - **I/O 复杂度**：每次切换 1 次写入（JSON 序列化）
@@ -528,18 +456,19 @@ $$
 
 ```
 src/
-├── main.rs             # 总入口，命令分发
+├── main.rs             # 入口，命令分发，守护进程逻辑
 ├── config.rs           # 配置文件解析
 ├── manager.rs          # WallManager 核心逻辑
 ├── command.rs          # 命令行解析 (clap)
+├── vram.rs             # 显存监控（NVIDIA/AMD）
 ├── paperengine/        # 壁纸引擎
 │   ├── mod.rs          # PaperEngine trait
 │   ├── mpvpaper.rs     # 动态壁纸 (视频)
 │   └── swww.rs         # 静态壁纸 (图片)
 └── algorithm/          # 算法模块
     ├── mod.rs
-    ├── weight.rs       # 权重计算
-    └── selector.rs     # 二分选择
+    ├── weight.rs       # 零和博弈权重计算
+    └── selector.rs     # 动态扰动选择
 ```
 
 ## 📜 License

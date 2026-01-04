@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 
-use crate::transcode::config::VideoOptimizationConfig;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -82,6 +81,50 @@ fn default_shuffle_intensity() -> f64 {
     0.1
 }
 
+/// 显存监控配置
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct VramConfig {
+    /// 是否启用显存监控
+    #[serde(default = "default_vram_enabled")]
+    pub enabled: bool,
+    /// 显存剩余百分比阈值（低于此值切换到静态壁纸）
+    #[serde(default = "default_threshold_percent")]
+    pub threshold_percent: f32,
+    /// 恢复阈值（高于此值恢复动态壁纸）
+    #[serde(default = "default_recovery_percent")]
+    pub recovery_percent: f32,
+    /// 检测间隔（秒）
+    #[serde(default = "default_check_interval")]
+    pub check_interval: u64,
+}
+
+fn default_vram_enabled() -> bool {
+    true
+}
+
+fn default_threshold_percent() -> f32 {
+    25.0
+}
+
+fn default_recovery_percent() -> f32 {
+    40.0
+}
+
+fn default_check_interval() -> u64 {
+    10
+}
+
+impl Default for VramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_vram_enabled(),
+            threshold_percent: default_threshold_percent(),
+            recovery_percent: default_recovery_percent(),
+            check_interval: default_check_interval(),
+        }
+    }
+}
+
 /// 总配置结构
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Config {
@@ -90,7 +133,7 @@ pub struct Config {
     pub image_engine: ImageEngineConfig,
     pub weight: WeightConfig,
     #[serde(default)]
-    pub video_optimization: VideoOptimizationConfig,
+    pub vram: VramConfig,
     #[serde(skip)]
     pub current_mode: Option<String>,
 }
@@ -130,7 +173,7 @@ impl Default for Config {
                 shuffle_period: 100,
                 shuffle_intensity: 0.1,
             },
-            video_optimization: VideoOptimizationConfig::default(),
+            vram: VramConfig::default(),
             current_mode: None,
         }
     }
@@ -273,70 +316,37 @@ shuffle_period = {}
 shuffle_intensity = {}
 
 # ================================================
-# === 视频转码优化配置 ===
+# === 显存监控配置 ===
 # ================================================
-[video_optimization]
-
-# 启用自动视频转码
-#     当视频分辨率超过屏幕分辨率时，自动转码为合适的尺寸
-#     可减少 mpvpaper 的显存占用（4K 视频可从 1.3GB 降至 300MB+）
+# 当显存不足时自动切换到静态壁纸模式，释放显存给其他应用
+# 当前仅强支持 NVIDIA 显卡，AMD 显卡基本支持
+[vram]
+# 是否启用显存监控
+#     启用后，LianWall 会定期检测显存使用情况
+#     当显存紧张时自动切换到静态壁纸模式
 #     默认启用
 enabled = {}
 
-# 转码缓存目录
-#     存放转码后的视频文件
-#     建议使用 SSD 路径以加快加载速度
-cache_dir = "{}"
+# 显存剩余阈值（百分比）
+#     当显存剩余低于此百分比时，触发切换到静态壁纸
+#     例如：25 表示当显存剩余 < 25% 时切换
+#     8GB 显卡：25% = 2GB 剩余时触发
+#     默认 25
+threshold_percent = {}
 
-# 缓存大小限制（MB）
-#     当缓存总大小超过此值时，自动清理最近使用过的文件
-#     注意：删除"最近使用"而非"最久未使用"，因为零和博弈算法会让冷门文件权重回升
-#     默认 10240 MB（10 GB）
-max_cache_size_mb = {}
+# 恢复阈值（百分比）
+#     当显存剩余高于此百分比时，恢复动态壁纸
+#     设置高于 threshold_percent 可防止频繁切换（回滞机制）
+#     例如：40 表示当显存剩余 > 40% 时恢复
+#     默认 40
+recovery_percent = {}
 
-# 目标分辨率
-#     转码后的视频宽度（像素）
-#     默认 "auto" 表示自动检测屏幕最小分辨率
-#     也可手动指定，如 "2560" 或 "1920"
-target_resolution = "{}"
-
-# 目标帧率（FPS）
-#     转码后的视频帧率
-#     可选值：24, 30, 60, 120, 144, 165, 180, 240
-#     较低的帧率可显著减少文件大小和显存占用
-#     默认 30
-target_fps = {}
-
-# 预加载队列大小
-#     在后台提前转码接下来的 N 个视频
-#     增大此值可减少等待时间，但会占用更多 CPU 和磁盘 I/O
-#     默认 3
-preload_count = {}
-
-# 编码器
-#     视频编码器类型
-#     "auto"：自动检测（优先级：nvenc > vaapi > libx264）
-#     "nvenc"：NVIDIA GPU 硬件加速（需要 NVIDIA 显卡）
-#     "vaapi"：Intel/AMD GPU 硬件加速（Linux）
-#     "libx264"：CPU 软编码（速度慢但兼容性最好）
-#     默认 "auto"
-encoder = "{}"
-
-# 编码质量（CRF）
-#     恒定质量因子，范围 0-51，数值越小质量越高
-#     推荐值：
-#       - 18-20：接近无损（文件较大）
-#       - 23-25：高质量（推荐）
-#       - 28-30：中等质量（显著减小文件）
-#     默认 23
-crf = {}
-
-# 编码速度预设
-#     可选值：ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow
-#     faster 预设 → 转码速度更快，压缩率略低
-#     slower 预设 → 转码速度慢，压缩率更高
-#     默认 "fast"
-preset = "{}"
+# 检测间隔（秒）
+#     每隔多少秒检测一次显存使用情况
+#     间隔越短响应越快，但 CPU 开销略增
+#     建议范围：5-30 秒
+#     默认 10
+check_interval = {}
 "#,
             self.paths.video_cache,
             self.paths.image_cache,
@@ -355,15 +365,10 @@ preset = "{}"
             self.weight.normalization_target,
             self.weight.shuffle_period,
             self.weight.shuffle_intensity,
-            self.video_optimization.enabled,
-            self.video_optimization.cache_dir,
-            self.video_optimization.max_cache_size_mb,
-            self.video_optimization.target_resolution,
-            self.video_optimization.target_fps,
-            self.video_optimization.preload_count,
-            self.video_optimization.encoder,
-            self.video_optimization.crf,
-            self.video_optimization.preset,
+            self.vram.enabled,
+            self.vram.threshold_percent,
+            self.vram.recovery_percent,
+            self.vram.check_interval,
         )
     }
 

@@ -9,13 +9,13 @@ use std::path::Path;
 pub trait PaperEngine {
     /// 引擎名称
     fn name(&self) -> &'static str;
-    
+
     /// 设置壁纸
     fn set_wallpaper(&self, path: &Path) -> Result<(), String>;
-    
+
     /// 停止当前壁纸
     fn stop(&self) -> Result<(), String>;
-    
+
     /// 检查引擎是否可用
     fn is_available(&self) -> bool;
 }

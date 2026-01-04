@@ -23,7 +23,9 @@ impl MpvPaper {
     }
 
     pub fn supported_extensions() -> &'static [&'static str] {
-        &["mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "gif"]
+        &[
+            "mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "gif",
+        ]
     }
 }
 
@@ -53,9 +55,7 @@ impl PaperEngine for MpvPaper {
     }
 
     fn stop(&self) -> Result<(), String> {
-        let result = Command::new("pkill")
-            .arg("mpvpaper")
-            .status();
+        let result = Command::new("pkill").arg("mpvpaper").status();
 
         match result {
             Ok(_) => Ok(()),
