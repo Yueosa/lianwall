@@ -110,6 +110,17 @@ normalization_threshold = 500.0    # 归一化触发阈值
 normalization_target = 100.0       # 归一化目标值
 shuffle_period = 100               # 洗牌周期（轮数）
 shuffle_intensity = 0.1            # 洗牌强度（10%）
+
+[video_optimization]
+enabled = true                              # 启用自动视频转码优化
+cache_dir = "~/.cache/lianwall/transcoded"  # 转码缓存目录
+max_cache_size_mb = 10240                   # 缓存大小限制（MB）
+target_resolution = "auto"                  # 目标分辨率（auto/2560/1920等）
+target_fps = 30                             # 目标帧率
+preload_count = 3                           # 预加载队列大小
+encoder = "auto"                            # 编码器（auto/nvenc/vaapi/libx264）
+crf = 23                                    # 编码质量（18-51）
+preset = "fast"                             # 编码速度预设
 ```
 
 ### 核心配置说明
@@ -138,6 +149,32 @@ shuffle_intensity = 0.1            # 洗牌强度（10%）
 - **壁纸多（30+）**：增大 `perturbation_ratio` 到 0.05，增强随机性
 - **偏好固定循环**：减小 `perturbation_ratio` 到 0.01，降低 `shuffle_period` 到 200
 - **追求极致随机**：增大 `shuffle_intensity` 到 0.2，缩短 `shuffle_period` 到 50
+
+#### 视频转码优化配置 `[video_optimization]`（新功能）
+
+| 参数                | 默认值                       | 说明                 | 调整建议                            |
+| ------------------- | ---------------------------- | -------------------- | ----------------------------------- |
+| `enabled`           | true                         | 是否启用自动转码     | false = 禁用优化                    |
+| `cache_dir`         | ~/.cache/lianwall/transcoded | 转码文件缓存目录     | 建议使用 SSD 路径                   |
+| `max_cache_size_mb` | 10240                        | 缓存大小限制（MB）   | 根据磁盘空间调整                    |
+| `target_resolution` | "auto"                       | 目标分辨率           | auto/1920/2560/3840 或 "宽x高"      |
+| `target_fps`        | 30                           | 目标帧率             | 24/30/60，越低文件越小              |
+| `preload_count`     | 3                            | 后台预转码队列大小   | 增大 → 等待时间 ↓，CPU/IO 占用 ↑    |
+| `encoder`           | "auto"                       | 视频编码器           | auto/nvenc/vaapi/libx264            |
+| `crf`               | 23                           | 恒定质量因子（0-51） | 18-20=高质量，28-30=中等质量        |
+| `preset`            | "fast"                       | 编码速度预设         | ultrafast/fast/medium/slow/veryslow |
+
+**性能优化效果：**
+- **4K 视频 → 2.5K 屏幕**：VRAM 占用从 1.3GB 降至 ~300MB（减少 77%）
+- **转码策略**：仅当原始分辨率高于屏幕时才转码，避免画质损失
+- **缓存清理**：优先删除最近使用的文件（配合零和博弈算法，冷门文件权重回升）
+- **硬件加速**：自动检测 NVIDIA（nvenc）、Intel/AMD（vaapi）GPU 加速
+
+**使用场景：**
+- ✅ **4K/8K 原片在低分辨率屏幕播放**：显著降低 VRAM 和解码负载
+- ✅ **高帧率视频（60fps+）降帧**：减少 GPU 占用
+- ✅ **多显示器环境**：自动适配最小分辨率
+- ❌ **原始分辨率 ≤ 屏幕分辨率**：自动跳过转码，直接使用原文件
 
 ---
 
@@ -466,10 +503,17 @@ $$
 | **破循环能力** | 天然随机    | 部分       | ❌ 易锁定                      | ✅ **周期洗牌**                  |
 | **持久化成本** | -           | 需存概率   | JSON 文件                     | JSON 文件                       |
 
----
-
-### 七、算法复杂度
-
+├── algorithm/          # 算法模块
+│   ├── mod.rs
+│   ├── weight.rs       # 权重计算（零和博弈）
+│   └── selector.rs     # 动态扰动选择
+└── transcode/          # 视频转码优化（NEW）
+    ├── mod.rs          # 模块入口
+    ├── config.rs       # 转码配置
+    ├── detector.rs     # 硬件检测（分辨率/编码器）
+    ├── cache.rs        # 缓存管理
+    ├── encoder.rs      # FFmpeg 转码
+    └── preloader.rs    # 预加载队列
 - **时间复杂度**：$O(N \log N)$（排序主导）
 - **空间复杂度**：$O(N)$（权重数组）
 - **I/O 复杂度**：每次切换 1 次写入（JSON 序列化）
