@@ -92,14 +92,37 @@ image_dir = "~/Pictures/wallpapers"           # 静态壁纸目录
 [video_engine]
 type = "mpvpaper"          # 动态壁纸引擎
 interval = 600             # 切换间隔（秒），默认 10 分钟
+fit_mode = "cover"         # 壁纸适应模式: "auto", "contain", "cover"
+panscan = 1.0              # panscan 值（0.0-1.0），仅在 cover 模式下生效
 
 [image_engine]
 type = "swww"                  # 静态壁纸引擎
 interval = 300                 # 切换间隔（秒），默认 5 分钟
 transition = "fade"            # 过渡效果
 transition_duration = 2.0      # 过渡时长（秒）
+```
 
-[weight]
+### mpvpaper 壁纸适应模式
+
+mpvpaper 支持三种壁纸适应模式，可在配置文件中设置：
+
+| 模式      | 说明                                         | 适用场景                    |
+| --------- | -------------------------------------------- | --------------------------- |
+| `auto`    | mpv 默认行为，自动适应屏幕                   | 一般使用                    |
+| `contain` | 完整显示壁纸，保持原始比例，可能有黑边       | 不想裁剪任何内容            |
+| `cover`   | 填充整个屏幕，可能裁剪视频 **(推荐)**        | 无黑边，视觉效果最佳        |
+
+**cover 模式参数调节：**
+```toml
+[video_engine]
+fit_mode = "cover"
+panscan = 1.0  # 范围 0.0-1.0
+               # 1.0 = 完全填充屏幕（可能裁剪更多）
+               # 0.0 = 最小裁剪
+```
+
+**配置示例：**
+```toml
 base = 100.0                       # 基础权重
 select_penalty = 10.0              # 选中惩罚值
 perturbation_ratio = 0.03          # 扰动幅度（±3%）

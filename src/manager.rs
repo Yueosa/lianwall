@@ -30,7 +30,7 @@ impl WallManager {
     /// 初始化壁纸管理器
     pub fn new(config: Config, mode: WallpaperMode) -> Self {
         let engine_type = config.engine_type(mode);
-        let engine = create_engine(engine_type);
+        let engine = create_engine(engine_type, &config);
 
         let weight_calc = WeightCalculator::new(config.weight.clone());
 

@@ -25,6 +25,20 @@ pub struct VideoEngineConfig {
     pub engine_type: String,
     /// 切换间隔（秒）
     pub interval: u64,
+    /// 壁纸适应模式: "auto" (自动适应), "contain" (完整显示), "cover" (填充屏幕)
+    #[serde(default = "default_fit_mode")]
+    pub fit_mode: String,
+    /// panscan 值（-1.0 到 1.0，仅在 cover 模式下生效）
+    #[serde(default = "default_panscan")]
+    pub panscan: f64,
+}
+
+fn default_fit_mode() -> String {
+    "cover".to_string()
+}
+
+fn default_panscan() -> f64 {
+    1.0
 }
 
 /// 静态壁纸引擎配置
@@ -157,6 +171,8 @@ impl Default for Config {
             video_engine: VideoEngineConfig {
                 engine_type: "mpvpaper".to_string(),
                 interval: 600,
+                fit_mode: "cover".to_string(),
+                panscan: 1.0,
             },
             image_engine: ImageEngineConfig {
                 engine_type: "swww".to_string(),

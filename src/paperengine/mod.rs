@@ -4,6 +4,7 @@ pub mod mpvpaper;
 pub mod swww;
 
 use std::path::Path;
+use crate::config::Config;
 
 /// 壁纸引擎 trait，定义统一接口
 pub trait PaperEngine {
@@ -21,13 +22,19 @@ pub trait PaperEngine {
 }
 
 /// 根据引擎类型创建对应的引擎实例
-pub fn create_engine(engine_type: &str) -> Box<dyn PaperEngine> {
+pub fn create_engine(engine_type: &str, config: &Config) -> Box<dyn PaperEngine> {
     match engine_type {
-        "mpvpaper" => Box::new(mpvpaper::MpvPaper::new()),
+        "mpvpaper" => Box::new(mpvpaper::MpvPaper::with_fit_mode(
+            &config.video_engine.fit_mode,
+            config.video_engine.panscan,
+        )),
         "swww" => Box::new(swww::Swww::new()),
         _ => {
             eprintln!("未知引擎类型: {}, 使用默认 mpvpaper", engine_type);
-            Box::new(mpvpaper::MpvPaper::new())
+            Box::new(mpvpaper::MpvPaper::with_fit_mode(
+                &config.video_engine.fit_mode,
+                config.video_engine.panscan,
+            ))
         }
     }
 }
