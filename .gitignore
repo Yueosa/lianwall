@@ -1,2 +1,11 @@
+# 编译产物
 /target
+
+# 构建痕迹
 /build
+
+# 开发者的悄悄话
+TODO.md
+
+# 新版本
+/src_test
