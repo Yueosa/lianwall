@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use chrono::Timelike;
+
 use crate::core::wallpaper::error::WallpaperError;
 use crate::core::wallpaper::r#struct::{WallpaperScanInput, WallpaperScanOutput};
 use crate::core::wallpaper::time_range::{is_in_range, parse_time_range};
@@ -138,17 +140,6 @@ fn has_valid_extension(path: &Path, extensions: &[String]) -> bool {
 
 /// 获取当前时间（小时, 分钟）
 fn get_current_time() -> (u8, u8) {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-
-    // UTC 时间转本地时间（简化处理，实际可能需要 chrono）
-    let total_minutes = (now / 60) % 1440; // 一天的分钟数
-    let hour = (total_minutes / 60) as u8;
-    let minute = (total_minutes % 60) as u8;
-
-    (hour, minute)
+    let now = chrono::Local::now();
+    (now.hour() as u8, now.minute() as u8)
 }
