@@ -8,6 +8,9 @@ pub struct WeightRecord {
     pub value: f64,
     pub skip_streak: u32,
     pub last_played: Option<u64>,
+    /// 是否被锁定（锁定后不参与轮换）
+    #[serde(default)]
+    pub locked: bool,
 }
 
 // --- 权重更新配置 ---

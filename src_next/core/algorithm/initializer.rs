@@ -36,12 +36,12 @@ pub fn initialize(input: AlgorithmInitInput) -> AlgorithmInitOutput {
             } else {
                 new_count += 1;
                 // 新文件：使用平均权重
-                // TODO: 可以考虑基于文件修改时间计算权重（需要传入文件元数据）
                 WeightRecord {
                     path,
                     value: avg_value,
                     skip_streak: 0,
                     last_played: None,
+                    locked: false,
                 }
             }
         })

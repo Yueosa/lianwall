@@ -30,7 +30,7 @@ pub fn update_weights(input: AlgorithmUpdateInput) -> Result<AlgorithmUpdateOutp
         for (idx, record) in updated_records.iter_mut().enumerate() {
             if idx == input.selected_index {
                 // 选中壁纸：扣除惩罚
-                record.value -= penalty;
+                record.value = (record.value - penalty).max(1.0);
                 record.skip_streak = 0;
                 // 更新播放时间
                 record.last_played = Some(get_current_timestamp());
@@ -40,6 +40,12 @@ pub fn update_weights(input: AlgorithmUpdateInput) -> Result<AlgorithmUpdateOutp
                 record.skip_streak += 1;
             }
         }
+    } else {
+        // 只有一张壁纸时，仍需要更新播放状态
+        let record = &mut updated_records[input.selected_index];
+        record.value = (record.value - penalty).max(1.0);
+        record.skip_streak = 0;
+        record.last_played = Some(get_current_timestamp());
     }
 
     let mut normalized = false;
