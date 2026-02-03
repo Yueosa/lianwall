@@ -32,6 +32,7 @@ pub fn handle_command(cli: Cli) -> Result<(), CliError> {
         Commands::Lock { path } => handle_lock(path, json),
         Commands::Unlock { path } => handle_unlock(path, json),
         Commands::Stats => handle_stats(json),
+        Commands::TimeRanges => handle_time_ranges(json),
         Commands::Diagnose => handle_diagnose(json),
         Commands::Config { action } => handle_config(action, json),
     }
@@ -309,6 +310,41 @@ fn handle_stats(json: bool) -> Result<(), CliError> {
     );
     output::kv("平均权重", &format!("{:.2}", response.result.avg_value));
     output::kv("总跳过次数", &response.result.total_skips.to_string());
+
+    Ok(())
+}
+
+fn handle_time_ranges(json: bool) -> Result<(), CliError> {
+    api::init()?;
+    let response = api::list_time_ranges(None, false)?;
+
+    if json {
+        output::print_json(&response);
+        return Ok(());
+    }
+
+    output::title(&format!("🕐 时间段列表 ({:?})", response.result.mode));
+
+    if response.result.root_count > 0 {
+        output::kv("根目录壁纸", &response.result.root_count.to_string());
+    }
+
+    if response.result.ranges.is_empty() {
+        output::info("没有发现时间段目录");
+    } else {
+        println!();
+        for range in &response.result.ranges {
+            let active_mark = if range.is_active { " ← 当前".green().to_string() } else { String::new() };
+            println!(
+                "  {} ({} ~ {}) - {} 张{}",
+                range.name.bold(),
+                range.start_time,
+                range.end_time,
+                range.wallpaper_count,
+                active_mark
+            );
+        }
+    }
 
     Ok(())
 }

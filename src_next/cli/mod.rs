@@ -19,6 +19,7 @@
 //! - `lock`: 锁定壁纸
 //! - `unlock`: 解锁壁纸
 //! - `stats`: 统计信息
+//! - `time-ranges`: 列出时间段
 //! - `diagnose`: 诊断系统
 //! - `config`: 配置管理
 

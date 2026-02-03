@@ -57,7 +57,10 @@ pub enum Commands {
     /// 📈 统计信息
     Stats,
 
-    /// 🔍 诊断系统
+    /// � 列出时间段
+    TimeRanges,
+
+    /// �🔍 诊断系统
     Diagnose,
 
     /// ⚙️  配置管理
