@@ -24,14 +24,28 @@ use commands::Cli;
 use error::CliError;
 
 /// CLI 入口函数
-pub fn run() {
-    let cli = Cli::parse_args();
+pub fn run() -> ! {
+    let result = run_cli();
 
-    if let Err(e) = handlers::handle_command(cli.command) {
-        // 用户取消操作时不打印错误
+    let exit_code = match &result {
+        Ok(_) => 0,
+        Err(CliError::UserCancelled) => 130,  // 用户取消
+        Err(CliError::InvalidMode(_)) => 2,   // 参数错误
+        Err(CliError::Api(_)) => 1,           // API 错误
+        Err(CliError::Io(_)) => 3,            // IO 错误
+    };
+
+    // 只在非用户取消的情况下打印错误
+    if let Err(e) = &result {
         if !matches!(e, CliError::UserCancelled) {
-            output::print_error_chain(&e);
-            std::process::exit(1);
+            output::print_error_chain(e);
         }
     }
+
+    std::process::exit(exit_code);
+}
+
+fn run_cli() -> Result<(), CliError> {
+    let cli = Cli::parse_args();
+    handlers::handle_command(cli.command)
 }

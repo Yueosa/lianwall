@@ -21,13 +21,10 @@ fn handle_start(debug: bool) -> Result<(), CliError> {
     api::init()?;
 
     let response = api::start(debug)?;
+    output::success(&response.result.message);
 
-    if let Some(result) = response.result {
-        output::success(&result.message);
-
-        if let Some(debug_info) = response.debug {
-            output::print_debug_trace(&debug_info);
-        }
+    if let Some(debug_info) = response.debug {
+        output::print_debug_trace(&debug_info);
     }
 
     Ok(())
@@ -39,37 +36,33 @@ fn handle_next(switch_mode: bool, debug: bool) -> Result<(), CliError> {
     if switch_mode {
         let response = api::switch_mode(debug)?;
 
-        if let Some(result) = response.result {
-            output::success(&format!(
-                "已切换模式: {:?} → {:?}",
-                result.old_mode, result.new_mode
-            ));
-            output::kv("当前壁纸", &result.wallpaper.display().to_string());
+        output::success(&format!(
+            "已切换模式: {:?} → {:?}",
+            response.result.old_mode, response.result.new_mode
+        ));
+        output::kv("当前壁纸", &response.result.wallpaper.display().to_string());
 
-            if let Some(debug_info) = response.debug {
-                output::print_debug_trace(&debug_info);
-            }
+        if let Some(debug_info) = response.debug {
+            output::print_debug_trace(&debug_info);
         }
     } else {
         let response = api::next(debug)?;
 
-        if let Some(result) = response.result {
-            output::success(&format!(
-                "已切换壁纸: {}",
-                result.selected_path.display()
-            ));
-            output::kv("模式", &format!("{:?}", result.mode));
+        output::success(&format!(
+            "已切换壁纸: {}",
+            response.result.selected_path.display()
+        ));
+        output::kv("模式", &format!("{:?}", response.result.mode));
 
-            if result.normalized {
-                output::info("📊 触发了权重归一化");
-            }
-            if result.shuffled {
-                output::info("🎲 触发了权重洗牌");
-            }
+        if response.result.normalized {
+            output::info("📊 触发了权重归一化");
+        }
+        if response.result.shuffled {
+            output::info("🎲 触发了权重洗牌");
+        }
 
-            if let Some(debug_info) = response.debug {
-                output::print_debug_trace(&debug_info);
-            }
+        if let Some(debug_info) = response.debug {
+            output::print_debug_trace(&debug_info);
         }
     }
 
@@ -80,13 +73,10 @@ fn handle_stop(debug: bool) -> Result<(), CliError> {
     api::init()?;
 
     let response = api::stop(debug)?;
+    output::success(&response.result.message);
 
-    if let Some(result) = response.result {
-        output::success(&result.message);
-
-        if let Some(debug_info) = response.debug {
-            output::print_debug_trace(&debug_info);
-        }
+    if let Some(debug_info) = response.debug {
+        output::print_debug_trace(&debug_info);
     }
 
     Ok(())
@@ -107,25 +97,23 @@ fn handle_reload(mode: Option<String>, debug: bool) -> Result<(), CliError> {
 
     let response = api::reload(target_mode, debug)?;
 
-    if let Some(result) = response.result {
-        output::success("热重载完成");
-        output::kv("总数", &result.total_count.to_string());
-        output::kv("活跃", &result.active_count.to_string());
-        output::kv(
-            "封锁",
-            &(result.total_count - result.active_count).to_string(),
-        );
+    output::success("热重载完成");
+    output::kv("总数", &response.result.total_count.to_string());
+    output::kv("活跃", &response.result.active_count.to_string());
+    output::kv(
+        "封锁",
+        &(response.result.total_count - response.result.active_count).to_string(),
+    );
 
-        if result.new_count > 0 {
-            output::info(&format!("➕ 新增 {} 个文件", result.new_count));
-        }
-        if result.removed_count > 0 {
-            output::warning(&format!("➖ 移除 {} 个文件", result.removed_count));
-        }
+    if response.result.new_count > 0 {
+        output::info(&format!("➕ 新增 {} 个文件", response.result.new_count));
+    }
+    if response.result.removed_count > 0 {
+        output::warning(&format!("➖ 移除 {} 个文件", response.result.removed_count));
+    }
 
-        if let Some(debug_info) = response.debug {
-            output::print_debug_trace(&debug_info);
-        }
+    if let Some(debug_info) = response.debug {
+        output::print_debug_trace(&debug_info);
     }
 
     Ok(())
@@ -141,44 +129,42 @@ fn handle_status(json: bool, debug: bool) -> Result<(), CliError> {
         return Ok(());
     }
 
-    if let Some(result) = response.result {
-        output::title("📊 LianWall 状态");
+    output::title("📊 LianWall 状态");
 
-        output::kv("当前模式", &format!("{:?}", result.current_mode));
-        output::kv(
-            "当前壁纸",
-            result
-                .current_wallpaper
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| "无".to_string())
-                .as_str(),
-        );
-        output::kv(
-            "运行状态",
-            if result.is_running {
-                "运行中"
-            } else {
-                "已停止"
-            },
-        );
-        output::kv("切换次数", &result.selection_count.to_string());
+    output::kv("当前模式", &format!("{:?}", response.result.current_mode));
+    output::kv(
+        "当前壁纸",
+        response.result
+            .current_wallpaper
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "无".to_string())
+            .as_str(),
+    );
+    output::kv(
+        "运行状态",
+        if response.result.is_running {
+            "运行中"
+        } else {
+            "已停止"
+        },
+    );
+    output::kv("切换次数", &response.result.selection_count.to_string());
 
-        if let Some(video_stats) = result.video_stats {
-            println!();
-            output::title("🎬 Video 模式统计");
-            print_mode_stats(&video_stats);
-        }
+    if let Some(video_stats) = response.result.video_stats {
+        println!();
+        output::title("🎬 Video 模式统计");
+        print_mode_stats(&video_stats);
+    }
 
-        if let Some(image_stats) = result.image_stats {
-            println!();
-            output::title("🖼️  Image 模式统计");
-            print_mode_stats(&image_stats);
-        }
+    if let Some(image_stats) = response.result.image_stats {
+        println!();
+        output::title("🖼️  Image 模式统计");
+        print_mode_stats(&image_stats);
+    }
 
-        if let Some(debug_info) = response.debug {
-            output::print_debug_trace(&debug_info);
-        }
+    if let Some(debug_info) = response.debug {
+        output::print_debug_trace(&debug_info);
     }
 
     Ok(())
@@ -207,49 +193,47 @@ fn handle_diagnose(json: bool, debug: bool) -> Result<(), CliError> {
         return Ok(());
     }
 
-    if let Some(result) = response.result {
-        output::title("🔍 系统诊断");
+    output::title("🔍 系统诊断");
 
-        let gpu_status = if result.gpu_available {
-            format!("{} ({})", "✓".green(), result.gpu_type)
-        } else {
-            "✗ 不可用".red().to_string()
-        };
-        output::kv("GPU", &gpu_status);
+    let gpu_status = if response.result.gpu_available {
+        format!("{} ({})", "✓".green(), response.result.gpu_type)
+    } else {
+        "✗ 不可用".red().to_string()
+    };
+    output::kv("GPU", &gpu_status);
 
-        let mpv_status = if result.mpvpaper_available {
-            "✓ 已安装".green().to_string()
-        } else {
-            "✗ 未安装".red().to_string()
-        };
-        output::kv("mpvpaper", &mpv_status);
+    let mpv_status = if response.result.mpvpaper_available {
+        "✓ 已安装".green().to_string()
+    } else {
+        "✗ 未安装".red().to_string()
+    };
+    output::kv("mpvpaper", &mpv_status);
 
-        let swww_status = if result.swww_available {
-            "✓ 已安装".green().to_string()
-        } else {
-            "✗ 未安装".red().to_string()
-        };
-        output::kv("swww", &swww_status);
+    let swww_status = if response.result.swww_available {
+        "✓ 已安装".green().to_string()
+    } else {
+        "✗ 未安装".red().to_string()
+    };
+    output::kv("swww", &swww_status);
 
-        output::kv("配置文件", &result.config_path.display().to_string());
+    output::kv("配置文件", &response.result.config_path.display().to_string());
 
-        if let Some(vram_info) = result.vram_info {
-            println!();
-            output::title("💾 显存信息");
-            output::kv("总容量", &format!("{} MB", vram_info.total_mb));
-            output::kv(
-                "已使用",
-                &format!("{} MB ({:.1}%)", vram_info.used_mb, vram_info.usage_percent),
-            );
-            output::kv(
-                "剩余",
-                &format!("{} MB ({:.1}%)", vram_info.free_mb, vram_info.free_percent),
-            );
-        }
+    if let Some(vram_info) = response.result.vram_info {
+        println!();
+        output::title("💾 显存信息");
+        output::kv("总容量", &format!("{} MB", vram_info.total_mb));
+        output::kv(
+            "已使用",
+            &format!("{} MB ({:.1}%)", vram_info.used_mb, vram_info.usage_percent),
+        );
+        output::kv(
+            "剩余",
+            &format!("{} MB ({:.1}%)", vram_info.free_mb, vram_info.free_percent),
+        );
+    }
 
-        if let Some(debug_info) = response.debug {
-            output::print_debug_trace(&debug_info);
-        }
+    if let Some(debug_info) = response.debug {
+        output::print_debug_trace(&debug_info);
     }
 
     Ok(())
@@ -260,56 +244,48 @@ fn handle_config(action: ConfigAction) -> Result<(), CliError> {
         ConfigAction::Get { key, debug } => {
             let response = api::config_get(&key, debug)?;
 
-            if let Some(result) = response.result {
-                output::success(&format!("{} = {}", result.key, result.value));
+            output::success(&format!("{} = {}", response.result.key, response.result.value));
 
-                if let Some(debug_info) = response.debug {
-                    output::print_debug_trace(&debug_info);
-                }
+            if let Some(debug_info) = response.debug {
+                output::print_debug_trace(&debug_info);
             }
         }
         ConfigAction::Set { key, value, debug } => {
             let response = api::config_set(&key, &value, debug)?;
 
-            if let Some(result) = response.result {
-                output::success(&format!(
-                    "已更新配置: {} = {} → {}",
-                    result.key, result.old_value, result.new_value
-                ));
+            output::success(&format!(
+                "已更新配置: {} = {} → {}",
+                response.result.key, response.result.old_value, response.result.new_value
+            ));
 
-                if let Some(debug_info) = response.debug {
-                    output::print_debug_trace(&debug_info);
-                }
+            if let Some(debug_info) = response.debug {
+                output::print_debug_trace(&debug_info);
             }
         }
         ConfigAction::Show { debug } => {
             let response = api::config_show(debug)?;
 
-            if let Some(result) = response.result {
-                output::title("⚙️  配置文件");
-                println!("{}", result.config_toml);
+            output::title("⚙️  配置文件");
+            println!("{}", response.result.config_toml);
 
-                if let Some(debug_info) = response.debug {
-                    output::print_debug_trace(&debug_info);
-                }
+            if let Some(debug_info) = response.debug {
+                output::print_debug_trace(&debug_info);
             }
         }
         ConfigAction::Reset { debug } => {
             let response = api::config_reset(debug)?;
 
-            if let Some(result) = response.result {
-                output::success(&result.message);
+            output::success(&response.result.message);
 
-                if let Some(backup_path) = result.backup_path {
-                    output::info(&format!(
-                        "备份已保存: {}",
-                        backup_path.display()
-                    ));
-                }
+            if let Some(backup_path) = response.result.backup_path {
+                output::info(&format!(
+                    "备份已保存: {}",
+                    backup_path.display()
+                ));
+            }
 
-                if let Some(debug_info) = response.debug {
-                    output::print_debug_trace(&debug_info);
-                }
+            if let Some(debug_info) = response.debug {
+                output::print_debug_trace(&debug_info);
             }
         }
     }
@@ -360,19 +336,17 @@ fn handle_uninstall(purge: bool, yes: bool, debug: bool) -> Result<(), CliError>
     // 执行卸载
     let response = api::uninstall(purge, debug)?;
 
-    if let Some(result) = response.result {
-        output::success("卸载完成");
+    output::success("卸载完成");
 
-        if !result.removed_items.is_empty() {
-            output::print_file_list("🗑️  已删除:", &result.removed_items);
-        }
+    if !response.result.removed_items.is_empty() {
+        output::print_file_list("🗑️  已删除:", &response.result.removed_items);
+    }
 
-        println!();
-        output::info(&result.note);
+    println!();
+    output::info(&response.result.note);
 
-        if let Some(debug_info) = response.debug {
-            output::print_debug_trace(&debug_info);
-        }
+    if let Some(debug_info) = response.debug {
+        output::print_debug_trace(&debug_info);
     }
 
     Ok(())

@@ -100,13 +100,51 @@ fn print_trace_recursive(trace: &DebugTrace, depth: usize) {
 
 /// 打印错误链
 pub fn print_error_chain(err: &CliError) {
-    error(&format!("错误: {}", err));
+    error(&format!("{}", err));
 
     // 如果是 API 错误，打印完整的错误链
     if let CliError::Api(api_err) = err {
+        if !api_err.chain.is_empty() {
+            println!();
+            warning("错误调用链:");
+            for (i, call) in api_err.chain.iter().enumerate() {
+                println!(
+                    "  {}. {} → {}",
+                    i + 1,
+                    call.module.bright_black(),
+                    call.error
+                );
+            }
+        }
+    }
+
+    // 打印建议
+    if let Some(hint) = get_error_hint(err) {
         println!();
-        println!("{}", "错误链:".bright_black());
-        println!("  {}", api_err.to_string().red());
+        info(&format!("💡 {}", hint));
+    }
+}
+
+/// 获取错误提示
+fn get_error_hint(err: &CliError) -> Option<String> {
+    match err {
+        CliError::Api(api_err) => {
+            let err_str = api_err.to_string();
+            if err_str.contains("配置") || err_str.contains("config") {
+                Some("运行 `lianwall config show` 检查配置是否正确".to_string())
+            } else if err_str.contains("显存") || err_str.contains("VRAM") || err_str.contains("GPU") {
+                Some("运行 `lianwall diagnose` 检查 GPU 状态".to_string())
+            } else if err_str.contains("壁纸") || err_str.contains("wallpaper") || err_str.contains("目录") {
+                Some("检查壁纸目录是否存在，或运行 `lianwall diagnose`".to_string())
+            } else if err_str.contains("引擎") || err_str.contains("mpvpaper") || err_str.contains("swww") {
+                Some("确保已安装 mpvpaper 或 swww，运行 `lianwall diagnose` 检查".to_string())
+            } else {
+                None
+            }
+        }
+        CliError::UserCancelled => Some("操作已取消，没有进行任何更改".to_string()),
+        CliError::InvalidMode(_) => Some("有效的模式: video, image".to_string()),
+        _ => None,
     }
 }
 
