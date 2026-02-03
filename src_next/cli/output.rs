@@ -128,7 +128,8 @@ fn get_error_hint(err: &CliError) -> Option<String> {
             }
         }
         CliError::UserCancelled => Some("操作已取消，没有进行任何更改".to_string()),
-        CliError::InvalidMode(_) => Some("有效的模式: video, image".to_string()),
+        CliError::InvalidFilter(_) => Some("有效值: all, active, locked".to_string()),
+        CliError::InvalidPath(_) => Some("请检查文件路径是否正确".to_string()),
         _ => None,
     }
 }

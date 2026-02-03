@@ -1,10 +1,20 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "lianwall")]
-#[command(version = "2.0.0")]
+#[command(version = "3.0.0")]
 #[command(about = "🌌 智能动态壁纸管理器", long_about = None)]
 pub struct Cli {
+    /// 启用 debug 追踪
+    #[arg(long, global = true)]
+    pub debug: bool,
+
+    /// JSON 格式输出
+    #[arg(long, global = true)]
+    pub json: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -12,82 +22,52 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Commands {
     /// 🚀 启动守护进程
-    Start {
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
-    },
-
-    /// 🔄 切换壁纸/模式
-    Next {
-        /// 切换模式（Video ↔ Image）
-        #[arg(long)]
-        mode: bool,
-
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
-    },
+    Start,
 
     /// 🛑 停止守护进程
-    Stop {
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
-    },
+    Stop,
+
+    /// ➡️  切换下一张壁纸
+    Next,
+
+    /// 🔀 切换模式（Video ↔ Image）
+    Switch,
 
     /// 🔃 热重载壁纸目录
-    Reload {
-        /// 指定模式 (video/image)
-        #[arg(long, value_name = "MODE")]
-        mode: Option<String>,
-
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
-    },
+    Reload,
 
     /// 📊 查询当前状态
-    Status {
-        /// JSON 格式输出
-        #[arg(long)]
-        json: bool,
+    Status,
 
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
+    /// 📋 列出壁纸
+    List {
+        /// 过滤类型 (all/active/locked)
+        #[arg(long, default_value = "all")]
+        filter: String,
     },
+
+    /// 🔒 锁定壁纸（不再参与轮换）
+    Lock {
+        /// 壁纸路径
+        path: PathBuf,
+    },
+
+    /// 🔓 解锁壁纸（重新参与轮换）
+    Unlock {
+        /// 壁纸路径
+        path: PathBuf,
+    },
+
+    /// 📈 统计信息
+    Stats,
 
     /// 🔍 诊断系统
-    Diagnose {
-        /// JSON 格式输出
-        #[arg(long)]
-        json: bool,
-
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
-    },
+    Diagnose,
 
     /// ⚙️  配置管理
     Config {
         #[command(subcommand)]
         action: ConfigAction,
-    },
-
-    /// 🗑️  卸载程序
-    Uninstall {
-        /// 删除用户数据（缓存、配置）
-        #[arg(long)]
-        purge: bool,
-
-        /// 跳过确认提示
-        #[arg(long, short)]
-        yes: bool,
-
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
     },
 }
 
@@ -97,37 +77,24 @@ pub enum ConfigAction {
     Get {
         /// 配置键（如 weight.base）
         key: String,
-
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
     },
 
     /// ✏️  设置配置项
     Set {
         /// 配置键
         key: String,
-
         /// 配置值
         value: String,
-
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
     },
 
     /// 📄 显示完整配置
-    Show {
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
-    },
+    Show,
 
     /// 🔄 重置为默认值
     Reset {
-        /// 启用 debug 追踪
-        #[arg(long)]
-        debug: bool,
+        /// 跳过确认提示
+        #[arg(long, short)]
+        yes: bool,
     },
 }
 

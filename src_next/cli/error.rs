@@ -13,6 +13,9 @@ pub enum CliError {
     #[error("用户取消操作")]
     UserCancelled,
 
-    #[error("无效的模式: {0}（应为 video 或 image）")]
-    InvalidMode(String),
+    #[error("无效的过滤器: {0}（有效值: all, active, locked）")]
+    InvalidFilter(String),
+
+    #[error("无效的路径: {0}")]
+    InvalidPath(String),
 }
