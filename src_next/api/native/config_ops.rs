@@ -201,15 +201,14 @@ pub fn config_reset(debug: bool) -> Result<ApiResponse<ApiConfigResetOutput>, Ap
     let guard = DebugGuard::new("api::config_reset", json!({}));
 
     let result: Result<ApiConfigResetOutput, ApiError> = (|| {
-        // 删除旧配置（会自动备份）
-        let delete_result = delete(ConfigDeleteInput { path: None }).map_err(|e| ApiError::track(e.into(), "config_reset"))?;
+        // 删除旧配置
+        delete(ConfigDeleteInput { path: None }).map_err(|e| ApiError::track(e.into(), "config_reset"))?;
 
         // 创建新配置
         create(ConfigCreateInput { path: None }).map_err(|e| ApiError::track(e.into(), "config_reset"))?;
 
         Ok(ApiConfigResetOutput {
             message: "配置已重置为默认值".to_string(),
-            backup_path: if delete_result.deleted { Some(delete_result.path) } else { None },
         })
     })();
 

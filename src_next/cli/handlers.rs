@@ -438,7 +438,7 @@ fn handle_config(action: ConfigAction, json: bool) -> Result<(), CliError> {
         }
         ConfigAction::Reset { yes } => {
             if !yes {
-                if !output::confirm("确定要重置配置吗？当前配置将被备份。") {
+                if !output::confirm("确定要重置配置吗？当前配置将被覆盖。") {
                     output::warning("已取消操作");
                     return Err(CliError::UserCancelled);
                 }
@@ -450,10 +450,6 @@ fn handle_config(action: ConfigAction, json: bool) -> Result<(), CliError> {
                 output::print_json(&response);
             } else {
                 output::success(&response.result.message);
-
-                if let Some(backup_path) = &response.result.backup_path {
-                    output::info(&format!("备份已保存: {}", backup_path.display()));
-                }
             }
         }
     }

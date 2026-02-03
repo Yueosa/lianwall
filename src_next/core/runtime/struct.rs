@@ -60,6 +60,8 @@ pub enum SchedulerEvent {
     DegradeToImage,
     /// 恢复到视频模式
     UpgradeToVideo,
+    /// 刷新活跃列表（用于时间段更新）
+    RefreshActiveList(RunMode),
     /// 停止调度器
     Shutdown,
 }
