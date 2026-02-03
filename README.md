@@ -155,6 +155,7 @@ bind = SUPER ALT, D, exec, lianwall switch    # 切换 Video/Image 模式
 | `lock <PATH>` | 锁定壁纸，不再参与轮换 |
 | `unlock <PATH>` | 解锁壁纸 |
 | `stats` | 统计信息 |
+| `time-ranges` | 列出时间段目录 |
 | `diagnose` | 系统诊断 |
 
 ### 配置命令
