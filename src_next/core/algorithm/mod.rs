@@ -1,7 +1,7 @@
 //! Algorithm 模块：壁纸权重选择与更新的统一入口。
 //!
 //! ## 公共接口（函数签名）
-//! - initialize(input: AlgorithmInitInput) -> Result<AlgorithmInitOutput, AlgorithmError>
+//! - initialize(input: AlgorithmInitInput) -> AlgorithmInitOutput
 //! - select(input: AlgorithmSelectInput) -> Result<AlgorithmSelectOutput, AlgorithmError>
 //! - update_weights(input: AlgorithmUpdateInput) -> Result<AlgorithmUpdateOutput, AlgorithmError>
 //! - get_stats(records: &[WeightRecord]) -> AlgorithmStatsOutput
@@ -14,6 +14,7 @@
 //! - WeightRecord / WeightUpdateConfig
 //!
 //! ## 核心特性
+//! - **差异化初始权重**：基于文件修改时间 + 随机扰动（±30%），避免同批文件权值相同
 //! - **零和博弈权重系统**：选中惩罚均分给其他壁纸，总权重守恒
 //! - **动态扰动选择**：扰动幅度与权重成比例，打破权重僵化
 //! - **自动归一化**：平均权重超过阈值时按比例缩放
