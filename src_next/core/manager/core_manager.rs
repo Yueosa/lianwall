@@ -6,8 +6,8 @@ use crate::core::config::{
     ConfigReadInput,
 };
 use crate::core::engine::{
-    detect as engine_detect, set, stop, EngineDetectInput, EngineSetInput, EngineStopInput,
-    EngineType,
+    detect as engine_detect, is_running as engine_is_running, set, stop, EngineDetectInput,
+    EngineSetInput, EngineStopInput, EngineType,
 };
 use crate::core::gpu::{detect as gpu_detect, VramDetectInput};
 use crate::core::manager::error::ManagerError;
@@ -30,15 +30,18 @@ pub struct CoreManager {
 }
 
 impl CoreManager {
-    /// 创建 Manager（加载配置，不存在则自动创建默认配置）
+    /// 创建 Manager（加载配置和持久化状态）
     pub fn new() -> Result<Self, ManagerError> {
         let output = create(ConfigCreateInput { path: None })?;
+
+        // 加载持久化状态
+        let state = RuntimeState::load();
 
         Ok(Self {
             config: output.config,
             video_manager: None,
             image_manager: None,
-            state: RuntimeState::new(),
+            state,
         })
     }
 
@@ -166,6 +169,9 @@ impl CoreManager {
         self.state.current_wallpaper = Some(selected_path.clone());
         self.state.current_mode = mode.clone();
 
+        // 8. 持久化状态
+        self.state.save();
+
         Ok(ManagerNextOutput {
             selected_path,
             mode,
@@ -246,6 +252,7 @@ impl CoreManager {
         })?;
 
         self.state.is_running = false;
+        self.state.save();
 
         Ok(())
     }
@@ -266,10 +273,17 @@ impl CoreManager {
             algorithm_stats: mgr.get_stats(),
         });
 
+        // 通过进程检测来判断是否在运行
+        let engine_type = match &self.state.current_mode {
+            crate::core::runtime::RunMode::Video => EngineType::MpvPaper,
+            crate::core::runtime::RunMode::Image => EngineType::Swww,
+        };
+        let is_running = engine_is_running(engine_type);
+
         ManagerStatusOutput {
             current_mode: self.state.current_mode.clone(),
             current_wallpaper: self.state.current_wallpaper.clone(),
-            is_running: self.state.is_running,
+            is_running,
             selection_count: self.state.selection_count,
             video_stats,
             image_stats,

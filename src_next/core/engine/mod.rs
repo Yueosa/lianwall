@@ -4,6 +4,7 @@
 //! - detect(input: EngineDetectInput) -> Result<EngineDetectOutput, EngineError>
 //! - set(input: EngineSetInput) -> Result<EngineSetOutput, EngineError>
 //! - stop(input: EngineStopInput) -> Result<EngineStopOutput, EngineError>
+//! - is_running(engine_type: EngineType) -> bool
 //!
 //! ## 输入/输出结构体
 //! - EngineDetectInput / EngineDetectOutput
@@ -68,5 +69,13 @@ pub fn stop(input: EngineStopInput) -> Result<EngineStopOutput, EngineError> {
     match input.engine_type {
         EngineType::MpvPaper => mpvpaper::stop(input),
         EngineType::Swww => swww::stop(input),
+    }
+}
+
+/// 检查引擎是否正在运行
+pub fn is_running(engine_type: EngineType) -> bool {
+    match engine_type {
+        EngineType::MpvPaper => utils::is_process_running("mpvpaper"),
+        EngineType::Swww => utils::is_process_running("swww-daemon"),
     }
 }

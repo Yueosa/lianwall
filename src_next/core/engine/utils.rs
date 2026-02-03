@@ -61,6 +61,16 @@ pub fn pkill(process_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// 检查进程是否在运行（通过 pgrep）
+pub fn is_process_running(process_name: &str) -> bool {
+    Command::new("pgrep")
+        .arg("-x")
+        .arg(process_name)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// 验证壁纸文件是否存在且为文件
 pub fn validate_wallpaper(path: &Path) -> Result<(), String> {
     if !path.exists() {
