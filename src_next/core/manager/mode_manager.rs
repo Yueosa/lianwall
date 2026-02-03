@@ -108,7 +108,7 @@ impl ModeManager {
                 wallpapers: new_files,
                 cached_records: self.active_records.clone(),
                 base_weight,
-            })?;
+            });
 
             // 新记录同时加入活跃和完整列表
             self.active_records.extend(init_result.records.clone());

@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// 运行时状态
@@ -13,7 +14,7 @@ pub struct RuntimeState {
     pub is_running: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RunMode {
     Video,
     Image,

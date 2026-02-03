@@ -9,9 +9,7 @@ use crate::core::runtime::RunMode;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiResponse<T> {
-    pub success: bool,
-    pub result: Option<T>,
-    pub error: Option<String>,
+    pub result: T,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub debug: Option<ApiDebugInfo>,
 }
@@ -24,21 +22,7 @@ pub struct ApiDebugInfo {
 
 impl<T> ApiResponse<T> {
     pub fn success(result: T, debug: Option<ApiDebugInfo>) -> Self {
-        Self {
-            success: true,
-            result: Some(result),
-            error: None,
-            debug,
-        }
-    }
-
-    pub fn error(error: String, debug: Option<ApiDebugInfo>) -> Self {
-        Self {
-            success: false,
-            result: None,
-            error: Some(error),
-            debug,
-        }
+        Self { result, debug }
     }
 }
 

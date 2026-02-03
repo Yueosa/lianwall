@@ -18,8 +18,7 @@ pub struct EngineDetectInput {
 
 #[derive(Debug, Clone)]
 pub struct EngineDetectOutput {
-    // 成功时返回 Ok(EngineDetectOutput)
-    // 失败时抛出 EngineError::Unavailable
+    pub available: bool,
 }
 
 /// 设置壁纸
@@ -28,9 +27,7 @@ pub struct EngineSetInput {
     pub engine_type: EngineType,
     pub wallpaper_path: PathBuf,
     /// 从配置文件读取的参数列表
-    pub args: Vec<String>,
-    /// 显示器输出列表（空 = 自动检测所有显示器）
-    pub outputs: Vec<String>,
+    pub extra_args: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

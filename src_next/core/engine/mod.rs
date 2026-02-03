@@ -53,8 +53,11 @@ mod r#struct;
 mod swww;
 mod utils;
 
-use crate::core::engine::error::EngineError;
-use crate::core::engine::r#struct::{
+// 导出错误类型
+pub use error::EngineError;
+
+// 导出结构体
+pub use r#struct::{
     EngineDetectInput, EngineDetectOutput, EngineSetInput, EngineSetOutput, EngineStopInput,
     EngineStopOutput, EngineType,
 };
@@ -82,12 +85,3 @@ pub fn stop(input: EngineStopInput) -> Result<EngineStopOutput, EngineError> {
         EngineType::Swww => swww::stop(input),
     }
 }
-
-// 导出错误类型
-pub use error::EngineError;
-
-// 导出结构体
-pub use r#struct::{
-    EngineDetectInput, EngineDetectOutput, EngineSetInput, EngineSetOutput, EngineStopInput,
-    EngineStopOutput, EngineType,
-};

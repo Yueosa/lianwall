@@ -11,14 +11,8 @@ use crate::core::engine::utils::{is_command_available, validate_wallpaper};
 
 /// 检测 swww 是否可用
 pub fn detect(_input: EngineDetectInput) -> Result<EngineDetectOutput, EngineError> {
-    if is_command_available("swww") {
-        Ok(EngineDetectOutput {})
-    } else {
-        Err(EngineError::Unavailable {
-            engine: EngineType::Swww,
-            reason: "swww 未安装或不在 PATH 中".to_string(),
-        })
-    }
+    let available = is_command_available("swww");
+    Ok(EngineDetectOutput { available })
 }
 
 /// 设置静态壁纸（swww）
@@ -49,12 +43,12 @@ pub fn set(input: EngineSetInput) -> Result<EngineSetOutput, EngineError> {
     cmd.arg("img").arg(&input.wallpaper_path);
 
     // 6. 添加用户参数
-    for arg in &input.args {
+    for arg in &input.extra_args {
         cmd.arg(arg);
     }
 
     // 7. 如果是首次启动且没有用户指定 transition-type，强制用 none 避免闪烁
-    if !daemon_running && !input.args.iter().any(|a| a.contains("transition-type")) {
+    if !daemon_running && !input.extra_args.iter().any(|a| a.contains("transition-type")) {
         cmd.args(["--transition-type", "none"]);
     }
 

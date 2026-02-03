@@ -24,10 +24,10 @@ pub struct CoreManager {
 impl CoreManager {
     /// 创建 Manager（只加载配置，不扫描壁纸）
     pub fn new() -> Result<Self, ManagerError> {
-        let config = read(ConfigReadInput {})?;
+        let output = read(ConfigReadInput { path: None })?;
 
         Ok(Self {
-            config,
+            config: output.config,
             video_manager: None,
             image_manager: None,
             state: RuntimeState::new(),
@@ -108,27 +108,13 @@ impl CoreManager {
         // 1. 确保对应模式的 ModeManager 已初始化
         self.ensure_mode_manager(mode.clone())?;
 
-        let mode_mgr = self.get_mode_manager_mut(mode.clone())?;
-
-        // 2. 选择壁纸
-        let (selected_index, selected_path) = mode_mgr.select(
-            self.config.weight.tolerance,
-            self.config.weight.perturbation_ratio,
-        )?;
-
-        // 3. 设置壁纸
+        // 2. 先复制需要的配置值（避免借用冲突）
+        let tolerance = self.config.weight.tolerance;
+        let perturbation_ratio = self.config.weight.perturbation_ratio;
         let engine_args = match mode {
             RunMode::Video => self.config.video_engine.mpv_args.clone(),
             RunMode::Image => self.config.image_engine.swww_args.clone(),
         };
-
-        set(EngineSetInput {
-            engine_type: mode_mgr.engine_type,
-            wallpaper_path: selected_path.clone(),
-            extra_args: engine_args,
-        })?;
-
-        // 4. 更新权重
         let weight_config = WeightUpdateConfig {
             select_penalty: self.config.weight.select_penalty,
             normalization_threshold: self.config.weight.normalization_threshold,
@@ -138,12 +124,27 @@ impl CoreManager {
             base_weight: self.config.weight.base,
         };
 
+        // 3. 获取 mode_mgr 并选择壁纸
+        let mode_mgr = self.get_mode_manager_mut(mode.clone())?;
+        let (selected_index, selected_path) = mode_mgr.select(tolerance, perturbation_ratio)?;
+        let engine_type = mode_mgr.engine_type;
+
+        // 4. 设置壁纸
+        set(EngineSetInput {
+            engine_type,
+            wallpaper_path: selected_path.clone(),
+            extra_args: engine_args,
+        })?;
+
+        // 5. 更新选择计数
         let selection_count = self.state.increment_selection_count();
 
+        // 6. 更新权重（重新获取 mode_mgr）
+        let mode_mgr = self.get_mode_manager_mut(mode.clone())?;
         let (normalized, shuffled) =
             mode_mgr.update_and_save(selected_index, weight_config, selection_count)?;
 
-        // 5. 更新状态
+        // 7. 更新状态
         self.state.current_wallpaper = Some(selected_path.clone());
         self.state.current_mode = mode.clone();
 
@@ -159,15 +160,16 @@ impl CoreManager {
     pub fn reload(&mut self, mode: RunMode) -> Result<ManagerReloadOutput, ManagerError> {
         self.ensure_mode_manager(mode.clone())?;
 
+        let base_weight = self.config.weight.base;
         let mode_mgr = self.get_mode_manager_mut(mode)?;
-        mode_mgr.reload(self.config.weight.base)
+        mode_mgr.reload(base_weight)
     }
 
     /// 切换到图片模式（VRAM 降级时调用）
     pub fn switch_to_image(&mut self) -> Result<(), ManagerError> {
         // 1. 停止 Video 引擎
         stop(EngineStopInput {
-            engine_type: EngineType::Mpvpaper,
+            engine_type: EngineType::MpvPaper,
         })?;
 
         // 2. 懒加载初始化 Image ModeManager
@@ -204,7 +206,7 @@ impl CoreManager {
     /// 停止所有引擎
     pub fn stop(&mut self) -> Result<(), ManagerError> {
         stop(EngineStopInput {
-            engine_type: EngineType::Mpvpaper,
+            engine_type: EngineType::MpvPaper,
         })?;
         stop(EngineStopInput {
             engine_type: EngineType::Swww,
@@ -253,7 +255,7 @@ impl CoreManager {
                 self.video_manager = Some(ModeManager::new(
                     cache_path,
                     scan_config,
-                    EngineType::Mpvpaper,
+                    EngineType::MpvPaper,
                     self.config.weight.base,
                 )?);
             }
@@ -303,11 +305,11 @@ impl CoreManager {
     fn get_scan_config(&self, mode: RunMode) -> WallpaperScanInput {
         let (base_dir, extensions) = match mode {
             RunMode::Video => (
-                self.config.paths.video_dir.clone(),
+                PathBuf::from(&self.config.paths.video_dir),
                 vec!["mp4".to_string(), "mkv".to_string(), "webm".to_string()],
             ),
             RunMode::Image => (
-                self.config.paths.image_dir.clone(),
+                PathBuf::from(&self.config.paths.image_dir),
                 vec![
                     "jpg".to_string(),
                     "jpeg".to_string(),

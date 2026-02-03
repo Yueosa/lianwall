@@ -25,7 +25,7 @@ pub mod core_ops;
 pub mod debug;
 pub mod error;
 pub mod system_ops;
-mod r#struct;
+pub mod r#struct;
 
 // 导出核心函数
 pub use config_ops::{config_get, config_reset, config_set, config_show};

@@ -16,12 +16,13 @@ pub fn config_get(key: &str, debug: bool) -> Result<ApiResponse<ApiConfigGetOutp
     let guard = DebugGuard::new("api::config_get", json!({"key": key}));
 
     let result = (|| {
-        let config = read(ConfigReadInput {}).map_err(|e| ApiError::track(e.into(), "config_get"))?;
+        let output = read(ConfigReadInput { path: None }).map_err(|e| ApiError::track(e.into(), "config_get"))?;
+        let config = output.config;
 
         let value = match key {
             "paths.mode" => config.paths.mode,
-            "paths.video_dir" => config.paths.video_dir.display().to_string(),
-            "paths.image_dir" => config.paths.image_dir.display().to_string(),
+            "paths.video_dir" => config.paths.video_dir.clone(),
+            "paths.image_dir" => config.paths.image_dir.clone(),
             "video_engine.interval" => config.video_engine.interval.to_string(),
             "image_engine.interval" => config.image_engine.interval.to_string(),
             "weight.base" => config.weight.base.to_string(),
@@ -73,12 +74,13 @@ pub fn config_set(
     let guard = DebugGuard::new("api::config_set", json!({"key": key, "value": value}));
 
     let result = (|| {
-        let mut config = read(ConfigReadInput {}).map_err(|e| ApiError::track(e.into(), "config_set"))?;
+        let output = read(ConfigReadInput { path: None }).map_err(|e| ApiError::track(e.into(), "config_set"))?;
+        let mut config = output.config;
 
         // 记录旧值
         let old_value = match key {
             "paths.mode" => config.paths.mode.clone(),
-            "paths.video_dir" => config.paths.video_dir.display().to_string(),
+            "paths.video_dir" => config.paths.video_dir.clone(),
             "weight.base" => config.weight.base.to_string(),
             _ => return Err(ApiError::InvalidConfigKey(key.to_string())),
         };
@@ -86,8 +88,8 @@ pub fn config_set(
         // 设置新值
         match key {
             "paths.mode" => config.paths.mode = value.to_string(),
-            "paths.video_dir" => config.paths.video_dir = PathBuf::from(value),
-            "paths.image_dir" => config.paths.image_dir = PathBuf::from(value),
+            "paths.video_dir" => config.paths.video_dir = value.to_string(),
+            "paths.image_dir" => config.paths.image_dir = value.to_string(),
             "video_engine.interval" => {
                 config.video_engine.interval = value.parse().map_err(|_| {
                     ApiError::InvalidConfigValue {
@@ -116,8 +118,8 @@ pub fn config_set(
 
         // 保存配置
         update(ConfigUpdateInput {
+            path: None,
             config,
-            create_backup: true,
         })
         .map_err(|e| ApiError::track(e.into(), "config_set"))?;
 
@@ -158,7 +160,7 @@ pub fn config_show(debug: bool) -> Result<ApiResponse<ApiConfigShowOutput>, ApiE
 
     let guard = DebugGuard::new("api::config_show", json!({}));
 
-    let result = (|| {
+    let result: Result<ApiConfigShowOutput, ApiError> = (|| {
         let config_path = dirs::config_dir()
             .unwrap_or_default()
             .join("lianwall/config.toml");
@@ -198,16 +200,16 @@ pub fn config_reset(debug: bool) -> Result<ApiResponse<ApiConfigResetOutput>, Ap
 
     let guard = DebugGuard::new("api::config_reset", json!({}));
 
-    let result = (|| {
+    let result: Result<ApiConfigResetOutput, ApiError> = (|| {
         // 删除旧配置（会自动备份）
-        let delete_result = delete(ConfigDeleteInput {}).map_err(|e| ApiError::track(e.into(), "config_reset"))?;
+        let delete_result = delete(ConfigDeleteInput { path: None }).map_err(|e| ApiError::track(e.into(), "config_reset"))?;
 
         // 创建新配置
-        create(ConfigCreateInput {}).map_err(|e| ApiError::track(e.into(), "config_reset"))?;
+        create(ConfigCreateInput { path: None }).map_err(|e| ApiError::track(e.into(), "config_reset"))?;
 
         Ok(ApiConfigResetOutput {
             message: "配置已重置为默认值".to_string(),
-            backup_path: delete_result.backup_path,
+            backup_path: if delete_result.deleted { Some(delete_result.path) } else { None },
         })
     })();
 

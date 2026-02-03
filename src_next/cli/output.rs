@@ -1,7 +1,8 @@
 use colored::Colorize;
 use std::io::{self, Write};
 
-use crate::api::native::r#struct::{ApiDebugInfo, DebugTrace};
+use crate::api::native::r#struct::ApiDebugInfo;
+use crate::api::native::debug::DebugTrace;
 use crate::api::ApiResponse;
 use crate::cli::error::CliError;
 
@@ -101,22 +102,6 @@ fn print_trace_recursive(trace: &DebugTrace, depth: usize) {
 /// 打印错误链
 pub fn print_error_chain(err: &CliError) {
     error(&format!("{}", err));
-
-    // 如果是 API 错误，打印完整的错误链
-    if let CliError::Api(api_err) = err {
-        if !api_err.chain.is_empty() {
-            println!();
-            warning("错误调用链:");
-            for (i, call) in api_err.chain.iter().enumerate() {
-                println!(
-                    "  {}. {} → {}",
-                    i + 1,
-                    call.module.bright_black(),
-                    call.error
-                );
-            }
-        }
-    }
 
     // 打印建议
     if let Some(hint) = get_error_hint(err) {

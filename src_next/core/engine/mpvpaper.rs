@@ -11,14 +11,8 @@ use crate::core::engine::utils::{
 
 /// 检测 mpvpaper 是否可用
 pub fn detect(_input: EngineDetectInput) -> Result<EngineDetectOutput, EngineError> {
-    if is_command_available("mpvpaper") {
-        Ok(EngineDetectOutput {})
-    } else {
-        Err(EngineError::Unavailable {
-            engine: EngineType::MpvPaper,
-            reason: "mpvpaper 未安装或不在 PATH 中".to_string(),
-        })
-    }
+    let available = is_command_available("mpvpaper");
+    Ok(EngineDetectOutput { available })
 }
 
 /// 设置动态壁纸（mpvpaper）
@@ -39,15 +33,11 @@ pub fn set(input: EngineSetInput) -> Result<EngineSetOutput, EngineError> {
         engine_type: EngineType::Swww,
     })?;
 
-    // 3. 确定显示器输出列表
-    let outputs = if input.outputs.is_empty() {
-        get_active_monitors()
-    } else {
-        input.outputs
-    };
+    // 3. 自动检测显示器输出列表
+    let outputs = get_active_monitors();
 
     // 4. 构建 mpv 参数字符串
-    let mpv_options = input.args.join(" ");
+    let mpv_options = input.extra_args.join(" ");
 
     // 5. 为每个显示器启动 mpvpaper
     // 注意：mpvpaper -p 参数是硬编码的（窗口遮挡时暂停）

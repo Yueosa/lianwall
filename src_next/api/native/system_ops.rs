@@ -18,7 +18,7 @@ pub fn diagnose(debug: bool) -> Result<ApiResponse<ApiDiagnoseOutput>, ApiError>
 
     let gpu_detect_result = gpu_detect(VramDetectInput {});
     let mpvpaper_detect = detect(EngineDetectInput {
-        engine_type: EngineType::Mpvpaper,
+        engine_type: EngineType::MpvPaper,
     });
     let swww_detect = detect(EngineDetectInput {
         engine_type: EngineType::Swww,
@@ -31,8 +31,8 @@ pub fn diagnose(debug: bool) -> Result<ApiResponse<ApiDiagnoseOutput>, ApiError>
                 total_mb: info.total_mb,
                 used_mb: info.used_mb,
                 free_mb: info.free_mb,
-                usage_percent: info.usage_percent,
-                free_percent: info.free_percent,
+                usage_percent: info.usage_percent as f64,
+                free_percent: info.free_percent as f64,
             })
         } else {
             None
@@ -45,11 +45,15 @@ pub fn diagnose(debug: bool) -> Result<ApiResponse<ApiDiagnoseOutput>, ApiError>
         .unwrap_or_default()
         .join("lianwall/config.toml");
 
+    // 处理 Result 类型，获取 available 值
+    let mpvpaper_available = mpvpaper_detect.map(|o| o.available).unwrap_or(false);
+    let swww_available = swww_detect.map(|o| o.available).unwrap_or(false);
+
     let output = ApiDiagnoseOutput {
         gpu_available: gpu_detect_result.available,
         gpu_type: format!("{:?}", gpu_detect_result.gpu_type),
-        mpvpaper_available: mpvpaper_detect.available,
-        swww_available: swww_detect.available,
+        mpvpaper_available,
+        swww_available,
         config_path,
         vram_info,
     };

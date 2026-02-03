@@ -1,3 +1,5 @@
+use colored::Colorize;
+
 use crate::api::{self, ApiResponse};
 use crate::cli::commands::{Commands, ConfigAction};
 use crate::cli::error::CliError;
