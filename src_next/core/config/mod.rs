@@ -1,32 +1,27 @@
-//! 配置管理模块
+//! Config 模块：配置文件的统一读写入口。
 //!
-//! ## 职责
-//! - 配置文件的 CRUD 操作（创建、读取、更新、删除）
-//! - 配置结构的序列化与反序列化
-//! - 路径扩展（支持 `~/` 写法）
-//! - 默认配置模板提供
+//! ## 公共接口（函数签名）
+//! - create(input: ConfigCreateInput) -> Result<ConfigCreateOutput, ConfigError>
+//! - read(input: ConfigReadInput) -> Result<ConfigReadOutput, ConfigError>
+//! - update(input: ConfigUpdateInput) -> Result<ConfigUpdateOutput, ConfigError>
+//! - delete(input: ConfigDeleteInput) -> Result<ConfigDeleteOutput, ConfigError>
+//! - config_path(custom_path: Option<PathBuf>) -> PathBuf
+//! - expand_path(path: &str) -> PathBuf
 //!
-//! ## 使用示例
-//! ```rust
-//! use crate::core::config::{create, read, ConfigCreateInput, ConfigReadInput};
+//! ## 输入/输出结构体
+//! - ConfigCreateInput / ConfigCreateOutput
+//! - ConfigReadInput / ConfigReadOutput
+//! - ConfigUpdateInput / ConfigUpdateOutput
+//! - ConfigDeleteInput / ConfigDeleteOutput
 //!
-//! // 创建或读取配置（不存在则自动生成默认配置）
-//! let output = create(ConfigCreateInput { path: None }).unwrap();
-//! println!("配置路径: {:?}", output.path);
-//! println!("是否新建: {}", output.created);
+//! ## 路径处理
+//! - 读取/创建/更新后会自动规范化路径（支持 `~/` 展开）。
+//! - PathsConfig 中的目录字段为 PathBuf。
 //!
-//! // 读取现有配置
-//! let config = read(ConfigReadInput { path: None }).unwrap().config;
-//! println!("当前模式: {}", config.paths.mode);
-//! ```
-//!
-//! ## 错误处理
-//! 所有操作返回 `Result<Output, ConfigError>`，错误类型包含：
-//! - 操作类型（create/read/update/delete）
-//! - 文件路径
-//! - 底层错误原因
-//!
-//! 方便 API 层进行精确的错误定位和审计。
+//! ## 错误类型
+//! - ConfigError::Io
+//! - ConfigError::Parse
+//! - ConfigError::Serialize
 
 mod config;
 mod config_default;

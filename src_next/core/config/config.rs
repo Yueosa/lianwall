@@ -56,6 +56,8 @@ pub fn create(input: ConfigCreateInput) -> Result<ConfigCreateOutput, ConfigErro
             path: path.clone(), 
             source: e 
         })?;
+    let mut config = config;
+    normalize_paths(&mut config);
     save_config(&path, &config)?;
 
     Ok(ConfigCreateOutput { 
@@ -79,12 +81,16 @@ pub fn read(input: ConfigReadInput) -> Result<ConfigReadOutput, ConfigError> {
             path: path.clone(), 
             source: e 
         })?;
+    let mut config = config;
+    normalize_paths(&mut config);
     Ok(ConfigReadOutput { path, config })
 }
 
 /// U: 更新配置（覆盖写入）
 pub fn update(input: ConfigUpdateInput) -> Result<ConfigUpdateOutput, ConfigError> {
     let path = config_path(input.path);
+    let mut config = input.config;
+    normalize_paths(&mut config);
     
     let modified = if path.exists() {
         let old_content = fs::read_to_string(&path)
@@ -93,7 +99,7 @@ pub fn update(input: ConfigUpdateInput) -> Result<ConfigUpdateOutput, ConfigErro
                 path: path.clone(), 
                 source: e 
             })?;
-        let new_content = toml::to_string_pretty(&input.config)
+        let new_content = toml::to_string_pretty(&config)
             .map_err(|e| ConfigError::Serialize { 
                 path: path.clone(), 
                 source: e 
@@ -104,10 +110,15 @@ pub fn update(input: ConfigUpdateInput) -> Result<ConfigUpdateOutput, ConfigErro
     };
     
     if modified {
-        save_config(&path, &input.config)?;
+        save_config(&path, &config)?;
     }
     
     Ok(ConfigUpdateOutput { path, modified })
+}
+
+fn normalize_paths(config: &mut Config) {
+    config.paths.video_dir = expand_path_buf(&config.paths.video_dir);
+    config.paths.image_dir = expand_path_buf(&config.paths.image_dir);
 }
 
 /// D: 删除配置文件

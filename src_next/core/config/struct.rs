@@ -13,8 +13,8 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathsConfig {
     pub mode: String,
-    pub video_dir: String,
-    pub image_dir: String,
+    pub video_dir: PathBuf,
+    pub image_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
