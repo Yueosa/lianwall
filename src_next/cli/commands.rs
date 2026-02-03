@@ -7,10 +7,6 @@ use clap::{Parser, Subcommand};
 #[command(version = "3.0.0")]
 #[command(about = "🌌 智能动态壁纸管理器", long_about = None)]
 pub struct Cli {
-    /// 启用 debug 追踪
-    #[arg(long, global = true)]
-    pub debug: bool,
-
     /// JSON 格式输出
     #[arg(long, global = true)]
     pub json: bool,

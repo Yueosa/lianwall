@@ -1,8 +1,6 @@
 use colored::Colorize;
 use std::io::{self, Write};
 
-use crate::api::native::r#struct::ApiDebugInfo;
-use crate::api::native::debug::DebugTrace;
 use crate::api::ApiResponse;
 use crate::cli::error::CliError;
 
@@ -41,62 +39,6 @@ pub fn title(text: &str) {
 /// 打印键值对
 pub fn kv(key: &str, value: &str) {
     println!("  {}: {}", key.bright_black(), value);
-}
-
-/// 打印 debug 追踪
-pub fn print_debug_trace(info: &ApiDebugInfo) {
-    println!();
-    title(&format!("🐛 Debug 追踪 (总耗时: {}ms)", info.total_duration_ms));
-
-    for trace in &info.trace {
-        print_trace_recursive(trace, 0);
-    }
-}
-
-fn print_trace_recursive(trace: &DebugTrace, depth: usize) {
-    let indent = "  ".repeat(depth);
-    let prefix = if depth == 0 { "├─" } else { "  ├─" };
-
-    println!(
-        "{}{}[{}] {}",
-        indent,
-        prefix.bright_black(),
-        trace.module.yellow(),
-        format!("{}ms", trace.duration_ms).bright_black()
-    );
-
-    // 打印输入
-    if !trace.input.is_null() && trace.input != serde_json::json!({}) {
-        println!(
-            "{}  │  {} {}",
-            indent,
-            "输入:".bright_black(),
-            trace.input.to_string().bright_black()
-        );
-    }
-
-    // 打印输出或错误
-    if let Some(output) = &trace.output {
-        if !output.is_null() {
-            println!(
-                "{}  │  {} {}",
-                indent,
-                "输出:".green(),
-                output.to_string().bright_black()
-            );
-        }
-    }
-
-    if let Some(error) = &trace.error {
-        println!("{}  │  {} {}", indent, "错误:".red(), error.red());
-    }
-
-    // 递归打印子调用
-    if !trace.children.is_empty() {
-        for child in &trace.children {
-            print_trace_recursive(child, depth + 1);
-        }
-    }
 }
 
 /// 打印错误链

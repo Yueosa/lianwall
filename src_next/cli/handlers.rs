@@ -19,60 +19,53 @@ fn detect_mode_from_path(path: &PathBuf) -> Option<RunMode> {
 }
 
 pub fn handle_command(cli: Cli) -> Result<(), CliError> {
-    let debug = cli.debug;
     let json = cli.json;
 
     match cli.command {
-        Commands::Start => handle_start(debug, json),
-        Commands::Stop => handle_stop(debug, json),
-        Commands::Next => handle_next(debug, json),
-        Commands::Switch => handle_switch(debug, json),
-        Commands::Reload => handle_reload(debug, json),
-        Commands::Status => handle_status(debug, json),
-        Commands::List { filter } => handle_list(filter, debug, json),
-        Commands::Lock { path } => handle_lock(path, debug, json),
-        Commands::Unlock { path } => handle_unlock(path, debug, json),
-        Commands::Stats => handle_stats(debug, json),
-        Commands::Diagnose => handle_diagnose(debug, json),
-        Commands::Config { action } => handle_config(action, debug, json),
+        Commands::Start => handle_start(json),
+        Commands::Stop => handle_stop(json),
+        Commands::Next => handle_next(json),
+        Commands::Switch => handle_switch(json),
+        Commands::Reload => handle_reload(json),
+        Commands::Status => handle_status(json),
+        Commands::List { filter } => handle_list(filter, json),
+        Commands::Lock { path } => handle_lock(path, json),
+        Commands::Unlock { path } => handle_unlock(path, json),
+        Commands::Stats => handle_stats(json),
+        Commands::Diagnose => handle_diagnose(json),
+        Commands::Config { action } => handle_config(action, json),
     }
 }
 
-fn handle_start(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_start(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::start(debug)?;
+    let response = api::start(false)?;
 
     if json {
         output::print_json(&response);
     } else {
         output::success(&response.result.message);
-        if let Some(debug_info) = &response.debug {
-            output::print_debug_trace(debug_info);
-        }
     }
 
     Ok(())
 }
 
-fn handle_stop(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_stop(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::stop(debug)?;
+    let response = api::stop(false)?;
 
     if json {
         output::print_json(&response);
     } else {
         output::success(&response.result.message);
-        if let Some(debug_info) = &response.debug {
-            output::print_debug_trace(debug_info);
-        }
     }
 
     Ok(())
 }
 
-fn handle_next(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_next(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::next(debug)?;
+    let response = api::next(false)?;
 
     if json {
         output::print_json(&response);
@@ -89,18 +82,14 @@ fn handle_next(debug: bool, json: bool) -> Result<(), CliError> {
         if response.result.shuffled {
             output::info("🎲 触发了权重洗牌");
         }
-
-        if let Some(debug_info) = &response.debug {
-            output::print_debug_trace(debug_info);
-        }
     }
 
     Ok(())
 }
 
-fn handle_switch(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_switch(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::switch_mode(debug)?;
+    let response = api::switch_mode(false)?;
 
     if json {
         output::print_json(&response);
@@ -110,18 +99,14 @@ fn handle_switch(debug: bool, json: bool) -> Result<(), CliError> {
             response.result.old_mode, response.result.new_mode
         ));
         output::kv("当前壁纸", &response.result.wallpaper.display().to_string());
-
-        if let Some(debug_info) = &response.debug {
-            output::print_debug_trace(debug_info);
-        }
     }
 
     Ok(())
 }
 
-fn handle_reload(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_reload(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::reload(None, debug)?;
+    let response = api::reload(None, false)?;
 
     if json {
         output::print_json(&response);
@@ -140,18 +125,14 @@ fn handle_reload(debug: bool, json: bool) -> Result<(), CliError> {
         if response.result.removed_count > 0 {
             output::warning(&format!("➖ 移除 {} 个文件", response.result.removed_count));
         }
-
-        if let Some(debug_info) = &response.debug {
-            output::print_debug_trace(debug_info);
-        }
     }
 
     Ok(())
 }
 
-fn handle_status(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_status(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::status(debug)?;
+    let response = api::status(false)?;
 
     if json {
         output::print_json(&response);
@@ -193,10 +174,6 @@ fn handle_status(debug: bool, json: bool) -> Result<(), CliError> {
         print_mode_stats(image_stats);
     }
 
-    if let Some(debug_info) = &response.debug {
-        output::print_debug_trace(debug_info);
-    }
-
     Ok(())
 }
 
@@ -215,9 +192,9 @@ fn print_mode_stats(stats: &crate::api::native::r#struct::ModeStatsOutput) {
     output::kv("平均权重", &format!("{:.2}", stats.avg_value));
 }
 
-fn handle_list(filter: String, debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_list(filter: String, json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::list(None, debug)?;
+    let response = api::list(None, false)?;
 
     if json {
         output::print_json(&response);
@@ -259,14 +236,10 @@ fn handle_list(filter: String, debug: bool, json: bool) -> Result<(), CliError> 
         _ => return Err(CliError::InvalidFilter(filter)),
     }
 
-    if let Some(debug_info) = &response.debug {
-        output::print_debug_trace(debug_info);
-    }
-
     Ok(())
 }
 
-fn handle_lock(path: PathBuf, debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_lock(path: PathBuf, json: bool) -> Result<(), CliError> {
     api::init()?;
 
     // 检查路径存在
@@ -279,23 +252,19 @@ fn handle_lock(path: PathBuf, debug: bool, json: bool) -> Result<(), CliError> {
         CliError::InvalidPath(format!("无法识别文件类型: {}", path.display()))
     })?;
 
-    let response = api::lock(mode, path, debug)?;
+    let response = api::lock(mode, path, false)?;
 
     if json {
         output::print_json(&response);
     } else {
         output::success(&response.result.message);
         output::kv("路径", &response.result.path.display().to_string());
-
-        if let Some(debug_info) = &response.debug {
-            output::print_debug_trace(debug_info);
-        }
     }
 
     Ok(())
 }
 
-fn handle_unlock(path: PathBuf, debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_unlock(path: PathBuf, json: bool) -> Result<(), CliError> {
     api::init()?;
 
     // 检查路径存在
@@ -308,25 +277,21 @@ fn handle_unlock(path: PathBuf, debug: bool, json: bool) -> Result<(), CliError>
         CliError::InvalidPath(format!("无法识别文件类型: {}", path.display()))
     })?;
 
-    let response = api::unlock(mode, path, debug)?;
+    let response = api::unlock(mode, path, false)?;
 
     if json {
         output::print_json(&response);
     } else {
         output::success(&response.result.message);
         output::kv("路径", &response.result.path.display().to_string());
-
-        if let Some(debug_info) = &response.debug {
-            output::print_debug_trace(debug_info);
-        }
     }
 
     Ok(())
 }
 
-fn handle_stats(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_stats(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::stats(None, debug)?;
+    let response = api::stats(None, false)?;
 
     if json {
         output::print_json(&response);
@@ -345,16 +310,12 @@ fn handle_stats(debug: bool, json: bool) -> Result<(), CliError> {
     output::kv("平均权重", &format!("{:.2}", response.result.avg_value));
     output::kv("总跳过次数", &response.result.total_skips.to_string());
 
-    if let Some(debug_info) = &response.debug {
-        output::print_debug_trace(debug_info);
-    }
-
     Ok(())
 }
 
-fn handle_diagnose(debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_diagnose(json: bool) -> Result<(), CliError> {
     api::init()?;
-    let response = api::diagnose(debug)?;
+    let response = api::diagnose(false)?;
 
     if json {
         output::print_json(&response);
@@ -439,30 +400,22 @@ fn handle_diagnose(debug: bool, json: bool) -> Result<(), CliError> {
         }
     }
 
-    if let Some(debug_info) = &response.debug {
-        output::print_debug_trace(debug_info);
-    }
-
     Ok(())
 }
 
-fn handle_config(action: ConfigAction, debug: bool, json: bool) -> Result<(), CliError> {
+fn handle_config(action: ConfigAction, json: bool) -> Result<(), CliError> {
     match action {
         ConfigAction::Get { key } => {
-            let response = api::config_get(&key, debug)?;
+            let response = api::config_get(&key, false)?;
 
             if json {
                 output::print_json(&response);
             } else {
                 output::success(&format!("{} = {}", response.result.key, response.result.value));
-
-                if let Some(debug_info) = &response.debug {
-                    output::print_debug_trace(debug_info);
-                }
             }
         }
         ConfigAction::Set { key, value } => {
-            let response = api::config_set(&key, &value, debug)?;
+            let response = api::config_set(&key, &value, false)?;
 
             if json {
                 output::print_json(&response);
@@ -471,24 +424,16 @@ fn handle_config(action: ConfigAction, debug: bool, json: bool) -> Result<(), Cl
                     "已更新配置: {} = {} → {}",
                     response.result.key, response.result.old_value, response.result.new_value
                 ));
-
-                if let Some(debug_info) = &response.debug {
-                    output::print_debug_trace(debug_info);
-                }
             }
         }
         ConfigAction::Show => {
-            let response = api::config_show(debug)?;
+            let response = api::config_show(false)?;
 
             if json {
                 output::print_json(&response);
             } else {
                 output::title("⚙️  配置文件");
                 println!("{}", response.result.config_toml);
-
-                if let Some(debug_info) = &response.debug {
-                    output::print_debug_trace(debug_info);
-                }
             }
         }
         ConfigAction::Reset { yes } => {
@@ -499,7 +444,7 @@ fn handle_config(action: ConfigAction, debug: bool, json: bool) -> Result<(), Cl
                 }
             }
 
-            let response = api::config_reset(debug)?;
+            let response = api::config_reset(false)?;
 
             if json {
                 output::print_json(&response);
@@ -508,10 +453,6 @@ fn handle_config(action: ConfigAction, debug: bool, json: bool) -> Result<(), Cl
 
                 if let Some(backup_path) = &response.result.backup_path {
                     output::info(&format!("备份已保存: {}", backup_path.display()));
-                }
-
-                if let Some(debug_info) = &response.debug {
-                    output::print_debug_trace(debug_info);
                 }
             }
         }
