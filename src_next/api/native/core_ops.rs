@@ -355,6 +355,7 @@ pub fn list(mode: Option<RunMode>, debug: bool) -> Result<ApiResponse<ApiListOut
             locked: info.locked,
             skip_streak: info.skip_streak,
             last_played: info.last_played,
+            time_range: info.time_range,
         };
 
         Ok(ApiListOutput {
@@ -555,4 +556,152 @@ pub fn stats(mode: Option<RunMode>, debug: bool) -> Result<ApiResponse<ApiStatsO
             Err(e)
         }
     }
+}
+
+/// 列出指定模式的所有时间段目录
+pub fn list_time_ranges(
+    mode: Option<RunMode>,
+    debug: bool,
+) -> Result<ApiResponse<ApiTimeRangesOutput>, ApiError> {
+    use crate::core::wallpaper::{scan_all_time_ranges, WallpaperScanInput};
+
+    if debug {
+        debug::enable_debug();
+    }
+
+    let guard = DebugGuard::new("api::list_time_ranges", json!({"mode": format!("{:?}", mode)}));
+
+    let result = with_context(|ctx| {
+        let target_mode = mode.unwrap_or_else(|| ctx.manager.get_status().current_mode);
+        let config = ctx.manager.config_get();
+
+        // 根据模式获取目录和扩展名
+        let (base_dir, extensions) = match target_mode {
+            RunMode::Video => (
+                config.paths.video_dir.clone(),
+                vec!["mp4".to_string(), "mkv".to_string(), "webm".to_string()],
+            ),
+            RunMode::Image => (
+                config.paths.image_dir.clone(),
+                vec![
+                    "jpg".to_string(),
+                    "jpeg".to_string(),
+                    "png".to_string(),
+                    "gif".to_string(),
+                    "webp".to_string(),
+                ],
+            ),
+        };
+
+        // 扫描所有时间段目录
+        let ranges = scan_all_time_ranges(WallpaperScanInput {
+            base_dir: base_dir.clone(),
+            extensions: extensions.clone(),
+            use_time_ranges: true,
+        })
+        .map_err(|e| ApiError::track(crate::core::manager::ManagerError::Wallpaper(e), "list_time_ranges"))?;
+
+        // 计算根目录壁纸数量
+        let root_count = count_root_wallpapers(&base_dir, &extensions);
+
+        Ok(ApiTimeRangesOutput {
+            mode: target_mode,
+            ranges: ranges
+                .into_iter()
+                .map(|r| ApiTimeRangeInfo {
+                    name: r.name,
+                    start_time: r.start_time,
+                    end_time: r.end_time,
+                    wallpaper_count: r.wallpaper_count,
+                    is_active: r.is_active,
+                })
+                .collect(),
+            root_count,
+        })
+    });
+
+    match result {
+        Ok(output) => {
+            guard.success(json!({
+                "mode": format!("{:?}", output.mode),
+                "range_count": output.ranges.len(),
+                "root_count": output.root_count
+            }));
+            let debug_info = if debug {
+                Some(ApiDebugInfo {
+                    total_duration_ms: debug::get_trace()
+                        .first()
+                        .map(|t| t.duration_ms)
+                        .unwrap_or(0),
+                    trace: debug::get_trace(),
+                })
+            } else {
+                None
+            };
+            debug::disable_debug();
+            Ok(ApiResponse::success(output, debug_info))
+        }
+        Err(e) => {
+            guard.error(&e.to_string());
+            debug::disable_debug();
+            Err(e)
+        }
+    }
+}
+
+/// 计算根目录（非时间段目录）中的壁纸数量
+fn count_root_wallpapers(base_dir: &std::path::Path, extensions: &[String]) -> usize {
+    use crate::core::wallpaper::parse_time_range;
+    use std::fs;
+
+    let mut count = 0;
+
+    if let Ok(entries) = fs::read_dir(base_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                // 检查扩展名
+                if let Some(ext) = path.extension() {
+                    let ext_lower = ext.to_string_lossy().to_lowercase();
+                    if extensions.iter().any(|e| e == &ext_lower) {
+                        count += 1;
+                    }
+                }
+            } else if path.is_dir() {
+                // 检查是否为时间段目录
+                let dir_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if parse_time_range(dir_name).is_none() {
+                    // 非时间段目录，递归计数
+                    count += count_root_wallpapers_recursive(&path, extensions);
+                }
+            }
+        }
+    }
+
+    count
+}
+
+/// 递归计算非时间段目录中的壁纸数量
+fn count_root_wallpapers_recursive(dir: &std::path::Path, extensions: &[String]) -> usize {
+    use std::fs;
+
+    let mut count = 0;
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(ext) = path.extension() {
+                    let ext_lower = ext.to_string_lossy().to_lowercase();
+                    if extensions.iter().any(|e| e == &ext_lower) {
+                        count += 1;
+                    }
+                }
+            } else if path.is_dir() {
+                count += count_root_wallpapers_recursive(&path, extensions);
+            }
+        }
+    }
+
+    count
 }

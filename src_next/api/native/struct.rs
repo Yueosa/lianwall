@@ -98,6 +98,9 @@ pub struct ApiWallpaperInfo {
     pub locked: bool,
     pub skip_streak: u32,
     pub last_played: Option<u64>,
+    /// 所属时间段目录名（如 "18-23"），根目录为 None
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_range: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,4 +180,28 @@ pub struct ApiConfigShowOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfigResetOutput {
     pub message: String,
+}
+
+// --- 时间段列表输出 ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiTimeRangesOutput {
+    pub mode: RunMode,
+    pub ranges: Vec<ApiTimeRangeInfo>,
+    /// 根目录壁纸数量（不属于任何时间段）
+    pub root_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiTimeRangeInfo {
+    /// 目录名（如 "18-23"）
+    pub name: String,
+    /// 格式化的开始时间（如 "18:00"）
+    pub start_time: String,
+    /// 格式化的结束时间（如 "23:00"）
+    pub end_time: String,
+    /// 该时间段内的壁纸数量
+    pub wallpaper_count: usize,
+    /// 当前时间是否在此范围内
+    pub is_active: bool,
 }

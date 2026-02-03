@@ -74,7 +74,7 @@ impl ModeManager {
             use_time_ranges: false,
         })?;
 
-        let full_paths: HashSet<PathBuf> = full_scan.wallpapers.into_iter().collect();
+        let full_paths: HashSet<PathBuf> = full_scan.wallpapers.into_iter().map(|w| w.path).collect();
 
         // 2. 移除已删除的文件
         let before_count = self.all_records.len();
@@ -89,7 +89,7 @@ impl ModeManager {
         })?;
 
         // 4. 提取活跃记录（时间段匹配且未锁定）
-        let active_paths: HashSet<PathBuf> = time_scan.wallpapers.iter().cloned().collect();
+        let active_paths: HashSet<PathBuf> = time_scan.wallpapers.iter().map(|w| w.path.clone()).collect();
         self.active_records = self
             .all_records
             .iter()
@@ -104,6 +104,7 @@ impl ModeManager {
         let new_files: Vec<PathBuf> = time_scan
             .wallpapers
             .into_iter()
+            .map(|w| w.path)
             .filter(|p| !existing_paths.contains(p))
             .collect();
 
@@ -248,27 +249,43 @@ impl ModeManager {
 
     /// 列出所有壁纸（分类：活跃/锁定/非活跃）
     pub fn list(&self) -> WallpaperListOutput {
-        // 获取当前时间段匹配的路径
-        let time_scan_paths: HashSet<PathBuf> = match scan(WallpaperScanInput {
+        use std::collections::HashMap;
+
+        // 获取当前时间段匹配的扫描结果（含时间段归属信息）
+        let time_scan_result = scan(WallpaperScanInput {
             base_dir: self.scan_config.base_dir.clone(),
             extensions: self.scan_config.extensions.clone(),
             use_time_ranges: self.scan_config.use_time_ranges,
-        }) {
-            Ok(result) => result.wallpapers.into_iter().collect(),
-            Err(_) => HashSet::new(),
-        };
+        });
+
+        // 构建路径到时间段的映射
+        let (time_scan_paths, time_range_map): (HashSet<PathBuf>, HashMap<PathBuf, Option<String>>) = 
+            match time_scan_result {
+                Ok(result) => {
+                    let paths: HashSet<PathBuf> = result.wallpapers.iter().map(|w| w.path.clone()).collect();
+                    let map: HashMap<PathBuf, Option<String>> = result.wallpapers
+                        .into_iter()
+                        .map(|w| (w.path, w.time_range))
+                        .collect();
+                    (paths, map)
+                }
+                Err(_) => (HashSet::new(), HashMap::new()),
+            };
 
         let mut active = Vec::new();
         let mut locked = Vec::new();
         let mut inactive = Vec::new();
 
         for record in &self.all_records {
+            let time_range = time_range_map.get(&record.path).cloned().flatten();
+            
             let info = WallpaperInfo {
                 path: record.path.clone(),
                 weight: record.value,
                 locked: record.locked,
                 skip_streak: record.skip_streak,
                 last_played: record.last_played,
+                time_range,
             };
 
             if record.locked {

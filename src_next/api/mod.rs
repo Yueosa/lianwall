@@ -4,7 +4,7 @@
 //!
 //! ## 模块结构
 //! - `native`: 原生 Rust API（供 CLI 调用）
-//! - `ffi`: FFI 接口（未来 GUI 支持）
+//! - `ffi`: FFI 接口（GUI 支持）
 //!
 //! ## 公共接口（函数签名）
 //!
@@ -21,6 +21,7 @@
 //!
 //! ### 壁纸管理
 //! - `list(mode: Option<RunMode>, debug: bool) -> Result<ApiResponse<ApiListOutput>, ApiError>`
+//! - `list_time_ranges(mode: Option<RunMode>, debug: bool) -> Result<ApiResponse<ApiTimeRangesOutput>, ApiError>`
 //! - `lock(mode: RunMode, path: PathBuf, debug: bool) -> Result<ApiResponse<ApiLockOutput>, ApiError>`
 //! - `unlock(mode: RunMode, path: PathBuf, debug: bool) -> Result<ApiResponse<ApiLockOutput>, ApiError>`
 //! - `stats(mode: Option<RunMode>, debug: bool) -> Result<ApiResponse<ApiStatsOutput>, ApiError>`
@@ -40,6 +41,7 @@ pub mod native;
 
 // 重导出常用类型
 pub use native::{
-    config_get, config_reset, config_set, config_show, diagnose, init, list, lock, next, reload,
-    start, stats, status, stop, switch_mode, unlock, uninstall, ApiError, ApiResponse,
+    config_get, config_reset, config_set, config_show, diagnose, init, list, list_time_ranges,
+    lock, next, reload, start, stats, status, stop, switch_mode, unlock, uninstall, ApiError,
+    ApiResponse,
 };

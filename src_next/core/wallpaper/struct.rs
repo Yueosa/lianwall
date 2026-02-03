@@ -25,14 +25,38 @@ pub struct WallpaperScanInput {
     pub use_time_ranges: bool,
 }
 
+/// 单个壁纸的扫描结果
+#[derive(Debug, Clone)]
+pub struct ScannedWallpaper {
+    /// 壁纸文件路径
+    pub path: PathBuf,
+    /// 所属时间段目录名（如 "18-23"），根目录为 None
+    pub time_range: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct WallpaperScanOutput {
-    /// 所有符合条件的壁纸文件路径
-    pub wallpapers: Vec<PathBuf>,
+    /// 所有符合条件的壁纸（含时间段归属信息）
+    pub wallpapers: Vec<ScannedWallpaper>,
     /// 匹配到的时间段目录名列表
     pub matched_ranges: Vec<String>,
     /// 扫描到的文件总数（包括不符合扩展名的）
     pub total_scanned: usize,
     /// 来自根目录的壁纸数量
     pub from_root: usize,
+}
+
+/// 时间段目录信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeRangeInfo {
+    /// 目录名（如 "18-23"）
+    pub name: String,
+    /// 格式化的开始时间（如 "18:00"）
+    pub start_time: String,
+    /// 格式化的结束时间（如 "23:00"）
+    pub end_time: String,
+    /// 该时间段内的壁纸数量
+    pub wallpaper_count: usize,
+    /// 当前时间是否在此范围内
+    pub is_active: bool,
 }

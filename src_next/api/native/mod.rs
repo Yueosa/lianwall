@@ -54,7 +54,7 @@ pub mod r#struct;
 // 导出核心函数
 pub use config_ops::{config_get, config_reset, config_set, config_show};
 pub use context::init;
-pub use core_ops::{list, lock, next, reload, start, stats, status, stop, switch_mode, unlock};
+pub use core_ops::{list, list_time_ranges, lock, next, reload, start, stats, status, stop, switch_mode, unlock};
 pub use system_ops::{diagnose, uninstall};
 
 // 导出类型

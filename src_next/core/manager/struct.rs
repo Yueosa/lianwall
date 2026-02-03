@@ -122,6 +122,8 @@ pub struct WallpaperInfo {
     pub skip_streak: u32,
     /// 最后播放时间戳
     pub last_played: Option<u64>,
+    /// 所属时间段目录名（如 "18-23"），根目录为 None
+    pub time_range: Option<String>,
 }
 
 #[derive(Debug, Clone)]

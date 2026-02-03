@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use chrono::Timelike;
 
 use crate::core::wallpaper::error::WallpaperError;
-use crate::core::wallpaper::r#struct::{WallpaperScanInput, WallpaperScanOutput};
+use crate::core::wallpaper::r#struct::{ScannedWallpaper, WallpaperScanInput, WallpaperScanOutput};
 use crate::core::wallpaper::time_range::{is_in_range, parse_time_range};
 
 /// 扫描壁纸目录
@@ -39,6 +39,7 @@ pub fn scan(input: WallpaperScanInput) -> Result<WallpaperScanOutput, WallpaperE
         total_scanned: 0,
         from_root: 0,
         is_root: true,
+        current_time_range: None,
     };
 
     let wallpapers = recursive_scan(&input.base_dir, &mut context)?;
@@ -66,10 +67,12 @@ struct ScanContext<'a> {
     total_scanned: usize,
     from_root: usize,
     is_root: bool,
+    /// 当前所在的时间段目录名（用于标记壁纸归属）
+    current_time_range: Option<String>,
 }
 
 /// 递归扫描目录
-fn recursive_scan(dir: &Path, ctx: &mut ScanContext) -> Result<Vec<PathBuf>, WallpaperError> {
+fn recursive_scan(dir: &Path, ctx: &mut ScanContext) -> Result<Vec<ScannedWallpaper>, WallpaperError> {
     let mut result = Vec::new();
     let is_root = ctx.is_root;
     ctx.is_root = false;
@@ -91,7 +94,10 @@ fn recursive_scan(dir: &Path, ctx: &mut ScanContext) -> Result<Vec<PathBuf>, Wal
         if path.is_file() {
             // 检查文件扩展名
             if has_valid_extension(&path, ctx.extensions) {
-                result.push(path.clone());
+                result.push(ScannedWallpaper {
+                    path: path.clone(),
+                    time_range: ctx.current_time_range.clone(),
+                });
                 if is_root {
                     ctx.from_root += 1;
                 }
@@ -108,13 +114,16 @@ fn recursive_scan(dir: &Path, ctx: &mut ScanContext) -> Result<Vec<PathBuf>, Wal
                     Some(range) if is_in_range(&range, ctx.current_time) => {
                         // 匹配时间段，递归进入
                         ctx.matched_ranges.push(dir_name.to_string());
+                        let prev_range = ctx.current_time_range.clone();
+                        ctx.current_time_range = Some(dir_name.to_string());
                         result.extend(recursive_scan(&path, ctx)?);
+                        ctx.current_time_range = prev_range;
                     }
                     Some(_) => {
                         // 是时间段但不匹配，跳过整个目录
                     }
                     None => {
-                        // 普通目录，正常递归
+                        // 普通目录，正常递归（保持当前时间段标记）
                         result.extend(recursive_scan(&path, ctx)?);
                     }
                 }
@@ -142,4 +151,90 @@ fn has_valid_extension(path: &Path, extensions: &[String]) -> bool {
 fn get_current_time() -> (u8, u8) {
     let now = chrono::Local::now();
     (now.hour() as u8, now.minute() as u8)
+}
+
+/// 扫描目录下所有时间段子目录（不管当前时间是否匹配）
+///
+/// 用于 GUI 展示时间树结构
+pub fn scan_all_time_ranges(input: WallpaperScanInput) -> Result<Vec<crate::core::wallpaper::r#struct::TimeRangeInfo>, WallpaperError> {
+    use crate::core::wallpaper::time_range::format_time_range;
+
+    // 检查基础目录是否存在
+    if !input.base_dir.exists() {
+        return Err(WallpaperError::DirectoryNotFound {
+            path: input.base_dir.clone(),
+        });
+    }
+
+    let current_time = get_current_time();
+    let mut result = Vec::new();
+
+    // 只扫描第一层目录
+    let entries = fs::read_dir(&input.base_dir).map_err(|e| WallpaperError::ScanFailed {
+        path: input.base_dir.clone(),
+        source: e,
+    })?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| WallpaperError::ScanFailed {
+            path: input.base_dir.clone(),
+            source: e,
+        })?;
+
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+
+        // 尝试解析为时间段
+        if let Some(range) = parse_time_range(dir_name) {
+            // 递归计数该目录下的壁纸数量
+            let count = count_wallpapers_in_dir(&path, &input.extensions);
+            let (start_time, end_time) = format_time_range(&range);
+            let is_active = is_in_range(&range, current_time);
+
+            result.push(crate::core::wallpaper::r#struct::TimeRangeInfo {
+                name: dir_name.to_string(),
+                start_time,
+                end_time,
+                wallpaper_count: count,
+                is_active,
+            });
+        }
+    }
+
+    // 按开始时间排序
+    result.sort_by_key(|r| {
+        let parts: Vec<&str> = r.start_time.split(':').collect();
+        if parts.len() == 2 {
+            parts[0].parse::<u16>().unwrap_or(0) * 60 + parts[1].parse::<u16>().unwrap_or(0)
+        } else {
+            0
+        }
+    });
+
+    Ok(result)
+}
+
+/// 递归计算目录下符合扩展名的文件数量
+fn count_wallpapers_in_dir(dir: &Path, extensions: &[String]) -> usize {
+    let mut count = 0;
+
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && has_valid_extension(&path, extensions) {
+                count += 1;
+            } else if path.is_dir() {
+                count += count_wallpapers_in_dir(&path, extensions);
+            }
+        }
+    }
+
+    count
 }

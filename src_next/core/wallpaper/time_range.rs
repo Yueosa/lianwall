@@ -86,3 +86,16 @@ pub fn validate_time_range(input: &str) -> Result<TimeRange, WallpaperError> {
         reason: "格式应为 HH-HH 或 HHMM-HHMM".to_string(),
     })
 }
+
+/// 将 TimeRange 格式化为可读字符串 (HH:MM)
+pub fn format_time_range(range: &TimeRange) -> (String, String) {
+    let start_h = range.start_minutes / 60;
+    let start_m = range.start_minutes % 60;
+    let end_h = range.end_minutes / 60;
+    let end_m = range.end_minutes % 60;
+
+    (
+        format!("{:02}:{:02}", start_h, start_m),
+        format!("{:02}:{:02}", end_h, end_m),
+    )
+}

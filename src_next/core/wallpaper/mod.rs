@@ -2,13 +2,14 @@
 //!
 //! ## 公共接口（函数签名）
 //! - scan(input: WallpaperScanInput) -> Result<WallpaperScanOutput, WallpaperError>
+//! - scan_all_time_ranges(input: WallpaperScanInput) -> Result<Vec<TimeRangeInfo>, WallpaperError>
 //! - parse_time_range(input: &str) -> Option<TimeRange>
 //! - is_in_range(range: &TimeRange, now: (u8, u8)) -> bool
 //! - validate_time_range(input: &str) -> Result<TimeRange, WallpaperError>
 //!
 //! ## 输入/输出结构体
 //! - WallpaperScanInput / WallpaperScanOutput
-//! - TimeRange
+//! - ScannedWallpaper / TimeRange / TimeRangeInfo
 //!
 //! ## 职责
 //! - 扫描壁纸目录并返回符合条件的文件列表
@@ -28,13 +29,13 @@ mod r#struct;
 mod time_range;
 
 // 导出核心函数
-pub use scanner::scan;
+pub use scanner::{scan, scan_all_time_ranges};
 
 // 导出错误类型
 pub use error::WallpaperError;
 
 // 导出结构体
-pub use r#struct::{TimeRange, WallpaperScanInput, WallpaperScanOutput};
+pub use r#struct::{ScannedWallpaper, TimeRange, TimeRangeInfo, WallpaperScanInput, WallpaperScanOutput};
 
 // 导出时间段工具函数
-pub use time_range::{is_in_range, parse_time_range, validate_time_range};
+pub use time_range::{format_time_range, is_in_range, parse_time_range, validate_time_range};
