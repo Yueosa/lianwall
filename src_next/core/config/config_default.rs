@@ -56,6 +56,8 @@ base = 100.0
 select_penalty = 10.0
 # 扰动比例
 perturbation_ratio = 0.03
+# 容差阈值 (用于权重接近时的随机化)
+tolerance = 1.0
 # 归一化阈值
 normalization_threshold = 500.0
 # 归一化目标

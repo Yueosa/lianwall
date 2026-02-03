@@ -34,6 +34,7 @@ pub struct WeightConfig {
     pub base: f64,
     pub select_penalty: f64,
     pub perturbation_ratio: f64,
+    pub tolerance: f64,
     pub normalization_threshold: f64,
     pub normalization_target: f64,
     pub shuffle_period: u32,

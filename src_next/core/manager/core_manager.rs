@@ -9,7 +9,7 @@ use crate::core::manager::r#struct::{
     ManagerNextOutput, ManagerReloadOutput, ManagerStatusOutput, ModeStats,
 };
 use crate::core::runtime::{
-    scheduler_run, RunMode, RuntimeState, SchedulerCallbacks, SchedulerConfig, SchedulerRunInput,
+    scheduler_run, RunMode, RuntimeState, SchedulerConfig, SchedulerEvent, SchedulerRunInput,
 };
 use crate::core::wallpaper::WallpaperScanInput;
 
@@ -39,8 +39,12 @@ impl CoreManager {
     /// 流程：
     /// 1. reload Video 模式（初始化 + 文件检测）
     /// 2. 立即播放第一张壁纸
-    /// 3. 启动调度器（阻塞）
+    /// 3. 启动调度器线程
+    /// 4. 主线程处理调度器事件
     pub fn start(&mut self) -> Result<(), ManagerError> {
+        use std::sync::mpsc;
+        use std::thread;
+
         // 1. 初始化 Video ModeManager（会自动 reload）
         self.ensure_mode_manager(RunMode::Video)?;
 
@@ -57,18 +61,44 @@ impl CoreManager {
             vram_recovery: self.config.vram.recovery_percent as u32,
         };
 
-        // 4. 启动调度器（阻塞）
+        // 4. 创建事件通道
+        let (tx, rx) = mpsc::channel::<SchedulerEvent>();
+
+        // 5. 启动调度器线程
         let state = self.state.clone();
-        
-        scheduler_run(SchedulerRunInput {
-            config: scheduler_config,
-            state,
-            callbacks: SchedulerCallbacks {
-                on_switch: |mode| self.next(mode).map(|_| ()).map_err(|e| e.to_string()),
-                on_degrade: || self.switch_to_image().map_err(|e| e.to_string()),
-                on_upgrade: || self.switch_to_video().map_err(|e| e.to_string()),
-            },
-        })?;
+        thread::spawn(move || {
+            if let Err(e) = scheduler_run(SchedulerRunInput {
+                config: scheduler_config,
+                state,
+                event_sender: tx,
+            }) {
+                eprintln!("调度器错误: {:?}", e);
+            }
+        });
+
+        // 6. 主线程处理事件
+        for event in rx {
+            match event {
+                SchedulerEvent::SwitchWallpaper(mode) => {
+                    if let Err(e) = self.next(mode) {
+                        eprintln!("切换壁纸失败: {:?}", e);
+                    }
+                }
+                SchedulerEvent::DegradeToImage => {
+                    if let Err(e) = self.switch_to_image() {
+                        eprintln!("降级到图片模式失败: {:?}", e);
+                    }
+                }
+                SchedulerEvent::UpgradeToVideo => {
+                    if let Err(e) = self.switch_to_video() {
+                        eprintln!("恢复到视频模式失败: {:?}", e);
+                    }
+                }
+                SchedulerEvent::Shutdown => {
+                    break;
+                }
+            }
+        }
 
         Ok(())
     }
