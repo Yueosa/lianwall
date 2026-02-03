@@ -25,12 +25,9 @@ pub fn set(input: EngineSetInput) -> Result<EngineSetOutput, EngineError> {
         }
     })?;
 
-    // 2. 先停止所有相关进程（避免内存泄漏）
+    // 2. 先停止 mpvpaper（避免内存泄漏）
     stop(EngineStopInput {
         engine_type: EngineType::MpvPaper,
-    })?;
-    super::swww::stop(EngineStopInput {
-        engine_type: EngineType::Swww,
     })?;
 
     // 3. 自动检测显示器输出列表

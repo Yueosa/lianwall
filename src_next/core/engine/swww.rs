@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
@@ -25,34 +25,29 @@ pub fn set(input: EngineSetInput) -> Result<EngineSetOutput, EngineError> {
         }
     })?;
 
-    // 2. 先停止 mpvpaper（避免冲突和内存占用）
-    super::mpvpaper::stop(EngineStopInput {
-        engine_type: EngineType::MpvPaper,
-    })?;
-
-    // 3. 检查 swww-daemon 是否运行
+    // 2. 检查 swww-daemon 是否运行
     let daemon_running = is_daemon_running();
 
-    // 4. 如果 daemon 未运行，先启动（使用 --no-cache 避免旧壁纸闪现）
+    // 3. 如果 daemon 未运行，先启动（使用 --no-cache 避免旧壁纸闪现）
     if !daemon_running {
         start_daemon()?;
     }
 
-    // 5. 构建 swww img 命令
+    // 4. 构建 swww img 命令
     let mut cmd = Command::new("swww");
     cmd.arg("img").arg(&input.wallpaper_path);
 
-    // 6. 添加用户参数
+    // 5. 添加用户参数
     for arg in &input.extra_args {
         cmd.arg(arg);
     }
 
-    // 7. 如果是首次启动且没有用户指定 transition-type，强制用 none 避免闪烁
+    // 6. 如果是首次启动且没有用户指定 transition-type，强制用 none 避免闪烁
     if !daemon_running && !input.extra_args.iter().any(|a| a.contains("transition-type")) {
         cmd.args(["--transition-type", "none"]);
     }
 
-    // 8. 执行命令
+    // 7. 执行命令
     let status = cmd.status().map_err(|e| EngineError::CommandFailed {
         command: "swww img".to_string(),
         source: e,
@@ -71,7 +66,15 @@ pub fn set(input: EngineSetInput) -> Result<EngineSetOutput, EngineError> {
 
 /// 停止 swww
 pub fn stop(_input: EngineStopInput) -> Result<EngineStopOutput, EngineError> {
-    let _ = Command::new("swww").arg("kill").status();
+    if !is_daemon_running() {
+        return Ok(EngineStopOutput {});
+    }
+
+    let _ = Command::new("swww")
+        .arg("kill")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     Ok(EngineStopOutput {})
 }
 
