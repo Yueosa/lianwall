@@ -21,8 +21,8 @@ pub fn config_get(key: &str, debug: bool) -> Result<ApiResponse<ApiConfigGetOutp
 
         let value = match key {
             "paths.mode" => config.paths.mode,
-            "paths.video_dir" => config.paths.video_dir.clone(),
-            "paths.image_dir" => config.paths.image_dir.clone(),
+            "paths.video_dir" => config.paths.video_dir.display().to_string(),
+            "paths.image_dir" => config.paths.image_dir.display().to_string(),
             "video_engine.interval" => config.video_engine.interval.to_string(),
             "image_engine.interval" => config.image_engine.interval.to_string(),
             "weight.base" => config.weight.base.to_string(),
@@ -80,7 +80,7 @@ pub fn config_set(
         // 记录旧值
         let old_value = match key {
             "paths.mode" => config.paths.mode.clone(),
-            "paths.video_dir" => config.paths.video_dir.clone(),
+            "paths.video_dir" => config.paths.video_dir.display().to_string(),
             "weight.base" => config.weight.base.to_string(),
             _ => return Err(ApiError::InvalidConfigKey(key.to_string())),
         };
@@ -88,8 +88,8 @@ pub fn config_set(
         // 设置新值
         match key {
             "paths.mode" => config.paths.mode = value.to_string(),
-            "paths.video_dir" => config.paths.video_dir = value.to_string(),
-            "paths.image_dir" => config.paths.image_dir = value.to_string(),
+            "paths.video_dir" => config.paths.video_dir = PathBuf::from(value),
+            "paths.image_dir" => config.paths.image_dir = PathBuf::from(value),
             "video_engine.interval" => {
                 config.video_engine.interval = value.parse().map_err(|_| {
                     ApiError::InvalidConfigValue {

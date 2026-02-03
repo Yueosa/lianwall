@@ -81,15 +81,61 @@ pub struct ModeStatsOutput {
     pub avg_value: f64,
 }
 
+// --- 壁纸管理输出 ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiListOutput {
+    pub mode: RunMode,
+    pub active: Vec<ApiWallpaperInfo>,
+    pub locked: Vec<ApiWallpaperInfo>,
+    pub inactive: Vec<ApiWallpaperInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiWallpaperInfo {
+    pub path: PathBuf,
+    pub weight: f64,
+    pub locked: bool,
+    pub skip_streak: u32,
+    pub last_played: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiLockOutput {
+    pub path: PathBuf,
+    pub locked: bool,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiStatsOutput {
+    pub mode: RunMode,
+    pub total_count: usize,
+    pub active_count: usize,
+    pub locked_count: usize,
+    pub min_value: f64,
+    pub max_value: f64,
+    pub avg_value: f64,
+    pub total_skips: u64,
+}
+
 // --- 系统操作输出 ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiDiagnoseOutput {
-    pub gpu_available: bool,
-    pub gpu_type: String,
-    pub mpvpaper_available: bool,
-    pub swww_available: bool,
     pub config_path: PathBuf,
+    pub config_exists: bool,
+    pub gpu_type: String,
+    pub gpu_available: bool,
+    pub gpu_reason: Option<String>,
+    pub mpvpaper_installed: bool,
+    pub swww_installed: bool,
+    pub video_dir_exists: bool,
+    pub video_count: usize,
+    pub image_dir_exists: bool,
+    pub image_count: usize,
+    pub all_passed: bool,
+    pub errors: Vec<String>,
     pub vram_info: Option<VramInfoOutput>,
 }
 

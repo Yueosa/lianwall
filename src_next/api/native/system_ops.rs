@@ -2,13 +2,13 @@ use std::fs;
 
 use serde_json::json;
 
+use crate::api::native::context::with_context;
 use crate::api::native::debug::{self, DebugGuard};
 use crate::api::native::error::ApiError;
 use crate::api::native::r#struct::*;
-use crate::core::engine::{detect, EngineDetectInput, EngineType};
-use crate::core::gpu::{detect as gpu_detect, get_info, VramDetectInput, VramGetInfoInput};
+use crate::core::gpu::{get_info, VramGetInfoInput};
 
-/// 诊断系统
+/// 诊断系统（使用 manager.check_all）
 pub fn diagnose(debug: bool) -> Result<ApiResponse<ApiDiagnoseOutput>, ApiError> {
     if debug {
         debug::enable_debug();
@@ -16,65 +16,68 @@ pub fn diagnose(debug: bool) -> Result<ApiResponse<ApiDiagnoseOutput>, ApiError>
 
     let guard = DebugGuard::new("api::diagnose", json!({}));
 
-    let gpu_detect_result = gpu_detect(VramDetectInput {});
-    let mpvpaper_detect = detect(EngineDetectInput {
-        engine_type: EngineType::MpvPaper,
-    });
-    let swww_detect = detect(EngineDetectInput {
-        engine_type: EngineType::Swww,
-    });
+    let result = with_context(|ctx| {
+        let diagnose_result = ctx.manager.check_all();
 
-    let vram_info = if gpu_detect_result.available {
-        let info_result = get_info(VramGetInfoInput {});
-        if info_result.success {
-            info_result.info.map(|info| VramInfoOutput {
-                total_mb: info.total_mb,
-                used_mb: info.used_mb,
-                free_mb: info.free_mb,
-                usage_percent: info.usage_percent as f64,
-                free_percent: info.free_percent as f64,
-            })
+        // 获取 VRAM 信息（如果可用）
+        let vram_info = if diagnose_result.gpu.vram_available {
+            let info_result = get_info(VramGetInfoInput {});
+            if info_result.success {
+                info_result.info.map(|info| VramInfoOutput {
+                    total_mb: info.total_mb,
+                    used_mb: info.used_mb,
+                    free_mb: info.free_mb,
+                    usage_percent: info.usage_percent as f64,
+                    free_percent: info.free_percent as f64,
+                })
+            } else {
+                None
+            }
         } else {
             None
-        }
-    } else {
-        None
-    };
+        };
 
-    let config_path = dirs::config_dir()
-        .unwrap_or_default()
-        .join("lianwall/config.toml");
-
-    // 处理 Result 类型，获取 available 值
-    let mpvpaper_available = mpvpaper_detect.map(|o| o.available).unwrap_or(false);
-    let swww_available = swww_detect.map(|o| o.available).unwrap_or(false);
-
-    let output = ApiDiagnoseOutput {
-        gpu_available: gpu_detect_result.available,
-        gpu_type: format!("{:?}", gpu_detect_result.gpu_type),
-        mpvpaper_available,
-        swww_available,
-        config_path,
-        vram_info,
-    };
-
-    guard.success(json!({"gpu": gpu_detect_result.available}));
-
-    let debug_info = if debug {
-        Some(ApiDebugInfo {
-            total_duration_ms: debug::get_trace()
-                .first()
-                .map(|t| t.duration_ms)
-                .unwrap_or(0),
-            trace: debug::get_trace(),
+        Ok(ApiDiagnoseOutput {
+            config_path: diagnose_result.config_path,
+            config_exists: diagnose_result.config_exists,
+            gpu_type: format!("{:?}", diagnose_result.gpu.gpu_type),
+            gpu_available: diagnose_result.gpu.vram_available,
+            gpu_reason: diagnose_result.gpu.reason,
+            mpvpaper_installed: diagnose_result.engines.mpvpaper_installed,
+            swww_installed: diagnose_result.engines.swww_installed,
+            video_dir_exists: diagnose_result.dirs.video_dir_exists,
+            video_count: diagnose_result.dirs.video_count,
+            image_dir_exists: diagnose_result.dirs.image_dir_exists,
+            image_count: diagnose_result.dirs.image_count,
+            all_passed: diagnose_result.all_passed,
+            errors: diagnose_result.errors,
+            vram_info,
         })
-    } else {
-        None
-    };
+    });
 
-    debug::disable_debug();
-
-    Ok(ApiResponse::success(output, debug_info))
+    match result {
+        Ok(output) => {
+            guard.success(json!({"all_passed": output.all_passed}));
+            let debug_info = if debug {
+                Some(ApiDebugInfo {
+                    total_duration_ms: debug::get_trace()
+                        .first()
+                        .map(|t| t.duration_ms)
+                        .unwrap_or(0),
+                    trace: debug::get_trace(),
+                })
+            } else {
+                None
+            };
+            debug::disable_debug();
+            Ok(ApiResponse::success(output, debug_info))
+        }
+        Err(e) => {
+            guard.error(&e.to_string());
+            debug::disable_debug();
+            Err(e)
+        }
+    }
 }
 
 /// 卸载程序
