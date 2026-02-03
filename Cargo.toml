@@ -4,9 +4,9 @@ version = "3.0.0"
 edition = "2024"
 
 # 临时指向 src_next 进行测试
-[[bin]]
-name = "lianwall"
-path = "src_next/main.rs"
+# [[bin]]
+# name = "lianwall"
+# path = "src_next/main.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
