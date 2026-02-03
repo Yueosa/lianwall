@@ -30,11 +30,16 @@ pub fn parse_time_range(dir_name: &str) -> Option<TimeRange> {
 }
 
 /// 解析时间部分（HH 或 HHMM）
+/// 支持 24 或 2400 表示午夜（等价于 00:00）
 fn parse_time_part(s: &str) -> Option<(u16, u16)> {
     match s.len() {
         2 => {
             // HH 格式
             let hour: u16 = s.parse().ok()?;
+            // 24 表示午夜，等价于 00:00
+            if hour == 24 {
+                return Some((24, 0));
+            }
             if hour > 23 {
                 return None;
             }
@@ -44,6 +49,10 @@ fn parse_time_part(s: &str) -> Option<(u16, u16)> {
             // HHMM 格式
             let hour: u16 = s[0..2].parse().ok()?;
             let minute: u16 = s[2..4].parse().ok()?;
+            // 2400 表示午夜，等价于 00:00
+            if hour == 24 && minute == 0 {
+                return Some((24, 0));
+            }
             if hour > 23 || minute > 59 {
                 return None;
             }
