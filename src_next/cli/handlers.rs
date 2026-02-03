@@ -353,6 +353,7 @@ fn handle_stats(debug: bool, json: bool) -> Result<(), CliError> {
 }
 
 fn handle_diagnose(debug: bool, json: bool) -> Result<(), CliError> {
+    api::init()?;
     let response = api::diagnose(debug)?;
 
     if json {
