@@ -8,15 +8,16 @@ use crate::core::algorithm::{
 };
 use crate::core::engine::EngineType;
 use crate::core::manager::error::ManagerError;
-use crate::core::manager::r#struct::ManagerReloadOutput;
+use crate::core::manager::r#struct::{ManagerReloadOutput, WallpaperInfo, WallpaperListOutput};
+use crate::core::runtime::RunMode;
 use crate::core::wallpaper::{scan, WallpaperScanInput};
 
 /// 模式管理器（内部结构）
 pub struct ModeManager {
-    /// 完整的权重记录（包括所有历史文件，含时间段未匹配的）
+    /// 完整的权重记录（包括所有历史文件，含时间段未匹配的和锁定的）
     pub all_records: Vec<WeightRecord>,
 
-    /// 当前活跃的记录（当前时间段匹配的，参与选择）
+    /// 当前活跃的记录（当前时间段匹配且未锁定的，参与选择）
     pub active_records: Vec<WeightRecord>,
 
     /// 引擎类型
@@ -27,6 +28,9 @@ pub struct ModeManager {
 
     /// 扫描配置
     pub scan_config: WallpaperScanInput,
+
+    /// 模式类型（用于输出）
+    pub mode: RunMode,
 }
 
 impl ModeManager {
@@ -35,7 +39,7 @@ impl ModeManager {
     /// 流程：
     /// 1. 从 cache_path 加载缓存 → all_records
     /// 2. 调用 wallpaper::scan() (use_time_ranges=true)
-    /// 3. 提取活跃记录：all_records 中在扫描结果中的
+    /// 3. 提取活跃记录：all_records 中在扫描结果中的且未锁定的
     /// 4. 检测新文件：扫描结果中不在 all_records 中的
     /// 5. algorithm::initialize() 初始化新文件权重
     /// 6. 合并新记录到 active_records
@@ -43,6 +47,7 @@ impl ModeManager {
         cache_path: PathBuf,
         scan_config: WallpaperScanInput,
         engine_type: EngineType,
+        mode: RunMode,
         base_weight: f64,
     ) -> Result<Self, ManagerError> {
         let mut manager = Self {
@@ -51,6 +56,7 @@ impl ModeManager {
             engine_type,
             cache_path,
             scan_config,
+            mode,
         };
 
         // 初始化时执行一次 reload
@@ -82,12 +88,12 @@ impl ModeManager {
             use_time_ranges: self.scan_config.use_time_ranges,
         })?;
 
-        // 4. 提取活跃记录
+        // 4. 提取活跃记录（时间段匹配且未锁定）
         let active_paths: HashSet<PathBuf> = time_scan.wallpapers.iter().cloned().collect();
         self.active_records = self
             .all_records
             .iter()
-            .filter(|r| active_paths.contains(&r.path))
+            .filter(|r| active_paths.contains(&r.path) && !r.locked)
             .cloned()
             .collect();
 
@@ -236,5 +242,100 @@ impl ModeManager {
 
         // 添加新的活跃记录
         all_records.extend(updated_active);
+    }
+
+    // --- 新增方法 ---
+
+    /// 列出所有壁纸（分类：活跃/锁定/非活跃）
+    pub fn list(&self) -> WallpaperListOutput {
+        // 获取当前时间段匹配的路径
+        let time_scan_paths: HashSet<PathBuf> = match scan(WallpaperScanInput {
+            base_dir: self.scan_config.base_dir.clone(),
+            extensions: self.scan_config.extensions.clone(),
+            use_time_ranges: self.scan_config.use_time_ranges,
+        }) {
+            Ok(result) => result.wallpapers.into_iter().collect(),
+            Err(_) => HashSet::new(),
+        };
+
+        let mut active = Vec::new();
+        let mut locked = Vec::new();
+        let mut inactive = Vec::new();
+
+        for record in &self.all_records {
+            let info = WallpaperInfo {
+                path: record.path.clone(),
+                weight: record.value,
+                locked: record.locked,
+                skip_streak: record.skip_streak,
+                last_played: record.last_played,
+            };
+
+            if record.locked {
+                locked.push(info);
+            } else if time_scan_paths.contains(&record.path) {
+                active.push(info);
+            } else {
+                inactive.push(info);
+            }
+        }
+
+        WallpaperListOutput {
+            mode: self.mode.clone(),
+            active,
+            locked,
+            inactive,
+        }
+    }
+
+    /// 锁定指定壁纸
+    pub fn lock(&mut self, path: &PathBuf) -> Result<bool, ManagerError> {
+        // 在 all_records 中查找并锁定
+        let found = self.all_records.iter_mut().find(|r| &r.path == path);
+
+        match found {
+            Some(record) => {
+                if record.locked {
+                    return Ok(false); // 已经锁定
+                }
+                record.locked = true;
+
+                // 从 active_records 中移除
+                self.active_records.retain(|r| &r.path != path);
+
+                // 保存缓存
+                self.save_cache()?;
+                Ok(true)
+            }
+            None => Err(ManagerError::WallpaperNotFound { path: path.clone() }),
+        }
+    }
+
+    /// 解锁指定壁纸
+    pub fn unlock(&mut self, path: &PathBuf, base_weight: f64) -> Result<bool, ManagerError> {
+        // 在 all_records 中查找并解锁
+        let found = self.all_records.iter_mut().find(|r| &r.path == path);
+
+        match found {
+            Some(record) => {
+                if !record.locked {
+                    return Ok(false); // 未锁定
+                }
+                record.locked = false;
+
+                // 保存缓存
+                self.save_cache()?;
+
+                // 重新 reload 以更新 active_records
+                self.reload(base_weight)?;
+                Ok(true)
+            }
+            None => Err(ManagerError::WallpaperNotFound { path: path.clone() }),
+        }
+    }
+
+    /// 获取锁定的壁纸数量
+    pub fn locked_count(&self) -> usize {
+        self.all_records.iter().filter(|r| r.locked).count()
     }
 }

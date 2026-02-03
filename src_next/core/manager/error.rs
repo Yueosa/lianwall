@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::core::algorithm::AlgorithmError;
 use crate::core::config::ConfigError;
 use crate::core::engine::EngineError;
+use crate::core::gpu::GpuType;
 use crate::core::runtime::RuntimeError;
 use crate::core::wallpaper::WallpaperError;
 
@@ -45,4 +46,30 @@ pub enum ManagerError {
 
     #[error("没有可用的壁纸")]
     NoWallpapersAvailable,
+
+    #[error("GPU 不支持: {gpu_type:?}, 原因: {reason}")]
+    GpuUnsupported {
+        gpu_type: GpuType,
+        reason: String,
+    },
+
+    #[error("引擎未安装: {engine}")]
+    EngineNotInstalled {
+        engine: String,
+    },
+
+    #[error("目录不存在或无法访问: {path}")]
+    DirectoryNotAccessible {
+        path: PathBuf,
+    },
+
+    #[error("壁纸不存在: {path}")]
+    WallpaperNotFound {
+        path: PathBuf,
+    },
+
+    #[error("自检失败: {reason}")]
+    DiagnoseFailed {
+        reason: String,
+    },
 }
