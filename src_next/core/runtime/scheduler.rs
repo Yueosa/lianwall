@@ -1,7 +1,8 @@
 use crate::core::runtime::error::RuntimeError;
 use crate::core::runtime::monitor;
 use crate::core::runtime::state::{RunMode, RuntimeState};
-use crate::core::runtime::r#struct::{ModeAction, MonitorCheckInput, SchedulerConfig};
+use crate::core::runtime::r#struct::{ModeAction, MonitorCheckInput, SchedulerConfig, SchedulerEvent};
+use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 
 /// 定时器
@@ -39,45 +40,20 @@ impl Timer {
     }
 }
 
-/// 调度器回调函数
-pub struct SchedulerCallbacks<F1, F2, F3>
-where
-    F1: Fn(RunMode) -> Result<(), String>,
-    F2: Fn() -> Result<(), String>,
-    F3: Fn() -> Result<(), String>,
-{
-    /// 切换壁纸回调
-    pub on_switch: F1,
-    /// 降级到图片模式回调
-    pub on_degrade: F2,
-    /// 恢复到视频模式回调
-    pub on_upgrade: F3,
-}
-
 /// 调度器运行输入
-pub struct SchedulerRunInput<F1, F2, F3>
-where
-    F1: Fn(RunMode) -> Result<(), String>,
-    F2: Fn() -> Result<(), String>,
-    F3: Fn() -> Result<(), String>,
-{
+pub struct SchedulerRunInput {
     pub config: SchedulerConfig,
     pub state: RuntimeState,
-    pub callbacks: SchedulerCallbacks<F1, F2, F3>,
+    pub event_sender: Sender<SchedulerEvent>,
 }
 
 /// 运行调度器主循环
 ///
-/// 注意：此函数会阻塞，直到外部中断（如 Ctrl+C）
-pub fn run<F1, F2, F3>(input: SchedulerRunInput<F1, F2, F3>) -> Result<(), RuntimeError>
-where
-    F1: Fn(RunMode) -> Result<(), String>,
-    F2: Fn() -> Result<(), String>,
-    F3: Fn() -> Result<(), String>,
-{
+/// 注意：此函数会阻塞，直到接收到 Shutdown 事件
+pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
     let mut state = input.state;
     let config = input.config;
-    let callbacks = input.callbacks;
+    let event_sender = input.event_sender;
 
     // 初始化定时器
     let mut wallpaper_timer = Timer::new(match state.current_mode {
@@ -98,8 +74,12 @@ where
 
         // 检查壁纸切换定时器
         if wallpaper_timer.check_and_reset() {
-            if let Err(e) = (callbacks.on_switch)(state.current_mode.clone()) {
-                eprintln!("壁纸切换回调失败: {}", e);
+            if event_sender
+                .send(SchedulerEvent::SwitchWallpaper(state.current_mode.clone()))
+                .is_err()
+            {
+                eprintln!("事件发送失败，调度器退出");
+                break;
             }
         }
 
@@ -115,22 +95,20 @@ where
 
                 match monitor_result.action {
                     ModeAction::DowngradeToImage => {
-                        if let Err(e) = (callbacks.on_degrade)() {
-                            eprintln!("降级回调失败: {}", e);
-                        } else {
-                            state.current_mode = RunMode::Image;
-                            // 切换到图片模式后，更新定时器间隔
-                            wallpaper_timer = Timer::new(config.image_interval);
+                        if event_sender.send(SchedulerEvent::DegradeToImage).is_err() {
+                            eprintln!("降级事件发送失败，调度器退出");
+                            break;
                         }
+                        state.current_mode = RunMode::Image;
+                        wallpaper_timer = Timer::new(config.image_interval);
                     }
                     ModeAction::UpgradeToVideo => {
-                        if let Err(e) = (callbacks.on_upgrade)() {
-                            eprintln!("恢复回调失败: {}", e);
-                        } else {
-                            state.current_mode = RunMode::Video;
-                            // 切换到视频模式后，更新定时器间隔
-                            wallpaper_timer = Timer::new(config.video_interval);
+                        if event_sender.send(SchedulerEvent::UpgradeToVideo).is_err() {
+                            eprintln!("恢复事件发送失败，调度器退出");
+                            break;
                         }
+                        state.current_mode = RunMode::Video;
+                        wallpaper_timer = Timer::new(config.video_interval);
                     }
                     ModeAction::Keep => {
                         // 无需操作
@@ -139,4 +117,6 @@ where
             }
         }
     }
+
+    Ok(())
 }

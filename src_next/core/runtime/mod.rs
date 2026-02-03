@@ -50,12 +50,15 @@ mod state;
 mod r#struct;
 
 // 导出核心函数
-pub use monitor::check as monitor_check;
-pub use scheduler::{run as scheduler_run, SchedulerCallbacks, SchedulerRunInput};
+pub use monitor::{check as monitor_check};
+pub use scheduler::{run as scheduler_run};
 
 // 导出错误类型
 pub use error::RuntimeError;
 
 // 导出结构体
 pub use state::{RunMode, RuntimeState};
-pub use r#struct::{ModeAction, MonitorCheckInput, MonitorCheckOutput, SchedulerConfig};
+pub use r#struct::{
+    ModeAction, MonitorCheckInput, MonitorCheckOutput, SchedulerConfig, SchedulerEvent,
+    SchedulerRunInput,
+};

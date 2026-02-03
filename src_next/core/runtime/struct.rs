@@ -52,3 +52,17 @@ pub struct SchedulerConfig {
     /// VRAM 恢复阈值（%）
     pub vram_recovery: u32,
 }
+// --- Scheduler Event ---
+
+/// 调度器事件（用于消息传递）
+#[derive(Debug, Clone)]
+pub enum SchedulerEvent {
+    /// 切换壁纸
+    SwitchWallpaper(RunMode),
+    /// 降级到图片模式
+    DegradeToImage,
+    /// 恢复到视频模式
+    UpgradeToVideo,
+    /// 停止调度器
+    Shutdown,
+}
