@@ -1,18 +1,23 @@
 [package]
 name = "lianwall"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2024"
+
+# 临时指向 src_next 进行测试
+[[bin]]
+name = "lianwall"
+path = "src_next/main.rs"
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 rand = "0.8"
-walkdir = "2"
 dirs = "6.0.0"
 clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
 thiserror = "2.0"
+chrono = "0.4"
 
 # NVML 原生库支持 (可选)
 nvml-wrapper = { version = "0.10", optional = true }
