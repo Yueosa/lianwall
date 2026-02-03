@@ -1,498 +1,219 @@
+<div align="center">
+
 # 🎬 LianWall
 
 智能动态壁纸管理器 - 基于负反馈闭环调节的壁纸轮换系统
 
-###### 省流
+</div>
 
-> **这是一个有记忆的智能壁纸轮换器** 🎯
-> 
-> - 刚播放过的壁纸会"进入冷却"，短期内不会重复
+> **有记忆的智能壁纸轮换器** 🎯
+> - 刚播放过的壁纸会"冷却"，短期内不会重复
 > - 长期未播放的壁纸会"积攒期望"，逐渐获得出场机会
 > - 支持 **动态壁纸**（视频）和 **静态壁纸**（图片）两种模式
-> - 权重数据持久化，重启后继续接着之前的状态轮换
-> - 适配 Hyprland，使用 mpvpaper 和 swww 作为底层引擎
+> - 权重数据持久化，重启后继续之前的状态轮换
+> - 显存监控：游戏时自动降级为静态壁纸
 
-## ✨ 特性
-
-- **负反馈闭环调节** - 有记忆的随机，避免重复和埋没
-- **空间化选择逻辑** - 二分切割算法，自然有机的播放序列
-- **多引擎支持** - mpvpaper（动态）/ swww（静态）
-- **持久化权重** - 重启后保留壁纸"地形"状态
+---
 
 ## 📦 安装
 
-> 推荐放在 `~/.local/bin` 下
+### 依赖
 
-###### 依赖
+| 依赖 | 用途 | 安装 (archlinux) |
+|------|------|------|
+| [mpvpaper](https://github.com/GhostNaN/mpvpaper) | 动态壁纸引擎 | `paru -S mpvpaper` |
+| [swww](https://github.com/LGFae/swww) | 静态壁纸引擎 | `paru -S swww` |
 
-LianWall 依赖以下壁纸引擎，请确保已安装：
-
-- **[mpvpaper](https://github.com/GhostNaN/mpvpaper)** - 动态壁纸引擎，基于 mpv 播放视频壁纸
-- **[swww](https://github.com/LGFae/swww)** - 静态壁纸引擎，支持丰富的过渡动画
-
-```bash
-# Arch Linux
-paru -S mpvpaper swww
-
-# 或手动编译安装
-```
-
-###### 自行编译
+### 编译
 
 ```bash
+# 标准编译
 cargo build --release
+
+# 启用 NVIDIA NVML 原生库支持（可选，更精确的显存监控）
+cargo build --release --features nvml
+```
+
+> **关于 nvml feature**：默认使用 `nvidia-smi` 命令获取显存信息。启用 `nvml` feature 后使用 NVIDIA 原生库，性能更好但需要安装 CUDA 运行时。AMD 用户无需关心此选项。
+
+### 安装
+
+```bash
 cp target/release/lianwall ~/.local/bin/
-sudo chmod +x ~/.local/bin/lianwall
+chmod +x ~/.local/bin/lianwall
 ```
 
-###### 下载 Release 包
+---
+
+## 🚀 快速开始
+
+### 1. 初始化配置
 
 ```bash
-cp ./lianwall_{实际版本号}_linux_x86_64 ~/.local/bin/lianwall
-sudo chmod +x ~/.local/bin/lianwall
+lianwall diagnose   # 检查依赖，自动生成配置文件
 ```
-
-## 🚀 使用
-
-```bash
-lianwall daemon              # 启动守护进程（动态壁纸模式，循环切换）
-lianwall next                # 立即切换到下一张壁纸（根据当前模式）
-lianwall video               # 切换到动态壁纸模式（自动停止 swww）
-lianwall picture             # 切换到静态壁纸模式（自动停止 mpvpaper）
-lianwall kill                # 停止所有壁纸引擎（mpvpaper + swww）
-lianwall reset -m <mode>     # 热重载指定模式的壁纸目录
-lianwall status -m <mode>    # 显示指定模式的状态和壁纸列表
-```
-
-### Hyprland 配置
-
-```conf
-# 随 Hyprland 启动
-exec-once = lianwall daemon
-
-# 快捷键
-bind = SUPER ALT, W, exec, lianwall next # 下一张壁纸
-bind = SUPER ALT, E, exec, lianwall video # 视频模式
-bind = SUPER ALT, R, exec, lianwall picture # 图片模式
-```
-
-## ⚙️ 配置
 
 配置文件位置：`~/.config/lianwall/config.toml`
 
-首次运行会自动生成带详细注释的默认配置，主要配置项：
+### 2. 准备壁纸目录
+
+默认路径（可在配置文件中修改）：
+- 动态壁纸：`~/Videos/lianwall/`
+- 静态壁纸：`~/Pictures/lianwall/`
+
+### 3. 启动
+
+```bash
+lianwall start      # 启动守护进程
+lianwall status     # 查看状态
+lianwall next       # 切换下一张
+```
+
+### 4. Hyprland 配置
+
+```conf
+# ~/.config/hypr/hyprland.conf
+
+# 随 Hyprland 启动
+exec-once = lianwall start
+
+# 快捷键
+bind = SUPER ALT, S, exec, lianwall next      # 下一张壁纸
+bind = SUPER ALT, D, exec, lianwall switch    # 切换 Video/Image 模式
+```
+
+---
+
+## 📖 命令参考
+
+### 全局参数
+
+| 参数 | 说明 |
+|------|------|
+| `--debug` | 启用 debug 追踪，显示完整调用链 |
+| `--json` | JSON 格式输出 |
+
+### 命令列表
+
+| 命令 | 说明 |
+|------|------|
+| `start` | 启动守护进程 |
+| `stop` | 停止守护进程 |
+| `next` | 切换下一张壁纸 |
+| `switch` | 切换模式（Video ↔ Image） |
+| `reload` | 热重载壁纸目录 |
+| `status` | 查询当前状态 |
+| `list` | 列出壁纸（`--filter all/active/locked`） |
+| `lock <PATH>` | 锁定壁纸，不再参与轮换 |
+| `unlock <PATH>` | 解锁壁纸 |
+| `stats` | 统计信息 |
+| `diagnose` | 系统诊断 |
+
+### 配置命令
+
+| 命令 | 说明 |
+|------|------|
+| `config get <KEY>` | 获取配置项（如 `weight.base`） |
+| `config set <KEY> <VALUE>` | 设置配置项 |
+| `config show` | 显示完整配置 |
+| `config reset` | 重置为默认配置（`-y` 跳过确认） |
+
+---
+
+## ⚙️ 配置文件
 
 ```toml
+# ~/.config/lianwall/config.toml
+
+# === 路径与模式 ===
 [paths]
-video_cache = "~/.cache/lianwall/video.json"  # 动态壁纸权重缓存
-image_cache = "~/.cache/lianwall/image.json"  # 静态壁纸权重缓存
-video_dir = "~/Videos/background"             # 动态壁纸目录
-image_dir = "~/Pictures/wallpapers"           # 静态壁纸目录
+mode = "Video"                      # 启动模式: Video 或 Image
+video_dir = "~/Videos/lianwall"     # 动态壁纸目录
+image_dir = "~/Pictures/lianwall"   # 静态壁纸目录
 
+# === 动态壁纸 (mpvpaper) ===
 [video_engine]
-type = "mpvpaper"          # 动态壁纸引擎
-interval = 600             # 切换间隔（秒），默认 10 分钟
-fit_mode = "cover"         # 壁纸适应模式: "auto", "contain", "cover"
-panscan = 1.0              # panscan 值（0.0-1.0），仅在 cover 模式下生效
+interval = 600                      # 切换间隔（秒）
+mpv_args = [                        # 透传给 mpv 的参数
+    "--no-audio",
+    "--loop=inf",
+    "--hwdec=auto",
+    "--panscan=1.0"                 # 1.0 = 填充屏幕（可能裁剪）
+]
 
+# === 静态壁纸 (swww) ===
 [image_engine]
-type = "swww"                  # 静态壁纸引擎
-interval = 300                 # 切换间隔（秒），默认 5 分钟
-transition = "fade"            # 过渡效果
-transition_duration = 2.0      # 过渡时长（秒）
-```
+interval = 600
+swww_args = [                       # 透传给 swww img 的参数
+    "--transition-type=fade",
+    "--transition-duration=2.0",
+    "--resize=crop"
+]
 
-### mpvpaper 壁纸适应模式
+# === 权重算法 ===
+[weight]
+base = 100.0                        # 基础权重
+select_penalty = 10.0               # 选中惩罚
+perturbation_ratio = 0.03           # 扰动比例（±3%）
+tolerance = 1.0                     # 容差阈值
+normalization_threshold = 500.0     # 归一化触发阈值
+normalization_target = 100.0        # 归一化目标
+shuffle_period = 100                # 洗牌周期（0 禁用）
+shuffle_intensity = 0.1             # 洗牌强度
 
-mpvpaper 支持三种壁纸适应模式，可在配置文件中设置：
-
-| 模式      | 说明                                         | 适用场景                    |
-| --------- | -------------------------------------------- | --------------------------- |
-| `auto`    | mpv 默认行为，自动适应屏幕                   | 一般使用                    |
-| `contain` | 完整显示壁纸，保持原始比例，可能有黑边       | 不想裁剪任何内容            |
-| `cover`   | 填充整个屏幕，可能裁剪视频 **(推荐)**        | 无黑边，视觉效果最佳        |
-
-**cover 模式参数调节：**
-```toml
-[video_engine]
-fit_mode = "cover"
-panscan = 1.0  # 范围 0.0-1.0
-               # 1.0 = 完全填充屏幕（可能裁剪更多）
-               # 0.0 = 最小裁剪
-```
-
-**配置示例：**
-```toml
-base = 100.0                       # 基础权重
-select_penalty = 10.0              # 选中惩罚值
-perturbation_ratio = 0.03          # 扰动幅度（±3%）
-normalization_threshold = 500.0    # 归一化触发阈值
-normalization_target = 100.0       # 归一化目标值
-shuffle_period = 100               # 洗牌周期（轮数）
-shuffle_intensity = 0.1            # 洗牌强度（10%）
-
+# === 显存监控 ===
 [vram]
-enabled = true           # 启用显存监控
-threshold_percent = 25   # 显存剩余低于 25% 时切换到静态壁纸
-recovery_percent = 40    # 显存剩余高于 40% 时恢复动态壁纸
-check_interval = 10      # 检测间隔（秒）
+enabled = true                      # 是否启用
+threshold_percent = 25.0            # 显存剩余 < 25% 触发降级
+recovery_percent = 40.0             # 显存剩余 > 40% 触发恢复
+check_interval = 2                  # 检测间隔（秒）
 ```
 
 ---
 
-## 🧠 算法设计解析
+## 🧠 算法简介
 
-### 一、核心算法：零和博弈 + 动态扰动选择系统
+### 核心思想：零和博弈
 
-LianWall 采用**零和博弈权重系统**，结合**动态扰动中位选择**，实现有记忆的智能轮换。
+每次选择壁纸后：
+- **被选中**：权重 -10（进入冷却）
+- **未选中**：均分 +10（积攒期望）
+- **总权重守恒**：不会膨胀或通缩
 
-#### 1.1 权重更新规则（零和博弈）
+### 关键机制
 
-```rust
-每次切换后，对所有壁纸进行权重调整：
+| 机制 | 作用 |
+|------|------|
+| **动态扰动** | 权重 ×3% 随机偏移，打破确定性循环 |
+| **容差中位选择** | 权重接近时随机选择，避免总是选最高 |
+| **周期洗牌** | 每 100 轮重置 10% 壁纸权重，防止生态锁定 |
+| **自动归一化** | 平均权重 >500 时缩放，防止数值溢出 |
 
-被选中壁纸：
-  value_new = value_old - penalty       // 默认 penalty = 10.0
-  skip_streak = 0                        // 重置跳过计数
+### 参数调优
 
-未被选中壁纸（均分奖励）：
-  reward = penalty / (N - 1)             // N 为壁纸总数
-  value_new = value_old + reward         // 每个壁纸平分选中者的惩罚值
-  skip_streak += 1                       // 累计跳过次数
-```
-
-**关键数学性质：**
-
-$$
-\sum_{i=1}^{N} \Delta v_i = -\text{penalty} + (N-1) \times \frac{\text{penalty}}{N-1} = 0
-$$
-
-**零和博弈 ⇒ 总权重守恒**：
-
-$$
-W_{t+1} = W_t \quad (\text{无膨胀，无通缩})
-$$
-
-这从根本上解决了旧算法中权重无限膨胀的问题。
-
-#### 1.2 选择算法：动态扰动 + 容差中位策略
-
-传统贪心算法总是选择最高权重项，会导致初始权重略高的文件被过度选择。LianWall 采用**动态扰动容差中位选择**：
-
-```rust
-Algorithm: DynamicPerturbationMedianSelect(wallpapers, tolerance=5.0, ratio=0.03)
-  Input:  wallpapers[]  壁纸列表
-          tolerance     容差值（默认 5.0）
-          ratio         扰动比例（默认 0.03）
-  Output: 选中的索引
-
-  1. 对每个壁纸应用动态扰动：
-     perturbation = value × ratio × random(-1.0, 1.0)
-     value_perturbed = value + perturbation
-  
-  2. 按扰动后的权重降序排序
-  
-  3. max_value ← perturbed_values[0]
-  
-  4. candidates ← {i | max_value - perturbed_values[i] ≤ tolerance}
-  
-  5. return candidates[len(candidates) / 2]  // 中位选择
-```
-
-**关键创新：动态扰动**
-
-扰动幅度与权重成正比，确保相对影响力恒定：
-
-| 权重 | 扰动范围（ratio=0.03） | 相对影响力 |
-| ---- | ---------------------- | ---------- |
-| 100  | ±3.0                   | ±3%        |
-| 500  | ±15.0                  | ±3%        |
-| 1000 | ±30.0                  | ±3%        |
-
-**解决问题：** 旧算法中固定扰动 ±0.3 在权重膨胀到 1000+ 时失效（0.03% 影响力），新算法始终保持 3% 的有效随机性。
-
-**示例演示：**
-```
-原始权重:    [105.0, 103.0, 102.0, 101.0, 100.0, 95.0]
-扰动后:      [107.2, 101.5, 103.8, 99.4, 102.1, 96.3]
-排序后:      [107.2, 103.8, 102.1, 101.5, 99.4, 96.3]
-max = 107.2
-容差范围:    [102.2, 107.2]
-候选索引:    [0, 1, 2]  (3个候选项)
-选择:        candidates[1] → 原权重 102.0 的壁纸
-```
-
-每次选择的扰动都是独立随机的，打破了确定性循环。
+| 场景 | `perturbation_ratio` | `shuffle_period` | 效果 |
+|------|---------------------|-----------------|------|
+| 均衡（默认） | 0.03 | 100 | 平衡记忆与随机 |
+| 高随机性 | 0.05 | 50 | 快速轮换，多样性强 |
+| 偏好固定 | 0.01 | 200 | 趋向固定序列 |
 
 ---
 
-### 二、数学性质与系统稳定性分析
-
-#### 2.1 权重守恒定律（零和博弈）
-
-设系统有 $N$ 个壁纸，第 $t$ 轮总权重为 $W_t$：
-
-$$
-W_{t+1} = W_t - \text{penalty} + (N-1) \times \frac{\text{penalty}}{N-1} = W_t
-$$
-
-**数学证明（零和博弈）：**
-
-$$
-\begin{aligned}
-\Delta W &= \sum_{i=1}^{N} \Delta v_i \\
-&= -\text{penalty} + \sum_{j \neq \text{selected}} \frac{\text{penalty}}{N-1} \\
-&= -\text{penalty} + (N-1) \times \frac{\text{penalty}}{N-1} \\
-&= 0
-\end{aligned}
-$$
-
-**关键优势：**
-
-| 特性         | 旧算法（正和博弈）   | 新算法（零和博弈） |
-| ------------ | -------------------- | ------------------ |
-| 总权重变化   | 每轮 +2.5N - 12.5    | **恒为 0**         |
-| 长期稳定性   | ❌ 无限膨胀           | ✅ 完美守恒         |
-| 数值溢出风险 | ⚠️ 高（需定期归一化） | ✅ 极低（仅作保险） |
-| 适用规模     | 5-30 个壁纸          | **无限制**         |
-
-**实测数据（100 轮模拟，N=10）：**
-- 旧算法：总权重从 1000 → 2438（+143.8%）
-- 新算法：总权重从 1000 → 1003（+0.3%，仅洗牌微扰）
-
-#### 2.2 自动归一化机制（防溢出保险）
-
-虽然零和博弈理论上不会膨胀，但洗牌机制会引入微小的权重波动。自动归一化作为双保险：
-
-**触发条件：**
-
-$$
-\frac{1}{N} \sum_{i=1}^{N} v_i > \text{threshold} \quad (\text{默认 } 500.0)
-$$
-
-**归一化算法：**
-
-$$
-\text{scale} = \frac{\text{target}}{\text{avg}} \quad \Rightarrow \quad v_i' = v_i \times \text{scale}
-$$
-
-所有壁纸权重按相同比例缩放，**保持相对关系不变**。
-
-**示例：**
-```
-触发前：[520, 510, 505, 495, 490]  平均 504
-缩放系数：100 / 504 ≈ 0.198
-触发后：[103.0, 101.0, 100.0, 98.0, 97.0]  平均 99.8
-```
-
-#### 2.3 周期性洗牌（打破生态锁定）
-
-**生态锁定问题：** 即使有扰动，长期运行后权重梯度可能固化，导致播放序列可预测。
-
-**洗牌机制：**
-
-每 `shuffle_period` 轮（默认 100），随机选择 `shuffle_intensity × N` 个壁纸（默认 10%），将其权重重置为：
-
-$$
-v_{\text{reset}} = \text{base} \times (1 + \epsilon), \quad \epsilon \sim U(-0.2, 0.2)
-$$
-
-**效果：** 类似自然界的"森林火灾"，周期性破坏旧秩序，给"冷门"壁纸重新上位的机会。
-
-**数学类比：** 模拟退火算法中的"温度扰动"，防止陷入局部最优。
-
-#### 2.4 冷却期估算（零和博弈下）
-
-壁纸被选中后，权重从 $v$ 降至 $v - 10$。零和博弈下，每轮获得平均奖励：
-
-$$
-\text{reward}_{\text{avg}} = \frac{10}{N-1}
-$$
-
-**恢复时间（N=10）：**
+## 🏗️ 项目架构
 
 ```
-选中后: 100 → 90
-每轮奖励: 10 / 9 ≈ 1.11
-第1轮:  90 + 1.11 = 91.11
-第5轮:  90 + 5×1.11 = 95.55
-第9轮:  90 + 9×1.11 = 100.0  ← 恢复到初始值
+CLI → API → Core
+     │
+     ├── algorithm/   # 权重计算、选择算法
+     ├── config/      # 配置读写
+     ├── engine/      # mpvpaper / swww 引擎
+     ├── gpu/         # 显存监控
+     ├── manager/     # 核心管理器
+     ├── runtime/     # 调度器、状态机
+     └── wallpaper/   # 扫描器、时间范围
 ```
-
-**冷却期公式：**
-
-$$
-t_{\text{cooldown}} = \frac{\text{penalty} \times (N-1)}{\text{penalty}} = N - 1 \quad (\text{轮数})
-$$
-
-若切换间隔 10 分钟，冷却期约 **(N-1) × 10 分钟**。
-
-#### 2.5 埋没问题的数学证明
-
-**定理：** 在零和博弈系统中，任何壁纸不会被永久埋没。
-
-**证明：**
-
-假设壁纸 $A$ 连续 $n$ 轮未被选中，每轮获得奖励 $r = \frac{\text{penalty}}{N-1}$：
-
-$$
-v_A(n) = v_0 + n \times \frac{\text{penalty}}{N-1}
-$$
-
-其他壁纸平均被选中 $\frac{n}{N-1}$ 次，平均权重：
-
-$$
-\bar{v}_{\text{others}} \approx v_0 + \frac{n}{N-1} \times \left( \frac{N-2}{N-1} \times \text{penalty} - \text{penalty} \right)
-$$
-
-简化后：
-
-$$
-v_A(n) - \bar{v}_{\text{others}} \approx \frac{n \times \text{penalty}}{N-1} > 0
-$$
-
-当 $n$ 足够大时，$A$ 的权重必然超过平均值，进入容差范围。
-
-**推论：** 
-1. **绝对公平性**：零和博弈天然保证长期公平
-2. **最大等待时间**：$\leq 2(N-1)$ 轮（考虑容差过滤）
-3. **洗牌机制补充**：周期性重置打破极端不均衡
 
 ---
-
-### 三、动态扰动容差中位选择的优势
-
-#### 3.1 与其他算法对比
-
-| 算法类型                         | 选择策略     | 随机性来源   | 优势                             | 劣势                 |
-| -------------------------------- | ------------ | ------------ | -------------------------------- | -------------------- |
-| **贪心选择**                     | 总是最高权重 | 无           | 最优权重利用                     | 易收敛，缺乏多样性   |
-| **容差中位**                     | 容差范围中位 | 微扰 ±0.3    | 打破初始偏差                     | 膨胀后扰动失效       |
-| **动态扰动中位**<br>**(新算法)** | 扰动后中位   | 动态扰动 ±3% | **自适应随机性**<br>**零和守恒** | 计算开销略增         |
-| **加权随机**                     | 权重概率采样 | 随机数       | 理论公平                         | 短期波动大           |
-| **纯随机**                       | 均匀随机     | 随机数       | 完全无偏                         | 无记忆，可能连续重复 |
-
-#### 3.2 动态扰动的"破循环"效应
-
-考虑初始权重场景：
-```
-文件A.mp4: 120.0（修改时间最新）
-文件B.mp4: 119.8
-文件C.mp4: 119.5
-文件D.mp4: 100.0
-文件E.mp4: 80.0
-```
-
-**贪心算法：** 总是选 A → A 被惩罚后，总是选 B → B 被惩罚后，总是选 C → ...  
-**问题：** 确定性死循环 A → B → C → A → B → C ...
-
-**旧容差中位：** 筛选 [115, 120] → 候选 [A, B, C] → 固定选 B  
-**问题：** B 被过度选择，A 和 C 权重慢慢下降直到脱离容差范围
-
-**新动态扰动中位：** 
-```
-第1次: 扰动后 [122.5, 117.2, 121.0] → 选 A (中位)
-第2次: 扰动后 [116.3, 118.9, 120.2] → 选 B (中位)
-第3次: 扰动后 [119.1, 115.8, 122.3] → 选 C (中位)
-```
-
-**效果：** 每次选择都有不同的可能性，打破确定性循环，实现真正的随机性。
-
----
-
-### 四、初始权重分配策略
-
-新文件权重基于修改时间线性映射：
-
-$$
-v_{\text{init}}(t) = 120 - 40 \times \frac{t - t_{\text{newest}}}{t_{\text{oldest}} - t_{\text{newest}}}
-$$
-
-其中 $t$ 为文件修改时间。结果：
-- **最新文件**：120.0（+20% 竞争优势）
-- **平均文件**：100.0（基准）
-- **最旧文件**：80.0（-20% 竞争劣势）
-
-**合并策略（热重载时）：**
-```rust
-新发现文件权重 = (时间权重 + 现有平均权重) / 2
-```
-
-避免新文件突然涌入打破现有生态平衡。
-
----
-
-### 五、系统参数调优建议
-
-| 参数                      | 默认值 | 作用                       | 调整建议                           |
-| ------------------------- | ------ | -------------------------- | ---------------------------------- |
-| `select_penalty`          | 10.0   | 选中惩罚                   | 增大 → 冷却期 ↑<br>减小 → 轮换更快 |
-| `perturbation_ratio`      | 0.03   | 扰动强度                   | 增大 → 随机性 ↑<br>减小 → 趋向确定 |
-| `normalization_threshold` | 500.0  | 归一化触发                 | 预防溢出，无需调整                 |
-| `shuffle_period`          | 100    | 洗牌周期                   | 减小 → 洗牌频繁<br>0 → 禁用洗牌    |
-| `shuffle_intensity`       | 0.1    | 洗牌力度                   | 增大 → 破循环强<br>减小 → 影响温和 |
-| `tolerance`               | 5.0    | 容差范围<br>*（代码固定）* | 修改需重新编译                     |
-| `base`                    | 100.0  | 基准权重                   | ⚠️ 不建议修改                       |
-
-**实战场景调优：**
-
-| 场景                           | 壁纸数 | `perturbation_ratio` | `shuffle_period` | `shuffle_intensity` | 预期效果           |
-| ------------------------------ | ------ | -------------------- | ---------------- | ------------------- | ------------------ |
-| **均衡模式**<br>（推荐）       | 10-30  | 0.03                 | 100              | 0.10                | 平衡记忆与随机     |
-| **随机模式**<br>（追求多样性） | 30+    | 0.05                 | 50               | 0.15                | 高度随机，快速轮换 |
-| **固定模式**<br>（偏好循环）   | 5-15   | 0.01                 | 200              | 0.05                | 趋向固定序列       |
-| **长期运行**<br>（服务器）     | 任意   | 0.03                 | 100              | 0.10                | 防止生态锁定       |
-
-**实战示例（20个壁纸，10分钟间隔，默认参数）：**
-- 理论轮换周期：约 **3-4 小时**（零和博弈下稳定）
-- 单个壁纸冷却期：约 **190 分钟**（$(N-1) \times 10$ 分钟）
-- 权重分布区间：$[85, 115]$（零和博弈 + 洗牌平衡）
-- 洗牌频率：每 **1000 分钟**（16.7 小时）洗一次
-
----
-
-### 六、与传统方案对比
-
-| 特性           | `shuf` 随机 | 加权随机   | LianWall v1.0<br>*（旧算法）* | LianWall v2.0<br>*（零和博弈）* |
-| -------------- | ----------- | ---------- | ----------------------------- | ------------------------------- |
-| **记忆性**     | ❌ 无        | ✅ 概率分布 | ✅ 权重持久化                  | ✅ 权重持久化                    |
-| **冷却保证**   | ❌ 可能连续  | ⚠️ 概率性   | ✅ 确定性惩罚                  | ✅ 确定性惩罚                    |
-| **公平性**     | ⚠️ 长期收敛  | ✅ 理论公平 | ⚠️ 膨胀后失衡                  | ✅ **数学证明公平**              |
-| **长期稳定**   | ✅ 无状态    | ✅ 稳定     | ❌ **权重膨胀**                | ✅ **零和守恒**                  |
-| **随机性**     | 完全随机    | 受权重影响 | ⚠️ 膨胀后失效                  | ✅ **自适应扰动**                |
-| **数值溢出**   | -           | -          | ⚠️ 高风险                      | ✅ 低风险                        |
-| **适用规模**   | 任意        | 任意       | 5-30 个                       | ✅ **无限制**                    |
-| **破循环能力** | 天然随机    | 部分       | ❌ 易锁定                      | ✅ **周期洗牌**                  |
-| **持久化成本** | -           | 需存概率   | JSON 文件                     | JSON 文件                       |
-
-- **时间复杂度**：$O(N \log N)$（排序主导）
-- **空间复杂度**：$O(N)$（权重数组）
-- **I/O 复杂度**：每次切换 1 次写入（JSON 序列化）
-
-**优化空间：**
-- 使用堆维护 Top-K 候选项：$O(N + K \log K)$，适合 $N > 100$ 场景
-- 增量更新排序：利用权重变化局部性减少排序开销
-
----
-
-## 📁 项目结构
-
-```
-src/
-├── main.rs             # 入口，命令分发，守护进程逻辑
-├── config.rs           # 配置文件解析
-├── manager.rs          # WallManager 核心逻辑
-├── command.rs          # 命令行解析 (clap)
-├── vram.rs             # 显存监控（NVIDIA/AMD）
-├── paperengine/        # 壁纸引擎
-│   ├── mod.rs          # PaperEngine trait
-│   ├── mpvpaper.rs     # 动态壁纸 (视频)
-│   └── swww.rs         # 静态壁纸 (图片)
-└── algorithm/          # 算法模块
-    ├── mod.rs
-    ├── weight.rs       # 零和博弈权重计算
-    └── selector.rs     # 动态扰动选择
-```
 
 ## 📜 License
 
