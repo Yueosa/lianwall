@@ -14,6 +14,13 @@ clap = { version = "4.5", features = ["derive"] }
 colored = "2.1"
 thiserror = "2.0"
 
+# NVML 原生库支持 (可选)
+nvml-wrapper = { version = "0.10", optional = true }
+
+[features]
+default = []
+nvml = ["nvml-wrapper"]  # 启用 NVIDIA 原生库支持
+
 [dev-dependencies]
 tempfile = "3.8"
 
