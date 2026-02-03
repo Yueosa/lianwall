@@ -177,5 +177,4 @@ pub struct ApiConfigShowOutput {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiConfigResetOutput {
     pub message: String,
-    pub backup_path: Option<PathBuf>,
 }

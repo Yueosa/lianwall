@@ -112,6 +112,10 @@ impl CoreManager {
                         eprintln!("恢复到视频模式失败: {:?}", e);
                     }
                 }
+                SchedulerEvent::RefreshActiveList(mode) => {
+                    // 静默刷新活跃列表（用于时间段目录更新）
+                    let _ = self.reload(mode);
+                }
                 SchedulerEvent::Shutdown => {
                     break;
                 }

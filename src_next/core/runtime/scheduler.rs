@@ -69,6 +69,9 @@ pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
         None
     };
 
+    // 活跃列表刷新定时器（60 秒，用于时间段目录更新）
+    let mut refresh_timer = Timer::new(60);
+
     state.is_running = true;
 
     loop {
@@ -81,6 +84,17 @@ pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
                 .is_err()
             {
                 eprintln!("事件发送失败，调度器退出");
+                break;
+            }
+        }
+
+        // 检查活跃列表刷新定时器（每分钟刷新，用于时间段目录）
+        if refresh_timer.check_and_reset() {
+            if event_sender
+                .send(SchedulerEvent::RefreshActiveList(state.current_mode.clone()))
+                .is_err()
+            {
+                eprintln!("刷新事件发送失败，调度器退出");
                 break;
             }
         }
