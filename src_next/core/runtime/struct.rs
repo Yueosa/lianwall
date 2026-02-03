@@ -1,4 +1,3 @@
-use crate::core::gpu::VramInfo;
 use crate::core::runtime::state::RunMode;
 
 // --- Monitor IO ---
@@ -7,20 +6,18 @@ use crate::core::runtime::state::RunMode;
 pub struct MonitorCheckInput {
     /// 当前运行模式
     pub current_mode: RunMode,
-    /// 是否处于降级状态
-    pub is_degraded: bool,
+    /// 是否因 VRAM 降级而切换到 Image 模式（区分主动配置和被动降级）
+    pub was_degraded: bool,
     /// 降级阈值（显存剩余百分比）
-    pub threshold_percent: u32,
+    pub threshold_percent: f32,
     /// 恢复阈值（显存剩余百分比）
-    pub recovery_percent: u32,
+    pub recovery_percent: f32,
 }
 
 #[derive(Debug, Clone)]
 pub struct MonitorCheckOutput {
     /// 建议的模式动作
     pub action: ModeAction,
-    /// 当前显存信息（如果可用）
-    pub vram_info: Option<VramInfo>,
     /// 决策原因
     pub reason: String,
 }
@@ -48,9 +45,9 @@ pub struct SchedulerConfig {
     /// VRAM 检测间隔（秒）
     pub vram_check_interval: u64,
     /// VRAM 降级阈值（%）
-    pub vram_threshold: u32,
+    pub vram_threshold: f32,
     /// VRAM 恢复阈值（%）
-    pub vram_recovery: u32,
+    pub vram_recovery: f32,
 }
 // --- Scheduler Event ---
 

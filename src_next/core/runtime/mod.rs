@@ -1,47 +1,23 @@
-//! 运行时调度模块
+//! Runtime 模块：运行时调度与状态管理的统一入口。
+//!
+//! ## 公共接口（函数签名）
+//! - scheduler_run(input: SchedulerRunInput) -> Result<(), RuntimeError>
+//! - monitor_check(input: MonitorCheckInput) -> MonitorCheckOutput
+//!
+//! ## 输入/输出结构体
+//! - SchedulerConfig / SchedulerEvent / SchedulerRunInput
+//! - MonitorCheckInput / MonitorCheckOutput / ModeAction
+//! - RuntimeState / RunMode
 //!
 //! ## 职责
 //! - 管理运行时状态（当前壁纸、模式、计数器）
 //! - 定时器调度（壁纸切换 + VRAM 检测）
-//! - VRAM 监控与模式自动切换
+//! - VRAM 监控与模式自动切换决策
 //!
 //! ## 设计原则
-//! - **通过回调解耦**：Scheduler 不直接操作 Manager，通过回调函数通知外部
-//! - **快速响应**：VRAM 检测默认 2 秒间隔，适应游戏瞬时显存占用
-//! - **状态透明**：Monitor 返回决策原因和显存信息
-//!
-//! ## 使用示例
-//! ```rust
-//! use crate::core::runtime::{scheduler, SchedulerConfig, SchedulerCallbacks, SchedulerRunInput, RuntimeState, RunMode};
-//!
-//! let config = SchedulerConfig {
-//!     video_interval: 600,
-//!     image_interval: 600,
-//!     vram_enabled: true,
-//!     vram_check_interval: 2,
-//!     vram_threshold: 25,
-//!     vram_recovery: 40,
-//! };
-//!
-//! scheduler::run(SchedulerRunInput {
-//!     config,
-//!     state: RuntimeState::new(),
-//!     callbacks: SchedulerCallbacks {
-//!         on_switch: |mode| {
-//!             println!("切换壁纸: {:?}", mode);
-//!             Ok(())
-//!         },
-//!         on_degrade: || {
-//!             println!("降级到图片模式");
-//!             Ok(())
-//!         },
-//!         on_upgrade: || {
-//!             println!("恢复到视频模式");
-//!             Ok(())
-//!         },
-//!     },
-//! }).unwrap();
-//! ```
+//! - **事件驱动**：Scheduler 通过事件通道通知上层
+//! - **快速响应**：VRAM 检测短间隔，适应瞬时显存波动
+//! - **保守策略**：显存信息不可用时不触发切换
 
 mod error;
 mod monitor;

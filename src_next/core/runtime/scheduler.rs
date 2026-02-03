@@ -55,6 +55,8 @@ pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
     let config = input.config;
     let event_sender = input.event_sender;
 
+    validate_config(&config)?;
+
     // 初始化定时器
     let mut wallpaper_timer = Timer::new(match state.current_mode {
         RunMode::Video => config.video_interval,
@@ -88,7 +90,7 @@ pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
             if timer.check_and_reset() {
                 let monitor_result = monitor::check(MonitorCheckInput {
                     current_mode: state.current_mode.clone(),
-                    is_degraded: state.current_mode == RunMode::Image && state.is_running,
+                    was_degraded: state.was_degraded,
                     threshold_percent: config.vram_threshold,
                     recovery_percent: config.vram_recovery,
                 });
@@ -100,6 +102,7 @@ pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
                             break;
                         }
                         state.current_mode = RunMode::Image;
+                        state.was_degraded = true;
                         wallpaper_timer = Timer::new(config.image_interval);
                     }
                     ModeAction::UpgradeToVideo => {
@@ -108,6 +111,7 @@ pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
                             break;
                         }
                         state.current_mode = RunMode::Video;
+                        state.was_degraded = false;
                         wallpaper_timer = Timer::new(config.video_interval);
                     }
                     ModeAction::Keep => {
@@ -115,6 +119,56 @@ pub fn run(input: SchedulerRunInput) -> Result<(), RuntimeError> {
                     }
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_config(config: &SchedulerConfig) -> Result<(), RuntimeError> {
+    if config.video_interval == 0 {
+        return Err(RuntimeError::InvalidConfig {
+            field: "video_interval".to_string(),
+            value: config.video_interval.to_string(),
+            reason: "必须大于 0".to_string(),
+        });
+    }
+    if config.image_interval == 0 {
+        return Err(RuntimeError::InvalidConfig {
+            field: "image_interval".to_string(),
+            value: config.image_interval.to_string(),
+            reason: "必须大于 0".to_string(),
+        });
+    }
+
+    if config.vram_enabled {
+        if config.vram_check_interval == 0 {
+            return Err(RuntimeError::InvalidConfig {
+                field: "vram_check_interval".to_string(),
+                value: config.vram_check_interval.to_string(),
+                reason: "必须大于 0".to_string(),
+            });
+        }
+        if config.vram_threshold >= 100.0 {
+            return Err(RuntimeError::InvalidConfig {
+                field: "vram_threshold".to_string(),
+                value: config.vram_threshold.to_string(),
+                reason: "必须小于 100".to_string(),
+            });
+        }
+        if config.vram_recovery > 100.0 {
+            return Err(RuntimeError::InvalidConfig {
+                field: "vram_recovery".to_string(),
+                value: config.vram_recovery.to_string(),
+                reason: "必须小于等于 100".to_string(),
+            });
+        }
+        if config.vram_recovery <= config.vram_threshold {
+            return Err(RuntimeError::InvalidConfig {
+                field: "vram_recovery".to_string(),
+                value: config.vram_recovery.to_string(),
+                reason: "必须大于 vram_threshold".to_string(),
+            });
         }
     }
 

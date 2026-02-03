@@ -12,6 +12,8 @@ pub struct RuntimeState {
     pub current_mode: RunMode,
     /// 是否正在运行
     pub is_running: bool,
+    /// 是否因 VRAM 降级而切换到 Image 模式（用于区分主动配置和被动降级）
+    pub was_degraded: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +29,7 @@ impl Default for RuntimeState {
             current_wallpaper: None,
             current_mode: RunMode::Video,
             is_running: false,
+            was_degraded: false,
         }
     }
 }
