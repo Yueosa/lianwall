@@ -48,7 +48,8 @@ impl ModeManager {
         scan_config: WallpaperScanInput,
         engine_type: EngineType,
         mode: RunMode,
-        base_weight: f64,
+        weight_min: f64,
+        weight_max: f64,
     ) -> Result<Self, ManagerError> {
         let mut manager = Self {
             all_records: Self::load_cache(&cache_path),
@@ -60,13 +61,13 @@ impl ModeManager {
         };
 
         // 初始化时执行一次 reload
-        manager.reload(base_weight)?;
+        manager.reload(weight_min, weight_max)?;
 
         Ok(manager)
     }
 
     /// 重新扫描（用于 reload）
-    pub fn reload(&mut self, base_weight: f64) -> Result<ManagerReloadOutput, ManagerError> {
+    pub fn reload(&mut self, weight_min: f64, weight_max: f64) -> Result<ManagerReloadOutput, ManagerError> {
         // 1. 全量扫描（禁用时间段过滤）
         let full_scan = scan(WallpaperScanInput {
             base_dir: self.scan_config.base_dir.clone(),
@@ -114,7 +115,8 @@ impl ModeManager {
             let init_result = initialize(AlgorithmInitInput {
                 wallpapers: new_files,
                 cached_records: self.active_records.clone(),
-                base_weight,
+                weight_min,
+                weight_max,
             });
 
             // 新记录同时加入活跃和完整列表
@@ -136,8 +138,9 @@ impl ModeManager {
     /// 选择壁纸（从活跃记录）
     pub fn select(
         &self,
-        tolerance: f64,
-        perturbation_ratio: f64,
+        top_n_percent: f64,
+        hash_mix_bytes: u8,
+        system_seed: u64,
     ) -> Result<(usize, PathBuf), ManagerError> {
         if self.active_records.is_empty() {
             return Err(ManagerError::NoWallpapersAvailable);
@@ -145,8 +148,9 @@ impl ModeManager {
 
         let select_result = select(AlgorithmSelectInput {
             records: self.active_records.clone(),
-            tolerance,
-            perturbation_ratio,
+            top_n_percent,
+            hash_mix_bytes,
+            system_seed,
         })?;
 
         Ok((select_result.selected_index, select_result.selected_path))
@@ -329,7 +333,7 @@ impl ModeManager {
     }
 
     /// 解锁指定壁纸
-    pub fn unlock(&mut self, path: &PathBuf, base_weight: f64) -> Result<bool, ManagerError> {
+    pub fn unlock(&mut self, path: &PathBuf, weight_min: f64, weight_max: f64) -> Result<bool, ManagerError> {
         // 在 all_records 中查找并解锁
         let found = self.all_records.iter_mut().find(|r| &r.path == path);
 
@@ -344,7 +348,7 @@ impl ModeManager {
                 self.save_cache()?;
 
                 // 重新 reload 以更新 active_records
-                self.reload(base_weight)?;
+                self.reload(weight_min, weight_max)?;
                 Ok(true)
             }
             None => Err(ManagerError::WallpaperNotFound { path: path.clone() }),

@@ -25,8 +25,16 @@ pub fn config_get(key: &str, debug: bool) -> Result<ApiResponse<ApiConfigGetOutp
             "paths.image_dir" => config.paths.image_dir.display().to_string(),
             "video_engine.interval" => config.video_engine.interval.to_string(),
             "image_engine.interval" => config.image_engine.interval.to_string(),
-            "weight.base" => config.weight.base.to_string(),
+            "weight.weight_min" => config.weight.weight_min.to_string(),
+            "weight.weight_max" => config.weight.weight_max.to_string(),
             "weight.select_penalty" => config.weight.select_penalty.to_string(),
+            "weight.top_n_percent" => config.weight.top_n_percent.to_string(),
+            "weight.hash_mix_bytes" => config.weight.hash_mix_bytes.to_string(),
+            "weight.seed_reset_hours" => config.weight.seed_reset_hours.to_string(),
+            "weight.normalization_threshold" => config.weight.normalization_threshold.to_string(),
+            "weight.normalization_target" => config.weight.normalization_target.to_string(),
+            "weight.shuffle_period" => config.weight.shuffle_period.to_string(),
+            "weight.shuffle_intensity" => config.weight.shuffle_intensity.to_string(),
             "vram.enabled" => config.vram.enabled.to_string(),
             "vram.threshold_percent" => config.vram.threshold_percent.to_string(),
             "vram.recovery_percent" => config.vram.recovery_percent.to_string(),
@@ -81,7 +89,22 @@ pub fn config_set(
         let old_value = match key {
             "paths.mode" => config.paths.mode.clone(),
             "paths.video_dir" => config.paths.video_dir.display().to_string(),
-            "weight.base" => config.weight.base.to_string(),
+            "paths.image_dir" => config.paths.image_dir.display().to_string(),
+            "video_engine.interval" => config.video_engine.interval.to_string(),
+            "image_engine.interval" => config.image_engine.interval.to_string(),
+            "weight.weight_min" => config.weight.weight_min.to_string(),
+            "weight.weight_max" => config.weight.weight_max.to_string(),
+            "weight.select_penalty" => config.weight.select_penalty.to_string(),
+            "weight.top_n_percent" => config.weight.top_n_percent.to_string(),
+            "weight.hash_mix_bytes" => config.weight.hash_mix_bytes.to_string(),
+            "weight.seed_reset_hours" => config.weight.seed_reset_hours.to_string(),
+            "weight.normalization_threshold" => config.weight.normalization_threshold.to_string(),
+            "weight.normalization_target" => config.weight.normalization_target.to_string(),
+            "weight.shuffle_period" => config.weight.shuffle_period.to_string(),
+            "weight.shuffle_intensity" => config.weight.shuffle_intensity.to_string(),
+            "vram.enabled" => config.vram.enabled.to_string(),
+            "vram.threshold_percent" => config.vram.threshold_percent.to_string(),
+            "vram.recovery_percent" => config.vram.recovery_percent.to_string(),
             _ => return Err(ApiError::InvalidConfigKey(key.to_string())),
         };
 
@@ -95,15 +118,87 @@ pub fn config_set(
                     ApiError::InvalidConfigValue {
                         key: key.to_string(),
                         value: value.to_string(),
-                        reason: "必须是数字".to_string(),
+                        reason: "必须是正整数".to_string(),
                     }
                 })?
             }
-            "weight.base" => {
-                config.weight.base = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+            "image_engine.interval" => {
+                config.image_engine.interval = value.parse().map_err(|_| {
+                    ApiError::InvalidConfigValue {
+                        key: key.to_string(),
+                        value: value.to_string(),
+                        reason: "必须是正整数".to_string(),
+                    }
+                })?
+            }
+            "weight.weight_min" => {
+                config.weight.weight_min = value.parse().map_err(|_| ApiError::InvalidConfigValue {
                     key: key.to_string(),
                     value: value.to_string(),
                     reason: "必须是浮点数".to_string(),
+                })?
+            }
+            "weight.weight_max" => {
+                config.weight.weight_max = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是浮点数".to_string(),
+                })?
+            }
+            "weight.select_penalty" => {
+                config.weight.select_penalty = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是浮点数".to_string(),
+                })?
+            }
+            "weight.top_n_percent" => {
+                config.weight.top_n_percent = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是 0.0-1.0 的浮点数".to_string(),
+                })?
+            }
+            "weight.hash_mix_bytes" => {
+                config.weight.hash_mix_bytes = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是 0-8 的整数".to_string(),
+                })?
+            }
+            "weight.seed_reset_hours" => {
+                config.weight.seed_reset_hours = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是非负整数".to_string(),
+                })?
+            }
+            "weight.normalization_threshold" => {
+                config.weight.normalization_threshold = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是浮点数".to_string(),
+                })?
+            }
+            "weight.normalization_target" => {
+                config.weight.normalization_target = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是浮点数".to_string(),
+                })?
+            }
+            "weight.shuffle_period" => {
+                config.weight.shuffle_period = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是非负整数".to_string(),
+                })?
+            }
+            "weight.shuffle_intensity" => {
+                config.weight.shuffle_intensity = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是 0.0-1.0 的浮点数".to_string(),
                 })?
             }
             "vram.enabled" => {
@@ -111,6 +206,20 @@ pub fn config_set(
                     key: key.to_string(),
                     value: value.to_string(),
                     reason: "必须是 true 或 false".to_string(),
+                })?
+            }
+            "vram.threshold_percent" => {
+                config.vram.threshold_percent = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是浮点数".to_string(),
+                })?
+            }
+            "vram.recovery_percent" => {
+                config.vram.recovery_percent = value.parse().map_err(|_| ApiError::InvalidConfigValue {
+                    key: key.to_string(),
+                    value: value.to_string(),
+                    reason: "必须是浮点数".to_string(),
                 })?
             }
             _ => return Err(ApiError::InvalidConfigKey(key.to_string())),

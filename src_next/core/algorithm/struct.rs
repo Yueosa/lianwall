@@ -8,6 +8,9 @@ pub struct WeightRecord {
     pub value: f64,
     pub skip_streak: u32,
     pub last_played: Option<u64>,
+    /// 文件内容哈希（用于选择算法）
+    #[serde(default)]
+    pub content_hash: u64,
     /// 是否被锁定（锁定后不参与轮换）
     #[serde(default)]
     pub locked: bool,
@@ -17,6 +20,10 @@ pub struct WeightRecord {
 
 #[derive(Debug, Clone)]
 pub struct WeightUpdateConfig {
+    /// 权重下限
+    pub weight_min: f64,
+    /// 权重上限
+    pub weight_max: f64,
     /// 选中惩罚值
     pub select_penalty: f64,
     /// 自动归一化阈值
@@ -27,8 +34,6 @@ pub struct WeightUpdateConfig {
     pub shuffle_period: u32,
     /// 洗牌强度（0.0-1.0）
     pub shuffle_intensity: f64,
-    /// 基础权重（用于洗牌时重置）
-    pub base_weight: f64,
 }
 
 // --- 选择器 IO ---
@@ -36,10 +41,12 @@ pub struct WeightUpdateConfig {
 #[derive(Debug, Clone)]
 pub struct AlgorithmSelectInput {
     pub records: Vec<WeightRecord>,
-    /// 容忍度（前 N 范围内的权重差异）
-    pub tolerance: f64,
-    /// 扰动比例（如 0.03 表示 ±3%）
-    pub perturbation_ratio: f64,
+    /// Top-N 百分比（0.0-1.0）
+    pub top_n_percent: f64,
+    /// 哈希混合字节数（0-8）
+    pub hash_mix_bytes: u8,
+    /// 当前系统种子
+    pub system_seed: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -48,10 +55,12 @@ pub struct AlgorithmSelectOutput {
     pub selected_index: usize,
     /// 选中的路径
     pub selected_path: PathBuf,
-    /// 扰动后的权重值（用于调试）
-    pub perturbed_value: f64,
     /// 原始权重值
     pub original_value: f64,
+    /// 候选数量（Top-N）
+    pub candidate_count: usize,
+    /// 混合哈希值（调试用）
+    pub mixed_hash: u64,
 }
 
 // --- 权重更新 IO ---
@@ -86,8 +95,10 @@ pub struct AlgorithmInitInput {
     pub wallpapers: Vec<PathBuf>,
     /// 缓存的权重记录
     pub cached_records: Vec<WeightRecord>,
-    /// 基础权重
-    pub base_weight: f64,
+    /// 权重下限
+    pub weight_min: f64,
+    /// 权重上限
+    pub weight_max: f64,
 }
 
 #[derive(Debug, Clone)]

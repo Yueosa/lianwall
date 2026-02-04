@@ -27,6 +27,30 @@ pub struct CoreManager {
     video_manager: Option<ModeManager>,
     image_manager: Option<ModeManager>,
     state: RuntimeState,
+    /// 系统种子（用于选择算法）
+    system_seed: u64,
+    /// 种子上次重置的时间戳
+    seed_reset_time: u64,
+}
+
+/// 获取当前时间戳（秒）
+fn get_current_timestamp() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+}
+
+/// 生成随机种子
+fn generate_seed() -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    get_current_timestamp().hash(&mut hasher);
+    std::process::id().hash(&mut hasher);
+    hasher.finish()
 }
 
 impl CoreManager {
@@ -37,12 +61,38 @@ impl CoreManager {
         // 加载持久化状态
         let state = RuntimeState::load();
 
+        // 初始化种子
+        let now = get_current_timestamp();
+
         Ok(Self {
             config: output.config,
             video_manager: None,
             image_manager: None,
             state,
+            system_seed: generate_seed(),
+            seed_reset_time: now,
         })
+    }
+
+    /// 获取系统种子（根据配置周期性重置）
+    fn get_system_seed(&mut self) -> u64 {
+        let reset_hours = self.config.weight.seed_reset_hours;
+        
+        if reset_hours == 0 {
+            // 每次选择都重置
+            self.system_seed = generate_seed();
+        } else {
+            // 检查是否需要重置
+            let now = get_current_timestamp();
+            let elapsed_hours = (now - self.seed_reset_time) / 3600;
+            
+            if elapsed_hours >= reset_hours as u64 {
+                self.system_seed = generate_seed();
+                self.seed_reset_time = now;
+            }
+        }
+        
+        self.system_seed
     }
 
     /// 启动守护进程（阻塞式，调用 runtime::scheduler_run）
@@ -134,24 +184,26 @@ impl CoreManager {
         self.ensure_mode_manager(mode.clone())?;
 
         // 2. 先复制需要的配置值（避免借用冲突）
-        let tolerance = self.config.weight.tolerance;
-        let perturbation_ratio = self.config.weight.perturbation_ratio;
+        let top_n_percent = self.config.weight.top_n_percent;
+        let hash_mix_bytes = self.config.weight.hash_mix_bytes;
+        let system_seed = self.get_system_seed();
         let engine_args = match mode {
             RunMode::Video => self.config.video_engine.mpv_args.clone(),
             RunMode::Image => self.config.image_engine.swww_args.clone(),
         };
         let weight_config = WeightUpdateConfig {
+            weight_min: self.config.weight.weight_min,
+            weight_max: self.config.weight.weight_max,
             select_penalty: self.config.weight.select_penalty,
             normalization_threshold: self.config.weight.normalization_threshold,
             normalization_target: self.config.weight.normalization_target,
             shuffle_period: self.config.weight.shuffle_period,
             shuffle_intensity: self.config.weight.shuffle_intensity,
-            base_weight: self.config.weight.base,
         };
 
         // 3. 获取 mode_mgr 并选择壁纸
         let mode_mgr = self.get_mode_manager_mut(mode.clone())?;
-        let (selected_index, selected_path) = mode_mgr.select(tolerance, perturbation_ratio)?;
+        let (selected_index, selected_path) = mode_mgr.select(top_n_percent, hash_mix_bytes, system_seed)?;
         let engine_type = mode_mgr.engine_type;
 
         // 4. 设置壁纸
@@ -192,14 +244,15 @@ impl CoreManager {
         self.ensure_mode_manager(mode.clone())?;
 
         // 先提取需要的值，避免借用冲突
-        let base_weight = self.config.weight.base;
+        let weight_min = self.config.weight.weight_min;
+        let weight_max = self.config.weight.weight_max;
         let scan_config = self.get_scan_config(mode.clone());
         let cache_path = self.get_cache_path(mode.clone());
 
         let mode_mgr = self.get_mode_manager_mut(mode)?;
         mode_mgr.scan_config = scan_config;
         mode_mgr.cache_path = cache_path;
-        mode_mgr.reload(base_weight)
+        mode_mgr.reload(weight_min, weight_max)
     }
 
     /// 切换到图片模式（VRAM 降级时调用）
@@ -466,9 +519,10 @@ impl CoreManager {
     /// 解锁指定壁纸
     pub fn unlock(&mut self, mode: RunMode, path: PathBuf) -> Result<LockOutput, ManagerError> {
         self.ensure_mode_manager(mode.clone())?;
-        let base_weight = self.config.weight.base;
+        let weight_min = self.config.weight.weight_min;
+        let weight_max = self.config.weight.weight_max;
         let mode_mgr = self.get_mode_manager_mut(mode)?;
-        mode_mgr.unlock(&path, base_weight)?;
+        mode_mgr.unlock(&path, weight_min, weight_max)?;
         Ok(LockOutput {
             path,
             locked: false,
@@ -509,7 +563,8 @@ impl CoreManager {
                     scan_config,
                     EngineType::MpvPaper,
                     RunMode::Video,
-                    self.config.weight.base,
+                    self.config.weight.weight_min,
+                    self.config.weight.weight_max,
                 )?);
             }
             RunMode::Image if self.image_manager.is_none() => {
@@ -521,7 +576,8 @@ impl CoreManager {
                     scan_config,
                     EngineType::Swww,
                     RunMode::Image,
-                    self.config.weight.base,
+                    self.config.weight.weight_min,
+                    self.config.weight.weight_max,
                 )?);
             }
             _ => {}
