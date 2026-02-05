@@ -39,6 +39,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
     let engine = state.get_engine_state().await;
     let video_space = state.get_video_space().await;
     let image_space = state.get_image_space().await;
+    let gpu_snapshot = state.get_gpu_snapshot().await;
     
     let (space, mode) = if engine.mode == WallMode::Video {
         (&video_space, WallMode::Video)
@@ -61,6 +62,12 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
     let locked_count = space.items.iter().filter(|w| w.locked).count();
     let available_count = space.items.iter().filter(|w| !w.locked).count();
     
+    // 获取 VRAM 信息
+    let (vram_used_mb, vram_total_mb, vram_degraded) = match &gpu_snapshot.vram_info {
+        Some(info) => (info.used_mb, info.total_mb, gpu_snapshot.degraded),
+        None => (0, 0, false),
+    };
+    
     Response::Status(StatusInfo {
         mode,
         current: engine.current.clone(),
@@ -70,9 +77,9 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         locked_count,
         available_count,
         scanned_count: video_space.items.len() + image_space.items.len(),
-        vram_used_mb: 0, // TODO: 从 GPU 状态获取
-        vram_total_mb: 0,
-        vram_degraded: false,
+        vram_used_mb,
+        vram_total_mb,
+        vram_degraded,
         uptime_secs: state.uptime_secs(),
         protocol_version: PROTOCOL_VERSION,
         next_time_point: None, // TODO: 从时间调度获取

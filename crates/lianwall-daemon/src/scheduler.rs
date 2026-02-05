@@ -132,16 +132,29 @@ pub async fn gpu_monitor(state: Arc<SharedState>, event_bus: EventBus) {
     let mut shutdown_rx = state.shutdown_receiver();
     let mut timer = interval(Duration::from_secs(5)); // 每 5 秒检查一次
     
+    // 检测 GPU 后端
+    let backend = lianwall_core::gpu::detect_backend().await;
+    tracing::info!("GPU backend detected: {:?}", backend);
+    
     loop {
         tokio::select! {
             _ = timer.tick() => {
                 // 获取 GPU 状态
-                match lianwall_core::gpu::query_vram(lianwall_core::gpu::detect_backend().await).await {
+                match lianwall_core::gpu::query_vram(backend).await {
                     Ok(vram_info) => {
-                        let usage = Some(100.0 - vram_info.free_percent);
+                        let usage = 100.0 - vram_info.free_percent;
+                        
+                        // 获取当前降级状态
+                        let degraded = {
+                            let gpu_state = state.gpu_state.read().await;
+                            gpu_state.as_ref().map(|s| s.degraded).unwrap_or(false)
+                        };
+                        
+                        // 更新 GPU 快照
+                        state.update_gpu_snapshot(vram_info, degraded, backend).await;
                         
                         // 发布事件
-                        event_bus.publish(Event::GpuStateUpdated { usage });
+                        event_bus.publish(Event::GpuStateUpdated { usage: Some(usage) });
                     }
                     Err(e) => {
                         tracing::debug!("GPU monitor error: {}", e);

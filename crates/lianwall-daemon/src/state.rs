@@ -19,8 +19,30 @@ use std::time::Instant;
 use tokio::sync::{broadcast, RwLock, Mutex};
 
 use lianwall_core::config::{Config, WallMode};
-use lianwall_core::gpu::VramState;
+use lianwall_core::gpu::{VramState, VramInfo, GpuBackend};
 use lianwall_core::wallpaper::WallpaperSpace;
+
+/// GPU 状态快照（包含 VramInfo 用于查询）
+#[derive(Debug, Clone)]
+pub struct GpuSnapshot {
+    /// 是否处于降级状态
+    pub degraded: bool,
+    /// 最新的 VRAM 信息
+    pub vram_info: Option<VramInfo>,
+    /// GPU 后端类型
+    pub backend: GpuBackend,
+}
+
+impl GpuSnapshot {
+    /// 创建空的快照
+    pub fn empty() -> Self {
+        Self {
+            degraded: false,
+            vram_info: None,
+            backend: GpuBackend::None,
+        }
+    }
+}
 
 /// 托管进程包装
 ///
@@ -147,8 +169,11 @@ pub struct SharedState {
     /// 引擎状态
     pub engine: AsyncEngineState,
     
-    /// GPU 状态
-    pub gpu: RwLock<Option<VramState>>,
+    /// GPU/VRAM 状态（用于监控）
+    pub gpu_state: RwLock<Option<VramState>>,
+    
+    /// GPU 快照（包含最新 VRAM 信息，用于查询）
+    pub gpu_snapshot: RwLock<GpuSnapshot>,
     
     /// 启动时间
     start_time: Instant,
@@ -185,7 +210,8 @@ impl SharedState {
             video_space: RwLock::new(video_space),
             image_space: RwLock::new(image_space),
             engine: AsyncEngineState::new(initial_mode),
-            gpu: RwLock::new(None),
+            gpu_state: RwLock::new(None),
+            gpu_snapshot: RwLock::new(GpuSnapshot::empty()),
             start_time: Instant::now(),
             shutdown_tx,
         });
@@ -243,9 +269,22 @@ impl SharedState {
         self.engine.snapshot().await
     }
     
-    /// 获取 GPU 状态（只读引用）
+    /// 获取 GPU 快照（用于状态查询）
+    pub async fn get_gpu_snapshot(&self) -> GpuSnapshot {
+        self.gpu_snapshot.read().await.clone()
+    }
+    
+    /// 更新 GPU 快照
+    pub async fn update_gpu_snapshot(&self, vram_info: VramInfo, degraded: bool, backend: GpuBackend) {
+        let mut snapshot = self.gpu_snapshot.write().await;
+        snapshot.vram_info = Some(vram_info);
+        snapshot.degraded = degraded;
+        snapshot.backend = backend;
+    }
+    
+    /// 检查是否有 GPU 状态
     pub async fn has_gpu_state(&self) -> bool {
-        self.gpu.read().await.is_some()
+        self.gpu_state.read().await.is_some()
     }
 }
 
