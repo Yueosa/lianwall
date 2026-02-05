@@ -12,9 +12,9 @@ version = "4.0.0"
 version = "4.0.0"
 edition = "2024"
 license = "MIT"
-authors = ["Sakurine"]
+authors = ["Lian"]
 repository = "https://github.com/Yueosa/lianwall"
-description = "A smart wallpaper manager for Wayland with golden angle algorithm"
+description = "Selects wallpapers using the golden angle algorithm, sprinkled with Lian's magic"
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
