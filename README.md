@@ -42,10 +42,8 @@ cargo build --release
 ### 安装
 
 ```bash
-# 安装 CLI 和 Daemon
 cp target/release/lianwall ~/.local/bin/
-cp target/release/lianwalld ~/.local/bin/
-chmod +x ~/.local/bin/lianwall ~/.local/bin/lianwalld
+chmod +x ~/.local/bin/lianwall
 ```
 
 ---
@@ -142,21 +140,27 @@ bind = SUPER ALT, S, exec, lianwall switch    # 切换模式
 
 ## 🏗️ 架构设计
 
-LianWall 4.0 采用 **守护进程 + 客户端** 架构：
+LianWall 4.0 采用**单文件 + 守护进程**架构，一个 `lianwall` 文件同时包含 CLI 和 Daemon：
 
 ```
-┌─────────────────┐     Unix Socket      ┌─────────────────┐
-│   lianwall      │ ◄──────────────────► │   lianwalld     │
-│   (CLI 客户端)   │    JSON Protocol     │   (守护进程)      │
-└─────────────────┘                      └─────────────────┘
-                                                 │
-                     ┌───────────────────────────┼───────────────────────────┐
-                     │                           │                           │
-                     ▼                           ▼                           ▼
-              ┌─────────────┐            ┌─────────────┐            ┌─────────────┐
-              │  mpvpaper   │            │    swww     │            │  GPU 监控    │
-              │  (Video)    │            │   (Image)   │            │  (VRAM)     │
-              └─────────────┘            └─────────────┘            └─────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                        lianwall                              │
+├─────────────────────────┬────────────────────────────────────┤
+│   CLI 模式              │   Daemon 模式 (--daemon)           │
+│   lianwall next         │   lianwall start 自动 spawn       │
+│   lianwall status       │   lianwall start -F 前台运行       │
+│   lianwall stop         │                                    │
+└───────────┬─────────────┴──────────────┬─────────────────────┘
+            │      Unix Socket           │
+            └────────────────────────────┘
+                         │
+     ┌───────────────────┼───────────────────┐
+     │                   │                   │
+     ▼                   ▼                   ▼
+┌─────────┐        ┌─────────┐        ┌─────────┐
+│mpvpaper │        │  swww   │        │GPU 监控 │
+│ (Video) │        │ (Image) │        │ (VRAM)  │
+└─────────┘        └─────────┘        └─────────┘
 ```
 
 ### 模块结构
@@ -172,14 +176,13 @@ lianwall/
 │   │   ├── socket/        # Unix Socket 通信协议
 │   │   └── wallpaper/     # 壁纸扫描、向量空间
 │   │
-│   ├── lianwall-daemon/   # 守护进程 (lianwalld)
-│   │   ├── handler.rs     # 请求处理
-│   │   ├── scheduler.rs   # 定时调度（自动切换、VRAM 监控）
-│   │   └── server.rs      # Socket 服务器
-│   │
-│   └── lianwall-cli/      # 命令行工具 (lianwall)
+│   └── lianwall-cli/      # CLI + Daemon (单文件)
 │       ├── commands.rs    # 命令定义
-│       └── handlers.rs    # 命令处理
+│       ├── handlers.rs    # CLI 命令处理
+│       └── daemon/        # Daemon 模块
+│           ├── handler.rs     # 请求处理
+│           ├── scheduler.rs   # 定时调度
+│           └── server.rs      # Socket 服务器
 ```
 
 ---
@@ -296,10 +299,10 @@ LianWall 在 `~/.cache/lianwall/` 存储运行时数据：
 
 ```bash
 # 检查是否已在运行
-pgrep -a lianwalld
+pgrep -af "lianwall --daemon"
 
 # 查看详细日志（前台运行）
-lianwalld  # 或 lianwall start -F
+lianwall start -F
 ```
 
 ### swww 壁纸不显示
