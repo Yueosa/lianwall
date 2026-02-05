@@ -5,6 +5,9 @@ members = [
     "crates/lianwall-cli",
 ]
 
+name = "lianwall"
+version = "4.0.0"
+
 [workspace.package]
 version = "4.0.0"
 edition = "2024"
