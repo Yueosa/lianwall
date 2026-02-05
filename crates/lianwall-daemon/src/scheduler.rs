@@ -240,9 +240,11 @@ pub async fn gpu_monitor(state: Arc<SharedState>, event_bus: EventBus) {
                         gpu_state.as_ref().map(|s| s.backend).unwrap_or(lianwall_core::gpu::GpuBackend::None)
                     };
                     
-                    let usage = 100.0 - vram_info.free_percent;
-                    state.update_gpu_snapshot(vram_info, degraded, backend).await;
-                    event_bus.publish(Event::GpuStateUpdated { usage: Some(usage) });
+                    state.update_gpu_snapshot(vram_info.clone(), degraded, backend).await;
+                    event_bus.publish(Event::GpuStateUpdated { 
+                        action, 
+                        vram_info: Some(vram_info),
+                    });
                 }
             }
             

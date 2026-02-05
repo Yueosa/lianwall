@@ -232,16 +232,25 @@ async fn handle_lock(
     }
     
     // 发布事件
-    let (video_count, image_count) = {
-        (
-            state.video_space.read().await.len(),
-            state.image_space.read().await.len(),
-        )
+    let (total, available, locked, in_cooldown) = {
+        let space = if mode == WallMode::Video {
+            state.video_space.read().await
+        } else {
+            state.image_space.read().await
+        };
+        let total = space.items.len();
+        let locked = space.items.iter().filter(|w| w.locked).count();
+        let in_cooldown = space.cooldown_queue.len();
+        let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+        (total, available, locked, in_cooldown)
     };
     event_bus.publish(Event::SpaceUpdated {
         reason: SpaceUpdateReason::LockChange,
-        video_count,
-        image_count,
+        mode,
+        total,
+        available,
+        locked,
+        in_cooldown,
     });
     
     Response::ok()
@@ -271,16 +280,25 @@ async fn handle_unlock(
     }
     
     // 发布事件
-    let (video_count, image_count) = {
-        (
-            state.video_space.read().await.len(),
-            state.image_space.read().await.len(),
-        )
+    let (total, available, locked, in_cooldown) = {
+        let space = if mode == WallMode::Video {
+            state.video_space.read().await
+        } else {
+            state.image_space.read().await
+        };
+        let total = space.items.len();
+        let locked = space.items.iter().filter(|w| w.locked).count();
+        let in_cooldown = space.cooldown_queue.len();
+        let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+        (total, available, locked, in_cooldown)
     };
     event_bus.publish(Event::SpaceUpdated {
         reason: SpaceUpdateReason::LockChange,
-        video_count,
-        image_count,
+        mode,
+        total,
+        available,
+        locked,
+        in_cooldown,
     });
     
     Response::ok()
@@ -310,16 +328,25 @@ async fn handle_toggle_lock(
     }
     
     // 发布事件
-    let (video_count, image_count) = {
-        (
-            state.video_space.read().await.len(),
-            state.image_space.read().await.len(),
-        )
+    let (total, available, locked, in_cooldown) = {
+        let space = if mode == WallMode::Video {
+            state.video_space.read().await
+        } else {
+            state.image_space.read().await
+        };
+        let total = space.items.len();
+        let locked = space.items.iter().filter(|w| w.locked).count();
+        let in_cooldown = space.cooldown_queue.len();
+        let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+        (total, available, locked, in_cooldown)
     };
     event_bus.publish(Event::SpaceUpdated {
         reason: SpaceUpdateReason::LockChange,
-        video_count,
-        image_count,
+        mode,
+        total,
+        available,
+        locked,
+        in_cooldown,
     });
     
     Response::ok()
@@ -446,20 +473,41 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
         tracing::info!("Found {} time points after rescan", time_points.len());
         state.set_time_points(time_points).await;
         
-        // 发布完成事件
-        let (video_count, image_count) = {
-            (
-                state.video_space.read().await.len(),
-                state.image_space.read().await.len(),
-            )
-        };
+        // 发布完成事件（分别发布视频和图片空间的更新）
+        {
+            let video_space = state.video_space.read().await;
+            let total = video_space.items.len();
+            let locked = video_space.items.iter().filter(|w| w.locked).count();
+            let in_cooldown = video_space.cooldown_queue.len();
+            let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+            event_bus.publish(Event::SpaceUpdated {
+                reason: SpaceUpdateReason::Rescan,
+                mode: WallMode::Video,
+                total,
+                available,
+                locked,
+                in_cooldown,
+            });
+        }
         
-        event_bus.publish(Event::SpaceUpdated {
-            reason: SpaceUpdateReason::Rescan,
-            video_count,
-            image_count,
-        });
+        {
+            let image_space = state.image_space.read().await;
+            let total = image_space.items.len();
+            let locked = image_space.items.iter().filter(|w| w.locked).count();
+            let in_cooldown = image_space.cooldown_queue.len();
+            let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+            event_bus.publish(Event::SpaceUpdated {
+                reason: SpaceUpdateReason::Rescan,
+                mode: WallMode::Image,
+                total,
+                available,
+                locked,
+                in_cooldown,
+            });
+        }
         
+        let video_count = state.video_space.read().await.len();
+        let image_count = state.image_space.read().await.len();
         tracing::info!("Rescan complete: {} videos, {} images", video_count, image_count);
     });
     

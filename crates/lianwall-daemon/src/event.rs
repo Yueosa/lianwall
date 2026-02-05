@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use tokio::sync::broadcast;
 
 use lianwall_core::config::WallMode;
+use lianwall_core::gpu::{VramAction, VramInfo};
 
 /// 事件类型
 #[derive(Debug, Clone)]
@@ -29,13 +30,18 @@ pub enum Event {
     /// 壁纸空间已更新
     SpaceUpdated {
         reason: SpaceUpdateReason,
-        video_count: usize,
-        image_count: usize,
+        mode: WallMode,
+        total: usize,
+        available: usize,
+        locked: usize,
+        in_cooldown: usize,
     },
     
     /// 扫描进度
     ScanProgress {
+        mode: WallMode,
         scanned: usize,
+        files_found: usize,
         current_dir: PathBuf,
     },
     
@@ -50,7 +56,8 @@ pub enum Event {
     
     /// GPU 状态更新
     GpuStateUpdated {
-        usage: Option<f32>,
+        action: VramAction,
+        vram_info: Option<VramInfo>,
     },
     
     /// 调度器 tick（内部事件，用于触发定时切换）

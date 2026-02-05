@@ -12,7 +12,6 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use lianwall_core::config::WallMode;
 use lianwall_core::socket::{Request, Response, ErrorCode};
 
 use crate::command::CommandMsg;
@@ -241,28 +240,28 @@ fn event_to_response(event: &Event) -> Option<Response> {
                 changes: vec![lianwall_core::socket::StatusChange::Mode(*to)],
             }))
         }
-        Event::SpaceUpdated { reason, video_count, image_count } => {
+        Event::SpaceUpdated { reason, mode, total, available, locked, in_cooldown } => {
             let socket_reason = match reason {
                 SpaceUpdateReason::InitialScan | SpaceUpdateReason::Rescan => SocketSpaceUpdateReason::Rescanned,
                 SpaceUpdateReason::FileChange => SocketSpaceUpdateReason::ConfigChanged,
                 SpaceUpdateReason::LockChange => SocketSpaceUpdateReason::LockChanged,
             };
             Some(Response::Event(SocketEvent::SpaceUpdated {
-                mode: WallMode::Video, // TODO: 从事件中获取
+                mode: *mode,
                 reason: socket_reason,
                 summary: SpaceSummary {
-                    total: *video_count + *image_count,
-                    available: *video_count + *image_count, // TODO: 计算真实值
-                    locked: 0,
-                    in_cooldown: 0,
+                    total: *total,
+                    available: *available,
+                    locked: *locked,
+                    in_cooldown: *in_cooldown,
                 },
             }))
         }
-        Event::ScanProgress { scanned, current_dir: _ } => {
+        Event::ScanProgress { mode, scanned, files_found, current_dir: _ } => {
             Some(Response::Event(SocketEvent::ScanProgress {
-                mode: WallMode::Video, // TODO: 从事件中获取
+                mode: *mode,
                 dirs_scanned: *scanned,
-                files_found: 0,
+                files_found: *files_found,
                 completed: false,
             }))
         }
@@ -285,13 +284,22 @@ fn event_to_response(event: &Event) -> Option<Response> {
                 changes: vec![lianwall_core::socket::StatusChange::Engine(engine.to_string())],
             }))
         }
-        Event::GpuStateUpdated { usage } => {
-            if let Some(_usage) = usage {
+        Event::GpuStateUpdated { action, vram_info } => {
+            // Keep 不需要通知客户端，只有 Downgrade/Upgrade 才发送事件
+            if *action == lianwall_core::gpu::VramAction::Keep {
+                return None;
+            }
+            
+            if let Some(info) = vram_info {
                 Some(Response::Event(SocketEvent::VramChanged {
-                    action: lianwall_core::socket::VramAction::Downgrade, // TODO: 从状态判断
-                    used_mb: 0,
-                    total_mb: 0,
-                    free_percent: 0.0,
+                    action: match action {
+                        lianwall_core::gpu::VramAction::Downgrade => lianwall_core::socket::VramAction::Downgrade,
+                        lianwall_core::gpu::VramAction::Upgrade => lianwall_core::socket::VramAction::Upgrade,
+                        lianwall_core::gpu::VramAction::Keep => unreachable!(), // 已在上面过滤
+                    },
+                    used_mb: info.used_mb,
+                    total_mb: info.total_mb,
+                    free_percent: info.free_percent,
                 }))
             } else {
                 None
