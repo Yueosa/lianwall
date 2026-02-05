@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use lianwall_core::socket::{
-    Request, Response, StatusInfo, ConfigSnapshot, SpaceSnapshot, WallpaperPoint, 
-    TimeScheduleInfo, ModeSchedule, ErrorCode, PROTOCOL_VERSION,
+    Request, Response, StatusInfo, ConfigSnapshot, ConfigKeyInfo, ConfigConstraints,
+    SpaceSnapshot, WallpaperPoint, TimeScheduleInfo, ModeSchedule, ErrorCode, PROTOCOL_VERSION,
 };
 use lianwall_core::config::WallMode;
 
@@ -102,12 +102,31 @@ async fn get_config(state: &Arc<SharedState>, key: Option<String>) -> Response {
     if let Some(key) = key {
         // 获取特定配置项
         let value = match key.as_str() {
+            // paths
+            "paths.mode" => serde_json::to_value(&config.paths.mode).ok(),
             "paths.video_dir" => serde_json::to_value(&config.paths.video_dir).ok(),
             "paths.image_dir" => serde_json::to_value(&config.paths.image_dir).ok(),
-            "image_engine.interval" => serde_json::to_value(config.image_engine.interval).ok(),
+            // video_engine
             "video_engine.interval" => serde_json::to_value(config.video_engine.interval).ok(),
-            "mode" => serde_json::to_value(&config.paths.mode).ok(),
+            "video_engine.display" => serde_json::to_value(&config.video_engine.display).ok(),
+            "video_engine.mpvpaper_args" => serde_json::to_value(&config.video_engine.mpvpaper_args).ok(),
+            "video_engine.mpv_args" => serde_json::to_value(&config.video_engine.mpv_args).ok(),
+            // image_engine
+            "image_engine.interval" => serde_json::to_value(config.image_engine.interval).ok(),
+            "image_engine.outputs" => serde_json::to_value(&config.image_engine.outputs).ok(),
+            "image_engine.swww_args" => serde_json::to_value(&config.image_engine.swww_args).ok(),
+            // vram
             "vram.enabled" => serde_json::to_value(config.vram.enabled).ok(),
+            "vram.threshold_percent" => serde_json::to_value(config.vram.threshold_percent).ok(),
+            "vram.recovery_percent" => serde_json::to_value(config.vram.recovery_percent).ok(),
+            "vram.check_interval" => serde_json::to_value(config.vram.check_interval).ok(),
+            "vram.cooldown_seconds" => serde_json::to_value(config.vram.cooldown_seconds).ok(),
+            // daemon
+            "daemon.socket_path" => serde_json::to_value(&config.daemon.socket_path).ok(),
+            "daemon.pid_path" => serde_json::to_value(&config.daemon.pid_path).ok(),
+            "daemon.log_level" => serde_json::to_value(&config.daemon.log_level).ok(),
+            // 兼容旧的 key
+            "mode" => serde_json::to_value(&config.paths.mode).ok(),
             "vram.threshold" => serde_json::to_value(config.vram.threshold_percent).ok(),
             _ => None,
         };
@@ -126,11 +145,213 @@ async fn get_config(state: &Arc<SharedState>, key: Option<String>) -> Response {
             Ok(v) => Response::Config(ConfigSnapshot {
                 key: None,
                 value: v,
-                modifiable_keys: None, // TODO: 添加可修改字段列表
+                modifiable_keys: Some(get_modifiable_keys()),
             }),
             Err(e) => Response::error(ErrorCode::InternalError, format!("Serialize error: {}", e)),
         }
     }
+}
+
+/// 获取可修改的配置键列表
+fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
+    vec![
+        // ==================== paths ====================
+        ConfigKeyInfo {
+            key: "paths.mode".to_string(),
+            value_type: "string".to_string(),
+            description: "运行模式: Video (动态壁纸) 或 Image (静态壁纸)".to_string(),
+            default: serde_json::json!("Video"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec![
+                    "Video".to_string(),
+                    "Image".to_string(),
+                ]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "paths.video_dir".to_string(),
+            value_type: "string".to_string(),
+            description: "动态壁纸目录（支持 ~ 展开）".to_string(),
+            default: serde_json::json!("~/Videos/lianwall"),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "paths.image_dir".to_string(),
+            value_type: "string".to_string(),
+            description: "静态壁纸目录（支持 ~ 展开）".to_string(),
+            default: serde_json::json!("~/Pictures/lianwall"),
+            constraints: None,
+        },
+        
+        // ==================== video_engine ====================
+        ConfigKeyInfo {
+            key: "video_engine.interval".to_string(),
+            value_type: "integer".to_string(),
+            description: "动态壁纸切换间隔（秒）".to_string(),
+            default: serde_json::json!(600),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(10)),
+                max: Some(serde_json::json!(86400)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "video_engine.display".to_string(),
+            value_type: "string".to_string(),
+            description: "目标显示器，\"*\" 表示所有显示器".to_string(),
+            default: serde_json::json!("*"),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "video_engine.mpvpaper_args".to_string(),
+            value_type: "array".to_string(),
+            description: "透传给 mpvpaper 的参数".to_string(),
+            default: serde_json::json!([]),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "video_engine.mpv_args".to_string(),
+            value_type: "array".to_string(),
+            description: "透传给 mpv 的参数（通过 mpvpaper -o 传递）".to_string(),
+            default: serde_json::json!([
+                "--no-audio",
+                "--loop=inf",
+                "--hwdec=auto",
+                "--video-zoom=0",
+                "--panscan=1.0"
+            ]),
+            constraints: None,
+        },
+        
+        // ==================== image_engine ====================
+        ConfigKeyInfo {
+            key: "image_engine.interval".to_string(),
+            value_type: "integer".to_string(),
+            description: "静态壁纸切换间隔（秒）".to_string(),
+            default: serde_json::json!(600),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(10)),
+                max: Some(serde_json::json!(86400)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "image_engine.outputs".to_string(),
+            value_type: "string".to_string(),
+            description: "目标显示器，空字符串表示所有显示器，多个用逗号分隔".to_string(),
+            default: serde_json::json!(""),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "image_engine.swww_args".to_string(),
+            value_type: "array".to_string(),
+            description: "透传给 swww img 的参数".to_string(),
+            default: serde_json::json!([
+                "--transition-type=fade",
+                "--transition-duration=2.0",
+                "--transition-fps=60",
+                "--transition-step=20",
+                "--resize=crop"
+            ]),
+            constraints: None,
+        },
+        
+        // ==================== vram ====================
+        ConfigKeyInfo {
+            key: "vram.enabled".to_string(),
+            value_type: "boolean".to_string(),
+            description: "是否启用显存监控".to_string(),
+            default: serde_json::json!(true),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "vram.threshold_percent".to_string(),
+            value_type: "number".to_string(),
+            description: "降级阈值：显存剩余低于此百分比时切换到静态壁纸".to_string(),
+            default: serde_json::json!(25.0),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(5.0)),
+                max: Some(serde_json::json!(50.0)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "vram.recovery_percent".to_string(),
+            value_type: "number".to_string(),
+            description: "恢复阈值：显存剩余高于此百分比时恢复动态壁纸".to_string(),
+            default: serde_json::json!(40.0),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(20.0)),
+                max: Some(serde_json::json!(80.0)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "vram.check_interval".to_string(),
+            value_type: "integer".to_string(),
+            description: "显存检测间隔（秒）".to_string(),
+            default: serde_json::json!(2),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(1)),
+                max: Some(serde_json::json!(60)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "vram.cooldown_seconds".to_string(),
+            value_type: "integer".to_string(),
+            description: "降级冷却时间（秒），防止频繁切换".to_string(),
+            default: serde_json::json!(30),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(10)),
+                max: Some(serde_json::json!(600)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        
+        // ==================== daemon ====================
+        ConfigKeyInfo {
+            key: "daemon.socket_path".to_string(),
+            value_type: "string".to_string(),
+            description: "Unix Socket 路径".to_string(),
+            default: serde_json::json!("/tmp/lianwall.sock"),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "daemon.pid_path".to_string(),
+            value_type: "string".to_string(),
+            description: "PID 文件路径".to_string(),
+            default: serde_json::json!("/tmp/lianwall.pid"),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "daemon.log_level".to_string(),
+            value_type: "string".to_string(),
+            description: "日志级别".to_string(),
+            default: serde_json::json!("info"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec![
+                    "error".to_string(),
+                    "warn".to_string(),
+                    "info".to_string(),
+                    "debug".to_string(),
+                    "trace".to_string(),
+                ]),
+                pattern: None,
+            }),
+        },
+    ]
 }
 
 /// 获取壁纸空间
