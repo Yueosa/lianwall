@@ -368,8 +368,19 @@ async fn handle_set_config(
         }
     }
     
-    // TODO: 保存配置到文件
+    // 保存配置到文件
+    let config_to_save = config.clone();
+    drop(config); // 释放写锁，避免持有锁时进行 IO
     
+    if let Err(e) = lianwall_core::config::update(lianwall_core::config::ConfigUpdateInput {
+        path: None,
+        config: config_to_save,
+    }) {
+        tracing::error!("Failed to save config: {}", e);
+        return Response::error(ErrorCode::ConfigError, format!("Failed to save config: {}", e));
+    }
+    
+    tracing::info!("Config key '{}' updated and saved", key);
     Response::ok()
 }
 
