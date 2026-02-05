@@ -5,4 +5,5 @@
 /build
 
 # 开发者的悄悄话
-TODO.md
+!README.md
+*.md
