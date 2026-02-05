@@ -112,10 +112,10 @@ pub struct AsyncEngineState {
 }
 
 impl AsyncEngineState {
-    /// 从同步 EngineState 创建
-    pub fn new() -> Self {
+    /// 创建新的引擎状态
+    pub fn new(mode: WallMode) -> Self {
         Self {
-            mode: RwLock::new(WallMode::Image),
+            mode: RwLock::new(mode),
             current: RwLock::new(None),
             swww_daemon: ManagedProcess::new("swww-daemon"),
             mpvpaper: ManagedProcess::new("mpvpaper"),
@@ -130,12 +130,6 @@ impl AsyncEngineState {
             swww_daemon_running: self.swww_daemon.is_running().await,
             mpvpaper_running: self.mpvpaper.is_running().await,
         }
-    }
-}
-
-impl Default for AsyncEngineState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -184,11 +178,13 @@ impl SharedState {
             current_index: None,
         };
         
+        let initial_mode = config.paths.mode;
+        
         let state = Arc::new(Self {
             config: RwLock::new(config),
             video_space: RwLock::new(video_space),
             image_space: RwLock::new(image_space),
-            engine: AsyncEngineState::new(),
+            engine: AsyncEngineState::new(initial_mode),
             gpu: RwLock::new(None),
             start_time: Instant::now(),
             shutdown_tx,

@@ -41,14 +41,14 @@
 
 #![allow(dead_code)] // 预留 API，供 GUI/脚本使用
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use lianwall_core::config::WallMode;
 use lianwall_core::socket::{
-    codec, ConfigSnapshot, ErrorCode, Event, EventType, Request, Response, SpaceSnapshot,
+    ConfigSnapshot, ErrorCode, Event, EventType, Request, Response, SpaceSnapshot,
     StatusInfo, TimeScheduleInfo,
 };
 
@@ -102,15 +102,12 @@ impl From<std::io::Error> for ClientError {
     }
 }
 
-impl From<lianwall_core::socket::SocketError> for ClientError {
-    fn from(e: lianwall_core::socket::SocketError) -> Self {
-        Self::Codec(e.to_string())
-    }
-}
-
 /// Socket 客户端
+///
+/// 使用行分隔 JSON 协议与 daemon 通信
 pub struct Client {
-    stream: UnixStream,
+    reader: BufReader<UnixStream>,
+    writer: UnixStream,
 }
 
 impl Client {
@@ -128,17 +125,26 @@ impl Client {
         stream.set_read_timeout(Some(Duration::from_secs(10)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
 
-        Ok(Self { stream })
+        let writer = stream.try_clone()?;
+        let reader = BufReader::new(stream);
+
+        Ok(Self { reader, writer })
     }
 
-    /// 发送请求并接收响应
+    /// 发送请求并接收响应（行分隔 JSON 协议）
     fn request(&mut self, req: Request) -> Result<Response, ClientError> {
-        // 编码并发送
-        codec::send_json(&mut self.stream, &req)?;
-        self.stream.flush()?;
+        // 序列化并发送（行分隔）
+        let json = serde_json::to_string(&req)
+            .map_err(|e| ClientError::Codec(format!("Serialize error: {}", e)))?;
+        writeln!(self.writer, "{}", json)?;
+        self.writer.flush()?;
 
-        // 接收响应
-        let resp: Response = codec::recv_json(&mut self.stream)?;
+        // 读取响应（行分隔）
+        let mut line = String::new();
+        self.reader.read_line(&mut line)?;
+        
+        let resp: Response = serde_json::from_str(line.trim())
+            .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
 
         // 检查错误响应
         if let Response::Error { code, message } = &resp {
@@ -356,7 +362,12 @@ impl Client {
     /// # 注意
     /// 必须先调用 `subscribe` 建立订阅
     pub fn receive_event(&mut self) -> Result<Event, ClientError> {
-        let resp: Response = codec::recv_json(&mut self.stream)?;
+        // 读取响应（行分隔）
+        let mut line = String::new();
+        self.reader.read_line(&mut line)?;
+        
+        let resp: Response = serde_json::from_str(line.trim())
+            .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
 
         match resp {
             Response::Event(event) => Ok(event),
@@ -371,9 +382,9 @@ impl Client {
         Ok(())
     }
 
-    /// 获取底层流（用于高级用途）
-    pub fn into_stream(self) -> UnixStream {
-        self.stream
+    /// 获取底层读取器（用于高级用途）
+    pub fn into_reader(self) -> BufReader<UnixStream> {
+        self.reader
     }
 }
 
