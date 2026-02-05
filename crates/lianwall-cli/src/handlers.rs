@@ -86,22 +86,23 @@ pub fn handle_start(fmt: &Formatter, foreground: bool) -> Result<()> {
     }
 
     if foreground {
-        // 前台运行：exec 替换当前进程
+        // 前台运行：exec 替换当前进程，运行 daemon 模式
         fmt.print_info("Starting daemon in foreground mode...");
         
-        let err = exec_lianwalld();
-        return Err(HandlerError::Other(format!("Failed to exec lianwalld: {}", err)));
+        let err = exec_daemon();
+        return Err(HandlerError::Other(format!("Failed to exec daemon: {}", err)));
     } else {
-        // 后台运行：spawn 子进程
-        // 尝试多个可能的路径
-        let daemon_cmd = find_lianwalld();
+        // 后台运行：spawn 自己 + --daemon
+        let self_exe = std::env::current_exe()
+            .map_err(|e| HandlerError::Other(format!("Failed to get current exe: {}", e)))?;
         
-        let child = Command::new(&daemon_cmd)
+        let child = Command::new(&self_exe)
+            .arg("--daemon")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|e| HandlerError::Other(format!("Failed to start daemon: {}. Make sure lianwalld is in your PATH.", e)))?;
+            .map_err(|e| HandlerError::Other(format!("Failed to start daemon: {}", e)))?;
 
         // 等待 daemon 就绪
         thread::sleep(Duration::from_millis(500));
@@ -159,32 +160,19 @@ pub fn handle_restart(fmt: &Formatter) -> Result<()> {
     handle_start(fmt, false)
 }
 
-/// 查找 lianwalld 可执行文件
-fn find_lianwalld() -> String {
-    // 1. 检查同目录下是否有 lianwalld（开发模式）
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(dir) = exe_path.parent() {
-            let sibling = dir.join("lianwalld");
-            if sibling.exists() {
-                return sibling.to_string_lossy().to_string();
-            }
-        }
-    }
-    
-    // 2. 检查 PATH 中的 lianwalld
-    "lianwalld".to_string()
-}
-
-/// 使用 exec 替换当前进程
+/// 使用 exec 替换当前进程，运行 daemon 模式
 #[cfg(unix)]
-fn exec_lianwalld() -> std::io::Error {
+fn exec_daemon() -> std::io::Error {
     use std::os::unix::process::CommandExt;
-    let cmd = find_lianwalld();
-    Command::new(&cmd).exec()
+    let self_exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    Command::new(self_exe).arg("--daemon").exec()
 }
 
 #[cfg(not(unix))]
-fn exec_lianwalld() -> std::io::Error {
+fn exec_daemon() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::Unsupported, "exec not supported on this platform")
 }
 

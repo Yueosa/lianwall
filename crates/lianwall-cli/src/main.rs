@@ -1,8 +1,11 @@
 //! LianWall CLI (lianwall)
 //!
 //! 命令行客户端，通过 Unix Socket 与 daemon 通信
+//! 
+//! 使用 `--daemon` 参数启动守护进程模式
 
 mod commands;
+mod daemon;
 mod handlers;
 mod output;
 
@@ -13,6 +16,15 @@ use output::{Formatter, TerminalCaps};
 
 fn main() {
     let cli = Cli::parse();
+
+    // Daemon 模式：直接运行守护进程
+    if cli.daemon {
+        if let Err(e) = daemon::run(None) {
+            eprintln!("守护进程错误: {}", e);
+            std::process::exit(1);
+        }
+        return;
+    }
 
     // 无参数时显示帮助
     if cli.command.is_none() {

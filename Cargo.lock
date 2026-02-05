@@ -356,9 +356,13 @@ dependencies = [
  "clap",
  "colored",
  "lianwall-core",
+ "polling",
  "serde_json",
+ "signal-hook",
  "thiserror",
  "toml",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -372,19 +376,6 @@ dependencies = [
  "serde_json",
  "thiserror",
  "toml",
-]
-
-[[package]]
-name = "lianwall-daemon"
-version = "4.0.0"
-dependencies = [
- "clap",
- "lianwall-core",
- "polling",
- "signal-hook",
- "thiserror",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

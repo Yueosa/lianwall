@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
     "crates/lianwall-core",
-    "crates/lianwall-daemon",
     "crates/lianwall-cli",
 ]
 
@@ -11,7 +10,7 @@ version = "4.0.0"
 edition = "2024"
 license = "MIT"
 authors = ["Sakurine"]
-repository = "https://github.com/pumpkinhead/lianwall"
+repository = "https://github.com/Yueosa/lianwall"
 description = "A smart wallpaper manager for Wayland with golden angle algorithm"
 
 [workspace.dependencies]

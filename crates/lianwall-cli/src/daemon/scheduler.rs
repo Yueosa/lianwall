@@ -7,8 +7,8 @@ use lianwall_core::config::WallMode;
 use lianwall_core::engine;
 use lianwall_core::gpu::{check, VramAction};
 
-use crate::error::DaemonError;
-use crate::handler::DaemonState;
+use super::error::DaemonError;
+use super::handler::DaemonState;
 
 /// 调度器
 pub struct Scheduler {

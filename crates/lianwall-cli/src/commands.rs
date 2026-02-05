@@ -21,6 +21,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_color: bool,
 
+    /// Run as daemon (internal use, spawned by 'start' command)
+    #[arg(long, hide = true)]
+    pub daemon: bool,
+
     #[command(subcommand)]
     pub command: Option<Command>,
 }

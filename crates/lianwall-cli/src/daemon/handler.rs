@@ -15,7 +15,7 @@ use lianwall_core::wallpaper::{
     WeightsFile, WallpaperSpace,
 };
 
-use crate::error::DaemonError;
+use super::error::DaemonError;
 
 /// 守护进程全局状态
 pub struct DaemonState {
