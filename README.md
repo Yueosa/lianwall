@@ -4,11 +4,13 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.0.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
 **适用于所有支持 Wayland 的类 Unix 系统**（Linux / BSD 等）
+
+**关于项目的大版本更新日志, 你可以查看 [CHANGELOG](./CHANGELOG.md)**
 
 </div>
 
@@ -26,6 +28,20 @@
 
 ## 📦 安装
 
+### 说明
+
+你会看到两个二进制文件 `lianwalld (lianwall-daemonm)` 和 `lianwall`
+
+* 其中 `lianwalld` 是引擎核心, 负责真正的壁纸播放, 轮换
+* 而 `lianwall` 是一个简单的命令行程序, 你可以通过他来控制 `lianwalld` 的各种行为, 例如:
+    * 快速启动/退出
+    * 切换壁纸/模式
+    * ...
+
+如果你不喜欢在命令行敲指令, 我们也提供了图形化界面程序
+
+你可以在 [这里](https://github.com/Yueosa/lianwall-gui) 下载他
+
 ### 依赖
 
 | 依赖 | 用途 | 安装 (Arch Linux) | 必需 |
@@ -41,14 +57,33 @@
 git clone https://github.com/Yueosa/lianwall.git
 cd lianwall
 cargo build --release
+
+# 或者使用构建脚本
+./build.sh
 ```
 
 ### 安装
 
 ```bash
+# 安装两个二进制文件
 cp target/release/lianwall ~/.local/bin/
-chmod +x ~/.local/bin/lianwall
+cp target/release/lianwalld ~/.local/bin/
+chmod +x ~/.local/bin/lianwall ~/.local/bin/lianwalld
 ```
+
+或者使用一键安装脚本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Yueosa/lianwall/main/install.sh | bash
+```
+
+#### Arch Linux (AUR)
+
+```bash
+paru -S lianwall-bin   # 自动安装 lianwalld-bin 依赖
+```
+
+在 **AUR 安装** 将会自动安装所有依赖 `lianwalld` -> `swww` + `mpvpaper`
 
 ---
 
@@ -187,27 +222,36 @@ bind = ALT, S, exec, lianwall switch    # 切换模式
 
 ## 🏗️ 架构设计
 
-LianWall 4.0 采用**单文件 + 守护进程**架构，一个 `lianwall` 文件同时包含 CLI 和 Daemon：
+LianWall 5.0 采用 **双文件 + 守护进程** 架构，CLI 和 Daemon 彻底分离：
+
+| 二进制 | 用途 | 说明 |
+|--------|------|------|
+| `lianwall` | CLI 客户端 | 轻量级命令行工具，通过 Socket 与 Daemon 通信 |
+| `lianwalld` | 守护进程 | 常驻后台，管理壁纸状态和定时任务 |
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                        lianwall                              │
-├─────────────────────────┬────────────────────────────────────┤
-│   CLI mode              │   Daemon mode (--daemon)           │
-│   lianwall next         │   lianwall start auto spawn        │
-│   lianwall status       │   lianwall start -F foreground     │
-│   lianwall stop         │                                    │
-└───────────┬─────────────┴──────────────┬─────────────────────┘
-            │      Unix Socket           │
-            └────────────────────────────┘
-                         │
-     ┌───────────────────┼───────────────────┐
-     │                   │                   │
-     ▼                   ▼                   ▼
- ┌─────────┐        ┌─────────┐      ┌────────────────┐
- │mpvpaper │        │  swww   │      │ GPU Monitoring │
- │ (Video) │        │ (Image) │      │     (VRAM)     │
- └─────────┘        └─────────┘      └────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           lianwall (CLI)                            │
+│    lianwall start  →  自动查找并启动 lianwalld                       │
+│    lianwall next   →  发送命令到 lianwalld                          │
+│    lianwall status →  查询状态                                      │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │ Unix Socket (/tmp/lianwall.sock)
+┌───────────────────────────────▼─────────────────────────────────────┐
+│                          lianwalld (Daemon)                         │
+│    • 内存维护壁纸状态（冷却队列、历史栈）                              │
+│    • 定时切换壁纸                                                   │
+│    • 监听时间点刷新                                                 │
+│    • GPU 显存监控                                                   │
+└───────────────────────────────┬─────────────────────────────────────┘
+                                │
+          ┌─────────────────────┼─────────────────────┐
+          │                     │                     │
+          ▼                     ▼                     ▼
+     ┌─────────┐          ┌─────────┐        ┌────────────────┐
+     │mpvpaper │          │  swww   │        │ GPU Monitoring │
+     │ (Video) │          │ (Image) │        │     (VRAM)     │
+     └─────────┘          └─────────┘        └────────────────┘
 ```
 
 ### 模块结构
@@ -215,21 +259,23 @@ LianWall 4.0 采用**单文件 + 守护进程**架构，一个 `lianwall` 文件
 ```
 lianwall/
 ├── crates/
-│   ├── lianwall-core/     # 核心库
-│   │   ├── algorithm/     # 黄金角选择算法
-│   │   ├── config/        # 配置读写
-│   │   ├── engine/        # mpvpaper / swww 引擎
-│   │   ├── gpu/           # 显存监控
-│   │   ├── socket/        # Unix Socket 通信协议
-│   │   └── wallpaper/     # 壁纸扫描、向量空间、时间段
+│   ├── lianwall-core/      # 核心库（共享）
+│   │   ├── algorithm/      # 黄金角选择算法
+│   │   ├── config/         # 配置读写
+│   │   ├── engine/         # mpvpaper / swww 引擎
+│   │   ├── gpu/            # 显存监控
+│   │   ├── socket/         # Unix Socket 通信协议 (V2)
+│   │   └── wallpaper/      # 壁纸扫描、向量空间、时间段
 │   │
-│   └── lianwall-cli/      # CLI + Daemon (单文件)
-│       ├── commands.rs    # 命令定义
-│       ├── handlers.rs    # CLI 命令处理
-│       └── daemon/        # Daemon 模块
-│           ├── handler.rs     # 请求处理
-│           ├── scheduler.rs   # 定时调度 (壁纸/GPU/时间点)
-│           └── server.rs      # Socket 服务器
+│   ├── lianwall-cli/       # CLI 客户端 → lianwall
+│   │   ├── client.rs       # Socket 客户端封装
+│   │   ├── commands.rs     # 命令定义
+│   │   └── handlers.rs     # 命令处理
+│   │
+│   └── lianwall-daemon/    # 守护进程 → lianwalld
+│       ├── handler.rs      # 请求处理
+│       ├── scheduler.rs    # 定时调度 (壁纸/GPU/时间点)
+│       └── server.rs       # Socket 服务器
 ```
 
 ---
@@ -346,7 +392,7 @@ LianWall 在 `~/.cache/lianwall/` 存储运行时数据：
 
 ```bash
 # 检查是否已在运行
-pgrep -af "lianwall --daemon"
+pgrep -af "lianwalld"
 
 # 查看详细日志（前台运行）
 lianwall start -F
