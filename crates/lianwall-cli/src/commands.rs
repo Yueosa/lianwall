@@ -21,10 +21,6 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_color: bool,
 
-    /// Run as daemon (internal use, spawned by 'start' command)
-    #[arg(long, hide = true)]
-    pub daemon: bool,
-
     #[command(subcommand)]
     pub command: Option<Command>,
 }
@@ -84,13 +80,31 @@ pub enum Command {
         path: PathBuf,
     },
 
-    /// Reload config and rescan wallpaper directories
+    /// Reload config file and rescan wallpaper directories
+    ///
+    /// Use this after editing config.toml manually.
+    /// If you only added/removed wallpaper files, use 'rescan' instead.
     Reload,
+
+    /// Rescan wallpaper directories (without reloading config)
+    ///
+    /// Use this after adding/removing wallpaper files.
+    /// This does NOT re-read config.toml - use 'reload' for that.
+    Rescan,
 
     /// Configuration management
     Config {
         #[command(subcommand)]
         action: ConfigAction,
+    },
+
+    /// Subscribe to daemon events (for debugging)
+    ///
+    /// Available event types: wallpaper, status, config, space, vram, time, error, all
+    Subscribe {
+        /// Event types to subscribe (default: all)
+        #[arg(default_value = "all")]
+        events: Vec<String>,
     },
 }
 
