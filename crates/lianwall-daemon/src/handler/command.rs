@@ -422,18 +422,29 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
             false, // is_video
         ).await;
         
-        // 更新状态
-        if let Ok(result) = video_result {
-            let paths: Vec<_> = result.wallpapers.into_iter().map(|w| w.path).collect();
+        // 收集壁纸和时间点
+        let mut all_wallpapers = Vec::new();
+        
+        // 更新视频空间
+        if let Ok(ref result) = video_result {
+            all_wallpapers.extend(result.wallpapers.clone());
+            let paths: Vec<_> = result.wallpapers.iter().map(|w| w.path.clone()).collect();
             let mut video_space = state.video_space.write().await;
             *video_space = lianwall_core::wallpaper::build_space(paths, 0);
         }
         
-        if let Ok(result) = image_result {
-            let paths: Vec<_> = result.wallpapers.into_iter().map(|w| w.path).collect();
+        // 更新图片空间
+        if let Ok(ref result) = image_result {
+            all_wallpapers.extend(result.wallpapers.clone());
+            let paths: Vec<_> = result.wallpapers.iter().map(|w| w.path.clone()).collect();
             let mut image_space = state.image_space.write().await;
             *image_space = lianwall_core::wallpaper::build_space(paths, 0);
         }
+        
+        // 更新时间点缓存
+        let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers);
+        tracing::info!("Found {} time points after rescan", time_points.len());
+        state.set_time_points(time_points).await;
         
         // 发布完成事件
         let (video_count, image_count) = {

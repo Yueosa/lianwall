@@ -13,6 +13,7 @@
 //! 未来期望: 根据实际性能测试结果，可能采用 dashmap 等并发容器
 //! 原因: 需要实际数据支撑优化方向
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,7 +21,7 @@ use tokio::sync::{broadcast, RwLock, Mutex};
 
 use lianwall_core::config::{Config, WallMode};
 use lianwall_core::gpu::{VramState, VramInfo, GpuBackend};
-use lianwall_core::wallpaper::WallpaperSpace;
+use lianwall_core::wallpaper::{WallpaperSpace, TimePoint};
 
 /// GPU 状态快照（包含 VramInfo 用于查询）
 #[derive(Debug, Clone)]
@@ -175,6 +176,9 @@ pub struct SharedState {
     /// GPU 快照（包含最新 VRAM 信息，用于查询）
     pub gpu_snapshot: RwLock<GpuSnapshot>,
     
+    /// 时间关键点缓存（用于时间调度）
+    pub time_points: RwLock<BTreeSet<TimePoint>>,
+    
     /// 启动时间
     start_time: Instant,
     
@@ -212,6 +216,7 @@ impl SharedState {
             engine: AsyncEngineState::new(initial_mode),
             gpu_state: RwLock::new(None),
             gpu_snapshot: RwLock::new(GpuSnapshot::empty()),
+            time_points: RwLock::new(BTreeSet::new()),
             start_time: Instant::now(),
             shutdown_tx,
         });
@@ -285,6 +290,16 @@ impl SharedState {
     /// 检查是否有 GPU 状态
     pub async fn has_gpu_state(&self) -> bool {
         self.gpu_state.read().await.is_some()
+    }
+    
+    /// 获取时间点集合
+    pub async fn get_time_points(&self) -> BTreeSet<TimePoint> {
+        self.time_points.read().await.clone()
+    }
+    
+    /// 更新时间点集合
+    pub async fn set_time_points(&self, points: BTreeSet<TimePoint>) {
+        *self.time_points.write().await = points;
     }
 }
 

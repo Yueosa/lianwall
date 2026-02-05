@@ -40,6 +40,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
     let video_space = state.get_video_space().await;
     let image_space = state.get_image_space().await;
     let gpu_snapshot = state.get_gpu_snapshot().await;
+    let time_points = state.get_time_points().await;
     
     let (space, mode) = if engine.mode == WallMode::Video {
         (&video_space, WallMode::Video)
@@ -68,6 +69,12 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         None => (0, 0, false),
     };
     
+    // 计算下一个时间点
+    let now = lianwall_core::wallpaper::TimePoint::now();
+    let next_tp = lianwall_core::wallpaper::next_key_point(&now, &time_points);
+    let next_time_point = next_tp.map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
+    let time_points_count = time_points.len();
+    
     Response::Status(StatusInfo {
         mode,
         current: engine.current.clone(),
@@ -82,8 +89,8 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         vram_degraded,
         uptime_secs: state.uptime_secs(),
         protocol_version: PROTOCOL_VERSION,
-        next_time_point: None, // TODO: 从时间调度获取
-        time_points_count: 0,
+        next_time_point,
+        time_points_count,
         next_switch_secs: Some(config.image_engine.interval),
     })
 }

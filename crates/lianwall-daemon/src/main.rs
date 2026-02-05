@@ -74,22 +74,33 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Scanning wallpapers...");
 
     // 扫描视频壁纸
-    let video_paths: Vec<std::path::PathBuf> = match scan_directory_async(config.paths.video_dir.clone(), true).await {
-        Ok(result) => result.wallpapers.into_iter().map(|w| w.path).collect(),
+    let video_result = scan_directory_async(config.paths.video_dir.clone(), true).await;
+    let video_wallpapers = match &video_result {
+        Ok(result) => result.wallpapers.clone(),
         Err(e) => {
             tracing::warn!("Failed to scan videos: {}", e);
             vec![]
         }
     };
+    let video_paths: Vec<std::path::PathBuf> = video_wallpapers.iter().map(|w| w.path.clone()).collect();
     
     // 扫描图片壁纸  
-    let image_paths: Vec<std::path::PathBuf> = match scan_directory_async(config.paths.image_dir.clone(), false).await {
-        Ok(result) => result.wallpapers.into_iter().map(|w| w.path).collect(),
+    let image_result = scan_directory_async(config.paths.image_dir.clone(), false).await;
+    let image_wallpapers = match &image_result {
+        Ok(result) => result.wallpapers.clone(),
         Err(e) => {
             tracing::warn!("Failed to scan images: {}", e);
             vec![]
         }
     };
+    let image_paths: Vec<std::path::PathBuf> = image_wallpapers.iter().map(|w| w.path.clone()).collect();
+
+    // 收集时间点
+    let mut all_wallpapers = video_wallpapers;
+    all_wallpapers.extend(image_wallpapers);
+    let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers);
+    tracing::info!("Found {} time points", time_points.len());
+    state.set_time_points(time_points).await;
 
     // 构建向量空间
     {
