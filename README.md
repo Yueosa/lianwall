@@ -6,6 +6,9 @@
 
 [![Version](https://img.shields.io/badge/version-4.0.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
+
+**适用于所有支持 Wayland 的类 Unix 系统**（Linux / BSD 等）
 
 </div>
 
