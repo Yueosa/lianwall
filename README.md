@@ -130,9 +130,7 @@ lianwall mode image      # 切换到静态壁纸模式
 exec-once = lianwall start
 
 # 快捷键
-bind = SUPER ALT, N, exec, lianwall next      # 下一张壁纸
-bind = SUPER ALT, P, exec, lianwall prev      # 上一张壁纸
-bind = SUPER ALT, S, exec, lianwall switch    # 切换模式
+bind = ALT, S, exec, lianwall switch    # 切换模式
 ```
 
 ---
@@ -192,9 +190,9 @@ LianWall 4.0 采用**单文件 + 守护进程**架构，一个 `lianwall` 文件
 ┌──────────────────────────────────────────────────────────────┐
 │                        lianwall                              │
 ├─────────────────────────┬────────────────────────────────────┤
-│   CLI 模式              │   Daemon 模式 (--daemon)           │
-│   lianwall next         │   lianwall start 自动 spawn       │
-│   lianwall status       │   lianwall start -F 前台运行       │
+│   CLI mode              │   Daemon mode (--daemon)           │
+│   lianwall next         │   lianwall start auto spawn        │
+│   lianwall status       │   lianwall start -F foreground     │
 │   lianwall stop         │                                    │
 └───────────┬─────────────┴──────────────┬─────────────────────┘
             │      Unix Socket           │
@@ -203,10 +201,10 @@ LianWall 4.0 采用**单文件 + 守护进程**架构，一个 `lianwall` 文件
      ┌───────────────────┼───────────────────┐
      │                   │                   │
      ▼                   ▼                   ▼
-┌─────────┐        ┌─────────┐        ┌─────────┐
-│mpvpaper │        │  swww   │        │GPU 监控 │
-│ (Video) │        │ (Image) │        │ (VRAM)  │
-└─────────┘        └─────────┘        └─────────┘
+ ┌─────────┐        ┌─────────┐      ┌────────────────┐
+ │mpvpaper │        │  swww   │      │ GPU Monitoring │
+ │ (Video) │        │ (Image) │      │     (VRAM)     │
+ └─────────┘        └─────────┘      └────────────────┘
 ```
 
 ### 模块结构
