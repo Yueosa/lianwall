@@ -13,10 +13,11 @@
 //! - 降级/恢复决策（含冷却机制）
 //!
 //! ## 导出接口
-//! - 检测: `detect_backend`, `query_vram`
+//! - 检测: `detect_backend`, `query_vram` (异步)
 //! - 监控: `init`, `check`
 //! - 类型: `GpuBackend`, `VramInfo`, `VramState`, `VramAction`
 
+mod async_ops;
 mod error;
 mod monitor;
 mod nvidia_smi;
@@ -27,27 +28,25 @@ pub use error::GpuError;
 pub use monitor::{check, init};
 pub use r#struct::{GpuBackend, VramAction, VramInfo, VramState};
 
+// 异步 API（主要接口）
+pub use async_ops::{detect_backend, query_vram};
+
+// 同步检测（轻量级，内部使用）
 use std::process::Command;
 
-/// 检测可用的 GPU 后端
-///
-/// 优先级: NVML > nvidia-smi > rocm-smi > None
-pub fn detect_backend() -> GpuBackend {
-    // 检查 nvidia-smi
+/// 同步检测可用的 GPU 后端（轻量级）
+pub fn detect_backend_sync() -> GpuBackend {
     if is_command_available("nvidia-smi") {
         return GpuBackend::NvidiaSmi;
     }
-
-    // 检查 rocm-smi
     if is_command_available("rocm-smi") {
         return GpuBackend::RocmSmi;
     }
-
     GpuBackend::None
 }
 
-/// 查询显存信息
-pub fn query_vram(backend: GpuBackend) -> Result<VramInfo, GpuError> {
+/// 同步查询显存（阻塞，仅内部使用）
+pub fn query_vram_sync(backend: GpuBackend) -> Result<VramInfo, GpuError> {
     match backend {
         GpuBackend::NvidiaSmi => nvidia_smi::query(),
         GpuBackend::RocmSmi => rocm_smi::query(),
@@ -69,8 +68,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_detect_backend() {
+    fn test_detect_backend_sync() {
         // 仅测试不会 panic
-        let _ = detect_backend();
+        let _ = detect_backend_sync();
     }
 }

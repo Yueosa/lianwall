@@ -2,12 +2,21 @@
 //!
 //! 提供守护进程与客户端之间的 Unix Socket 通信功能
 //!
-//! # 架构
+//! # 架构 - 订阅 + 广播模式
 //!
 //! ```text
 //! ┌─────────────┐                    ┌─────────────┐
 //! │   Client    │  ── Request ──→    │   Server    │
 //! │ (CLI/GUI)   │  ←─ Response ──    │  (Daemon)   │
+//! │             │  ←─ Event ─────    │             │
+//! └─────────────┘                    └─────────────┘
+//!
+//! 订阅模式:
+//! ┌─────────────┐                    ┌─────────────┐
+//! │   Client    │  ── Subscribe ──→  │   Server    │
+//! │             │  ←─ Subscribed ──  │             │
+//! │             │  ←─ Event ─────    │  (广播)     │
+//! │             │  ←─ Event ─────    │             │
 //! └─────────────┘                    └─────────────┘
 //! ```
 //!
@@ -21,63 +30,42 @@
 //! +----------------+------------------+
 //! ```
 //!
+//! # 消息分类
+//!
+//! - **Query**: 无状态查询，可并发处理
+//! - **Command**: 状态修改，排队串行执行
+//! - **Subscribe**: 建立订阅关系
+//! - **Event**: 服务端推送
+//!
 //! # 模块结构
 //!
-//! - [`protocol`] - 请求/响应结构定义
+//! - [`protocol`] - 协议定义（请求、响应、事件）
 //! - [`codec`] - 消息编解码
-//! - [`client`] - 客户端 API（CLI/GUI 使用）
-//! - [`server`] - 服务端 API（Daemon 使用）
 //! - [`error`] - 错误类型
 //!
-//! # 使用示例
-//!
-//! ## 客户端
-//! ```ignore
-//! use lianwall_core::socket::{Client, quick};
-//!
-//! // 方式 1: 使用 Client 对象
-//! let mut client = Client::connect("/tmp/lianwall.sock")?;
-//! let status = client.status()?;
-//! client.next()?;
-//!
-//! // 方式 2: 使用快捷函数
-//! let status = quick::status("/tmp/lianwall.sock")?;
-//! quick::next("/tmp/lianwall.sock")?;
-//! ```
-//!
-//! ## 服务端
-//! ```ignore
-//! use lianwall_core::socket::{Server, Request, Response};
-//!
-//! let server = Server::bind("/tmp/lianwall.sock", true)?;
-//!
-//! loop {
-//!     let mut conn = server.accept()?;
-//!     conn.serve(|req| {
-//!         let resp = match req {
-//!             Request::Ping => Response::with_data(ResponseData::Pong),
-//!             Request::Shutdown => return (Response::ok(), false),
-//!             _ => Response::ok(),
-//!         };
-//!         (resp, true)
-//!     })?;
-//! }
-//! ```
+//! # 注意
+//! 
+//! Client 模块将在 Phase 3 重写以支持新协议和订阅模式
 
-pub mod client;
 pub mod codec;
 pub mod error;
 pub mod protocol;
-pub mod server;
 
 // Re-exports
-pub use client::Client;
 pub use error::SocketError;
 pub use protocol::{
-    ModeSchedule, Request, Response, ResponseData, SpaceSnapshot, StatusInfo,
-    TimeRangeInfo, TimeScheduleInfo, WallpaperPoint, WallpaperTimeSegment, PROTOCOL_VERSION,
+    // 常量
+    PROTOCOL_VERSION, MAX_MESSAGE_SIZE,
+    // 请求
+    Request,
+    // 响应
+    Response, ErrorCode,
+    // 事件
+    Event, EventType,
+    // 辅助枚举
+    WallpaperTrigger, StatusChange, SpaceUpdateReason, VramAction,
+    // 数据结构
+    StatusInfo, SpaceSnapshot, WallpaperPoint, SpaceSummary,
+    TimeScheduleInfo, ModeSchedule, WallpaperTimeSegment, TimeRangeInfo,
+    ConfigSnapshot, ConfigKeyInfo, ConfigConstraints,
 };
-pub use server::{Connection, Server};
-
-/// 快捷函数
-pub use client::quick;

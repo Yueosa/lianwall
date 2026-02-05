@@ -18,11 +18,11 @@ use crate::config::VramConfig;
 
 use super::error::GpuError;
 use super::r#struct::{GpuBackend, VramAction, VramState};
-use super::{detect_backend, query_vram};
+use super::{detect_backend_sync, query_vram_sync};
 
 /// 初始化监控状态
 pub fn init() -> VramState {
-    let backend = detect_backend();
+    let backend = detect_backend_sync();
     VramState::new(backend)
 }
 
@@ -42,7 +42,7 @@ pub fn check(state: &mut VramState, config: &VramConfig) -> Result<VramAction, G
     }
 
     // 查询显存
-    let info = query_vram(state.backend)?;
+    let info = query_vram_sync(state.backend)?;
 
     // 决策
     let action = if info.free_percent < config.threshold_percent {
