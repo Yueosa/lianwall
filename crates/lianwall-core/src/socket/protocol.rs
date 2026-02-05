@@ -1,4 +1,4 @@
-//! Socket 通信协议 V2 - 订阅 + 广播模式
+//! Socket 通信协议 - 订阅 + 广播模式
 //!
 //! ## 设计原则
 //!
@@ -13,8 +13,7 @@
 //!    - 新增字段使用 `#[serde(default)]`
 //!    - 协议版本号用于兼容性检查
 //!
-//! 3. **向后兼容**:
-//!    - 老客户端不订阅新事件类型即可
+//! 3. **错误处理**:
 //!    - 未知请求返回 `InvalidRequest` 错误
 //!    - JSON 自动忽略未知字段
 
@@ -800,47 +799,6 @@ pub struct ConfigConstraints {
 }
 
 // ============================================================================
-// 兼容层：从旧协议请求映射
-// ============================================================================
-
-/// 旧协议请求（用于兼容 V1 客户端）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "cmd", content = "data")]
-pub enum LegacyRequest {
-    Ping,
-    Status,
-    GetSpace,
-    GetTimeInfo,
-    Next,
-    Previous,
-    SetWallpaper { path: PathBuf },
-    SetMode { mode: WallMode },
-    Lock { path: PathBuf },
-    Unlock { path: PathBuf },
-    Reload,
-    Shutdown,
-}
-
-impl From<LegacyRequest> for Request {
-    fn from(legacy: LegacyRequest) -> Self {
-        match legacy {
-            LegacyRequest::Ping => Request::Ping,
-            LegacyRequest::Status => Request::GetStatus,
-            LegacyRequest::GetSpace => Request::GetSpace { mode: None },
-            LegacyRequest::GetTimeInfo => Request::GetTimeInfo,
-            LegacyRequest::Next => Request::Next,
-            LegacyRequest::Previous => Request::Prev,
-            LegacyRequest::SetWallpaper { path } => Request::SetWallpaper { path },
-            LegacyRequest::SetMode { mode } => Request::SetMode { mode },
-            LegacyRequest::Lock { path } => Request::Lock { path },
-            LegacyRequest::Unlock { path } => Request::Unlock { path },
-            LegacyRequest::Reload => Request::Rescan,
-            LegacyRequest::Shutdown => Request::Shutdown,
-        }
-    }
-}
-
-// ============================================================================
 // 测试
 // ============================================================================
 
@@ -951,33 +909,5 @@ mod tests {
         assert!(Request::Subscribe { events: vec![], immediate_sync: false }.is_subscription());
         assert!(Request::Unsubscribe.is_subscription());
         assert!(!Request::Ping.is_subscription());
-    }
-
-    #[test]
-    fn test_legacy_request_conversion() {
-        let legacy = LegacyRequest::Previous;
-        let req: Request = legacy.into();
-        assert!(matches!(req, Request::Prev));
-
-        let legacy = LegacyRequest::Reload;
-        let req: Request = legacy.into();
-        assert!(matches!(req, Request::Rescan));
-    }
-
-    #[test]
-    fn test_backward_compatibility() {
-        // 旧客户端发送的请求格式
-        let old_json = r#"{"cmd":"Status"}"#;
-        
-        // 尝试解析为新格式 - 应该失败
-        let new_result: Result<Request, _> = serde_json::from_str(old_json);
-        assert!(new_result.is_err());
-
-        // 解析为旧格式
-        let legacy: LegacyRequest = serde_json::from_str(old_json).unwrap();
-        
-        // 转换为新格式
-        let req: Request = legacy.into();
-        assert!(matches!(req, Request::GetStatus));
     }
 }
