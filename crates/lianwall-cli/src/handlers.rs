@@ -243,9 +243,19 @@ fn print_status(fmt: &Formatter, status: &StatusInfo) {
 
     // Wallpapers section
     fmt.print_separator("Wallpapers");
-    fmt.print_kv("Total", &status.total_wallpapers.to_string());
+    fmt.print_kv("Scanned", &status.scanned_count.to_string());
+    fmt.print_kv("Active", &status.total_wallpapers.to_string());
     fmt.print_kv("Locked", &status.locked_count.to_string());
     fmt.print_kv("Available", &status.available_count.to_string());
+
+    // Time schedule section (if any time constraints exist)
+    if status.time_points_count > 0 {
+        fmt.print_separator("Time Schedule");
+        fmt.print_kv("Time Points", &status.time_points_count.to_string());
+        if let Some(ref next_tp) = status.next_time_point {
+            fmt.print_kv("Next Refresh", next_tp);
+        }
+    }
 }
 
 // ============================================================================

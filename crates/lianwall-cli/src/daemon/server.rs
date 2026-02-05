@@ -46,6 +46,9 @@ pub fn run(mut state: DaemonState, socket_path: &Path) -> Result<(), DaemonError
     // 调度器
     let mut scheduler = Scheduler::new();
 
+    // 初始化时间点调度
+    scheduler.init_time_points(&state);
+
     // 首次启动立即切换壁纸
     scheduler.trigger_immediate(&mut state);
 

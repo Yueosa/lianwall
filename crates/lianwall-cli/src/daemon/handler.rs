@@ -1,18 +1,20 @@
 //! 请求处理与状态管理
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use lianwall_core::algorithm::{select_next, select_previous};
+use lianwall_core::algorithm::{calc_cooldown, select_next, select_previous};
 use lianwall_core::config::{read, Config, ConfigReadInput, WallMode};
 use lianwall_core::engine::{self, EngineState};
 use lianwall_core::gpu::{self, VramState};
 use lianwall_core::socket::{
-    Request, Response, ResponseData, SpaceSnapshot, StatusInfo, WallpaperPoint, PROTOCOL_VERSION,
+    ModeSchedule, Request, Response, ResponseData, SpaceSnapshot, StatusInfo,
+    TimeRangeInfo, TimeScheduleInfo, WallpaperPoint, WallpaperTimeSegment, PROTOCOL_VERSION,
 };
 use lianwall_core::wallpaper::{
-    export_to_persisted, load_weights, rebuild_space, save_weights, scan_directory,
-    WeightsFile, WallpaperSpace,
+    export_to_persisted, filter_active, load_weights, rebuild_space, save_weights, scan_directory,
+    next_key_point, ScanResult, ScannedWallpaper, TimePoint, WeightsFile, WallpaperSpace,
 };
 
 use super::error::DaemonError;
@@ -21,10 +23,24 @@ use super::error::DaemonError;
 pub struct DaemonState {
     /// 配置
     pub config: Config,
+    
+    // === 扫描结果（持久） ===
+    /// 视频模式扫描结果
+    pub video_scanned: Vec<ScannedWallpaper>,
+    /// 图片模式扫描结果
+    pub image_scanned: Vec<ScannedWallpaper>,
+    /// 视频模式关键时间点
+    pub video_time_points: BTreeSet<TimePoint>,
+    /// 图片模式关键时间点
+    pub image_time_points: BTreeSet<TimePoint>,
+    
+    // === 向量空间（动态） ===
     /// 视频模式向量空间
     pub video_space: WallpaperSpace,
     /// 图片模式向量空间
     pub image_space: WallpaperSpace,
+    
+    // === 引擎与监控 ===
     /// 引擎状态
     pub engine: EngineState,
     /// GPU 监控状态
@@ -40,20 +56,41 @@ impl DaemonState {
     pub fn init(config: Config) -> Result<Self, DaemonError> {
         // 加载持久化数据
         let weights = load_weights().unwrap_or_default();
+        let now = TimePoint::now();
 
-        // 扫描壁纸目录
-        let video_paths = scan_directory(&config.paths.video_dir, true).unwrap_or_default();
-        let image_paths = scan_directory(&config.paths.image_dir, false).unwrap_or_default();
+        // 扫描壁纸目录（递归，含时间约束）
+        let video_scan = scan_directory(&config.paths.video_dir, true)
+            .unwrap_or_else(|_| ScanResult {
+                wallpapers: vec![],
+                time_points: BTreeSet::new(),
+            });
+        let image_scan = scan_directory(&config.paths.image_dir, false)
+            .unwrap_or_else(|_| ScanResult {
+                wallpapers: vec![],
+                time_points: BTreeSet::new(),
+            });
 
         tracing::info!(
-            "扫描完成: {} 个视频, {} 个图片",
-            video_paths.len(),
-            image_paths.len()
+            "扫描完成: {} 个视频 ({} 个时间点), {} 个图片 ({} 个时间点)",
+            video_scan.wallpapers.len(),
+            video_scan.time_points.len(),
+            image_scan.wallpapers.len(),
+            image_scan.time_points.len(),
+        );
+
+        // 过滤当前活跃的壁纸
+        let video_active = filter_active(&video_scan.wallpapers, &now);
+        let image_active = filter_active(&image_scan.wallpapers, &now);
+
+        tracing::info!(
+            "当前活跃: {} 个视频, {} 个图片",
+            video_active.len(),
+            image_active.len()
         );
 
         // 构建向量空间
-        let video_space = rebuild_space(video_paths, None, Some(&weights.video), 0);
-        let image_space = rebuild_space(image_paths, None, Some(&weights.image), 0);
+        let video_space = rebuild_space(video_active, None, Some(&weights.video), 0);
+        let image_space = rebuild_space(image_active, None, Some(&weights.image), 0);
 
         // 初始化引擎
         let engine = engine::init(&config).map_err(DaemonError::Engine)?;
@@ -63,6 +100,10 @@ impl DaemonState {
 
         Ok(Self {
             config,
+            video_scanned: video_scan.wallpapers,
+            image_scanned: image_scan.wallpapers,
+            video_time_points: video_scan.time_points,
+            image_time_points: image_scan.time_points,
             video_space,
             image_space,
             engine,
@@ -97,6 +138,83 @@ impl DaemonState {
         };
         save_weights(&file).map_err(DaemonError::Wallpaper)
     }
+
+    /// 获取合并后的所有关键时间点
+    pub fn all_time_points(&self) -> BTreeSet<TimePoint> {
+        self.video_time_points
+            .union(&self.image_time_points)
+            .copied()
+            .collect()
+    }
+
+    /// 获取下一个关键时间点
+    pub fn next_time_point(&self) -> Option<TimePoint> {
+        let now = TimePoint::now();
+        let all_points = self.all_time_points();
+        next_key_point(&now, &all_points)
+    }
+
+    /// 刷新活跃壁纸（时间触发）
+    ///
+    /// 重新过滤活跃壁纸，重建向量空间
+    pub fn refresh_active_wallpapers(&mut self) {
+        let now = TimePoint::now();
+        let weights = load_weights().unwrap_or_default();
+
+        // 过滤活跃壁纸
+        let video_active = filter_active(&self.video_scanned, &now);
+        let image_active = filter_active(&self.image_scanned, &now);
+
+        tracing::info!(
+            "时间触发刷新: {} 个视频, {} 个图片 (时间 {:02}:{:02})",
+            video_active.len(),
+            image_active.len(),
+            now.hour,
+            now.minute
+        );
+
+        // 重建空间（保留锁定状态，但重置指针和冷却队列）
+        self.video_space = rebuild_space(video_active, None, Some(&weights.video), 0);
+        self.image_space = rebuild_space(image_active, None, Some(&weights.image), 0);
+
+        // 检查冷却队列冲突
+        self.check_cooldown_conflict();
+
+        // 如果当前空间为空，清空壁纸
+        if self.current_space().is_empty() {
+            tracing::warn!("当前时间段没有可用壁纸，清空显示");
+            let _ = engine::clear_wallpaper(&mut self.engine, &self.config);
+        }
+    }
+
+    /// 检查并处理冷却队列冲突
+    ///
+    /// 如果可用壁纸数 <= 冷却队列大小，清空冷却队列
+    fn check_cooldown_conflict(&mut self) {
+        // 检查视频空间
+        let video_available = self.video_space.available_count();
+        let video_cooldown = calc_cooldown(self.video_space.len());
+        if video_available > 0 && video_available <= video_cooldown {
+            tracing::warn!(
+                "视频空间可用壁纸({}) <= 冷却大小({})，清空冷却队列",
+                video_available,
+                video_cooldown
+            );
+            self.video_space.cooldown_queue.clear();
+        }
+
+        // 检查图片空间
+        let image_available = self.image_space.available_count();
+        let image_cooldown = calc_cooldown(self.image_space.len());
+        if image_available > 0 && image_available <= image_cooldown {
+            tracing::warn!(
+                "图片空间可用壁纸({}) <= 冷却大小({})，清空冷却队列",
+                image_available,
+                image_cooldown
+            );
+            self.image_space.cooldown_queue.clear();
+        }
+    }
 }
 
 /// 处理单个请求
@@ -107,6 +225,7 @@ pub fn handle_request(state: &mut DaemonState, req: Request) -> Response {
         Request::Ping => Response::with_data(ResponseData::Pong),
         Request::Status => handle_status(state),
         Request::GetSpace => handle_get_space(state),
+        Request::GetTimeInfo => handle_get_time_info(state),
         Request::Next => handle_next(state),
         Request::Previous => handle_previous(state),
         Request::SetWallpaper { path } => handle_set_wallpaper(state, path),
@@ -126,6 +245,14 @@ fn handle_status(state: &DaemonState) -> Response {
     let space = state.current_space();
     let vram_info = lianwall_core::gpu::query_vram(state.gpu.backend).ok();
 
+    // 获取当前模式的扫描数和时间信息
+    let (scanned_count, time_points) = match state.engine.mode {
+        WallMode::Video => (state.video_scanned.len(), &state.video_time_points),
+        WallMode::Image => (state.image_scanned.len(), &state.image_time_points),
+    };
+
+    let next_tp = state.next_time_point();
+
     let status = StatusInfo {
         mode: state.engine.mode,
         current: state.engine.current.clone(),
@@ -136,10 +263,13 @@ fn handle_status(state: &DaemonState) -> Response {
         total_wallpapers: space.len(),
         locked_count: space.items.iter().filter(|w| w.locked).count(),
         available_count: space.available_count(),
+        scanned_count,
         vram_used_mb: vram_info.as_ref().map(|v| v.used_mb).unwrap_or(0),
         vram_total_mb: vram_info.as_ref().map(|v| v.total_mb).unwrap_or(0),
         uptime_secs: state.start_time.elapsed().as_secs(),
         protocol_version: PROTOCOL_VERSION,
+        next_time_point: next_tp.map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute)),
+        time_points_count: time_points.len(),
     };
 
     Response::with_data(ResponseData::Status(status))
@@ -180,6 +310,86 @@ fn handle_get_space(state: &DaemonState) -> Response {
     };
 
     Response::with_data(ResponseData::Space(snapshot))
+}
+
+fn handle_get_time_info(state: &DaemonState) -> Response {
+    let now = TimePoint::now();
+
+    let info = TimeScheduleInfo {
+        current_time: format!("{:02}:{:02}", now.hour, now.minute),
+        video_schedule: build_mode_schedule(
+            &state.video_scanned,
+            &state.video_time_points,
+            &now,
+        ),
+        image_schedule: build_mode_schedule(
+            &state.image_scanned,
+            &state.image_time_points,
+            &now,
+        ),
+    };
+
+    Response::with_data(ResponseData::TimeInfo(info))
+}
+
+/// 构建单个模式的调度信息
+fn build_mode_schedule(
+    scanned: &[ScannedWallpaper],
+    time_points: &BTreeSet<TimePoint>,
+    now: &TimePoint,
+) -> ModeSchedule {
+    // 计算活跃数
+    let active_count = filter_active(scanned, now).len();
+
+    // 时间点列表
+    let points: Vec<String> = time_points
+        .iter()
+        .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute))
+        .collect();
+
+    // 下一个时间点
+    let next_tp = next_key_point(now, time_points)
+        .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
+
+    // 构建壁纸时间段
+    let wallpaper_segments: Vec<WallpaperTimeSegment> = scanned
+        .iter()
+        .map(|w| {
+            let filename = w.path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+
+            let all_day = w.time_constraints.is_empty();
+
+            let active_ranges: Vec<TimeRangeInfo> = w.time_constraints
+                .iter()
+                .map(|tr| {
+                    let crosses_midnight = tr.start.to_minutes() > tr.end.to_minutes();
+                    TimeRangeInfo {
+                        start: format!("{:02}:{:02}", tr.start.hour, tr.start.minute),
+                        end: format!("{:02}:{:02}", tr.end.hour, tr.end.minute),
+                        crosses_midnight,
+                    }
+                })
+                .collect();
+
+            WallpaperTimeSegment {
+                filename,
+                path: w.path.clone(),
+                active_ranges,
+                all_day,
+            }
+        })
+        .collect();
+
+    ModeSchedule {
+        scanned_count: scanned.len(),
+        active_count,
+        time_points: points,
+        next_time_point: next_tp,
+        wallpaper_segments,
+    }
 }
 
 fn handle_next(state: &mut DaemonState) -> Response {
@@ -302,25 +512,50 @@ fn handle_reload(state: &mut DaemonState) -> Response {
     let old_video_pointer = state.video_space.pointer;
     let old_image_pointer = state.image_space.pointer;
 
-    // 重新扫描目录
-    let video_paths = scan_directory(&config.paths.video_dir, true).unwrap_or_default();
-    let image_paths = scan_directory(&config.paths.image_dir, false).unwrap_or_default();
+    let now = TimePoint::now();
+
+    // 重新扫描目录（递归，含时间约束）
+    let video_scan = scan_directory(&config.paths.video_dir, true)
+        .unwrap_or_else(|_| ScanResult {
+            wallpapers: vec![],
+            time_points: BTreeSet::new(),
+        });
+    let image_scan = scan_directory(&config.paths.image_dir, false)
+        .unwrap_or_else(|_| ScanResult {
+            wallpapers: vec![],
+            time_points: BTreeSet::new(),
+        });
+
+    // 更新扫描结果
+    state.video_scanned = video_scan.wallpapers;
+    state.image_scanned = image_scan.wallpapers;
+    state.video_time_points = video_scan.time_points;
+    state.image_time_points = image_scan.time_points;
+
+    // 过滤当前活跃的壁纸
+    let video_active = filter_active(&state.video_scanned, &now);
+    let image_active = filter_active(&state.image_scanned, &now);
 
     // 重建空间（保留锁定状态）
     let weights = load_weights().unwrap_or_default();
-    state.video_space = rebuild_space(video_paths, Some(&state.video_space), Some(&weights.video), 0);
-    state.image_space = rebuild_space(image_paths, Some(&state.image_space), Some(&weights.image), 0);
+    state.video_space = rebuild_space(video_active, Some(&state.video_space), Some(&weights.video), 0);
+    state.image_space = rebuild_space(image_active, Some(&state.image_space), Some(&weights.image), 0);
 
     // 恢复指针
     state.video_space.pointer = old_video_pointer;
     state.image_space.pointer = old_image_pointer;
 
+    // 检查冷却队列冲突
+    state.check_cooldown_conflict();
+
     state.config = config;
 
     tracing::info!(
-        "重载完成: {} 个视频, {} 个图片",
+        "重载完成: {} 个视频 ({} 个时间点), {} 个图片 ({} 个时间点)",
         state.video_space.len(),
-        state.image_space.len()
+        state.video_time_points.len(),
+        state.image_space.len(),
+        state.image_time_points.len(),
     );
 
     Response::ok()

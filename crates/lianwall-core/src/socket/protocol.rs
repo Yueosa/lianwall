@@ -59,6 +59,9 @@ pub enum Request {
     /// 重新扫描目录并重载配置
     Reload,
 
+    /// 获取时间调度信息（GUI 时间轴用）
+    GetTimeInfo,
+
     // === 生命周期 ===
     /// 优雅关闭守护进程
     Shutdown,
@@ -127,6 +130,9 @@ pub enum ResponseData {
 
     /// 向量空间快照
     Space(SpaceSnapshot),
+
+    /// 时间调度信息
+    TimeInfo(TimeScheduleInfo),
 }
 
 // ============================================================================
@@ -145,14 +151,17 @@ pub struct StatusInfo {
     /// 当前引擎名称
     pub engine: String,
 
-    /// 壁纸总数
+    /// 当前活跃壁纸数（时间过滤后，在向量空间中）
     pub total_wallpapers: usize,
 
     /// 锁定数量
     pub locked_count: usize,
 
-    /// 可用数量（未锁定）
+    /// 可用数量（未锁定且不在冷却中）
     pub available_count: usize,
+
+    /// 扫描的壁纸总数（含不活跃的）
+    pub scanned_count: usize,
 
     /// 显存使用（MB）
     pub vram_used_mb: u64,
@@ -165,6 +174,12 @@ pub struct StatusInfo {
 
     /// 协议版本
     pub protocol_version: u32,
+
+    /// 下一个时间关键点（"HH:MM" 格式，None 表示无时间约束）
+    pub next_time_point: Option<String>,
+
+    /// 时间关键点数量
+    pub time_points_count: usize,
 }
 
 /// 向量空间快照（GUI 绘图用）
@@ -205,6 +220,67 @@ pub struct WallpaperPoint {
     pub in_cooldown: bool,
 }
 
+/// 时间调度信息（GUI 时间轴绘制用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeScheduleInfo {
+    /// 当前时间 ("HH:MM" 格式)
+    pub current_time: String,
+
+    /// 视频模式时间段
+    pub video_schedule: ModeSchedule,
+
+    /// 图片模式时间段
+    pub image_schedule: ModeSchedule,
+}
+
+/// 单个模式的调度信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModeSchedule {
+    /// 扫描的壁纸总数
+    pub scanned_count: usize,
+
+    /// 当前活跃数
+    pub active_count: usize,
+
+    /// 关键时间点列表 ("HH:MM" 格式，已排序)
+    pub time_points: Vec<String>,
+
+    /// 下一个关键时间点 ("HH:MM" 格式)
+    pub next_time_point: Option<String>,
+
+    /// 壁纸时间分布（用于时间轴可视化）
+    pub wallpaper_segments: Vec<WallpaperTimeSegment>,
+}
+
+/// 壁纸时间段（用于时间轴上显示壁纸活跃区间）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WallpaperTimeSegment {
+    /// 文件名
+    pub filename: String,
+
+    /// 完整路径
+    pub path: PathBuf,
+
+    /// 活跃时间段列表（一个壁纸可能在多个时间段活跃）
+    pub active_ranges: Vec<TimeRangeInfo>,
+
+    /// 是否全天可用（无时间约束）
+    pub all_day: bool,
+}
+
+/// 时间范围信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TimeRangeInfo {
+    /// 开始时间 ("HH:MM" 格式)
+    pub start: String,
+
+    /// 结束时间 ("HH:MM" 格式)
+    pub end: String,
+
+    /// 是否跨天
+    pub crosses_midnight: bool,
+}
+
 // ============================================================================
 // 辅助方法
 // ============================================================================
@@ -216,6 +292,7 @@ impl Request {
             Request::Ping => "Ping",
             Request::Status => "Status",
             Request::GetSpace => "GetSpace",
+            Request::GetTimeInfo => "GetTimeInfo",
             Request::Next => "Next",
             Request::Previous => "Previous",
             Request::SetWallpaper { .. } => "SetWallpaper",
@@ -282,10 +359,13 @@ mod tests {
             total_wallpapers: 10,
             locked_count: 2,
             available_count: 8,
+            scanned_count: 15,
             vram_used_mb: 1024,
             vram_total_mb: 4096,
             uptime_secs: 3600,
             protocol_version: PROTOCOL_VERSION,
+            next_time_point: Some("18:00".to_string()),
+            time_points_count: 4,
         };
 
         let json = serde_json::to_string_pretty(&status).unwrap();

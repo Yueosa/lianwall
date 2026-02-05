@@ -133,6 +133,24 @@ pub fn shutdown(state: &mut EngineState) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// 清空当前壁纸
+///
+/// 用于时间段切换时没有可用壁纸的情况
+pub fn clear_wallpaper(state: &mut EngineState, _config: &Config) -> Result<(), EngineError> {
+    match state.mode {
+        WallMode::Video => {
+            // 停止 mpvpaper
+            mpvpaper::stop(&mut state.mpvpaper)?;
+        }
+        WallMode::Image => {
+            // 清除 swww 壁纸
+            swww::clear()?;
+        }
+    }
+    state.current = None;
+    Ok(())
+}
+
 /// 检测引擎可用性
 pub fn detect() -> DetectOutput {
     DetectOutput {

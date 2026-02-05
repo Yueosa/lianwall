@@ -6,6 +6,7 @@ use lianwall_core::algorithm::select_next;
 use lianwall_core::config::WallMode;
 use lianwall_core::engine;
 use lianwall_core::gpu::{check, VramAction};
+use lianwall_core::wallpaper::TimePoint;
 
 use super::error::DaemonError;
 use super::handler::DaemonState;
@@ -18,30 +19,58 @@ pub struct Scheduler {
     last_gpu_check: Instant,
     /// 是否跳过 GPU 检查（检测失败后设置）
     skip_gpu_check: bool,
+    /// 上次时间点检查的分钟数（用于检测分钟变化）
+    last_time_check_minute: u8,
+    /// 下一个关键时间点
+    next_time_point: Option<TimePoint>,
 }
 
 impl Scheduler {
     /// 创建新的调度器
     pub fn new() -> Self {
+        let now = TimePoint::now();
         Self {
             last_wallpaper_tick: Instant::now(),
             last_gpu_check: Instant::now(),
             skip_gpu_check: false,
+            last_time_check_minute: now.minute,
+            next_time_point: None,
+        }
+    }
+
+    /// 初始化时间点调度
+    pub fn init_time_points(&mut self, state: &DaemonState) {
+        self.next_time_point = state.next_time_point();
+        if let Some(tp) = &self.next_time_point {
+            tracing::info!("下一个时间关键点: {:02}:{:02}", tp.hour, tp.minute);
         }
     }
 
     /// 获取下一个需要处理的截止时间
     pub fn next_deadline(&self, state: &DaemonState) -> Instant {
+        let now = Instant::now();
+        
+        // 壁纸切换截止时间
         let wallpaper_interval = self.get_wallpaper_interval(state);
         let wallpaper_deadline = self.last_wallpaper_tick + wallpaper_interval;
 
+        let mut deadline = wallpaper_deadline;
+
+        // GPU 检查截止时间
         if state.config.vram.enabled && !self.skip_gpu_check {
             let gpu_interval = Duration::from_secs(state.config.vram.check_interval);
             let gpu_deadline = self.last_gpu_check + gpu_interval;
-            std::cmp::min(wallpaper_deadline, gpu_deadline)
-        } else {
-            wallpaper_deadline
+            deadline = std::cmp::min(deadline, gpu_deadline);
         }
+
+        // 时间点检查：每分钟检查一次
+        // 使用 60 秒作为最大等待时间，确保能及时检测到分钟变化
+        if self.next_time_point.is_some() {
+            let time_check_deadline = now + Duration::from_secs(60);
+            deadline = std::cmp::min(deadline, time_check_deadline);
+        }
+
+        deadline
     }
 
     /// 获取当前模式的壁纸切换间隔
@@ -57,6 +86,11 @@ impl Scheduler {
     pub fn tick(&mut self, state: &mut DaemonState) -> Result<(), DaemonError> {
         let now = Instant::now();
 
+        // 时间点检查（优先级最高）
+        if self.should_refresh_time(state) {
+            self.refresh_time(state);
+        }
+
         // GPU 检查
         if self.should_check_gpu(now, state) {
             self.check_gpu(state);
@@ -70,6 +104,51 @@ impl Scheduler {
         }
 
         Ok(())
+    }
+
+    /// 是否应该刷新时间过滤
+    fn should_refresh_time(&self, _state: &DaemonState) -> bool {
+        if self.next_time_point.is_none() {
+            return false;
+        }
+
+        let now = TimePoint::now();
+        
+        // 检测分钟是否变化
+        if now.minute == self.last_time_check_minute {
+            return false;
+        }
+
+        // 检查是否到达关键时间点
+        if let Some(target) = &self.next_time_point {
+            now.hour == target.hour && now.minute == target.minute
+        } else {
+            false
+        }
+    }
+
+    /// 刷新时间过滤
+    fn refresh_time(&mut self, state: &mut DaemonState) {
+        let now = TimePoint::now();
+        self.last_time_check_minute = now.minute;
+
+        tracing::info!(
+            "到达时间关键点 {:02}:{:02}，刷新活跃壁纸",
+            now.hour,
+            now.minute
+        );
+
+        // 刷新活跃壁纸
+        state.refresh_active_wallpapers();
+
+        // 更新下一个关键时间点
+        self.next_time_point = state.next_time_point();
+        if let Some(tp) = &self.next_time_point {
+            tracing::info!("下一个时间关键点: {:02}:{:02}", tp.hour, tp.minute);
+        }
+
+        // 重置壁纸切换计时器（避免刚刷新就切换）
+        self.last_wallpaper_tick = Instant::now();
     }
 
     /// 是否应该检查 GPU

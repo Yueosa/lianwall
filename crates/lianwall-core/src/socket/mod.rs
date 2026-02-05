@@ -74,7 +74,8 @@ pub mod server;
 pub use client::Client;
 pub use error::SocketError;
 pub use protocol::{
-    Request, Response, ResponseData, SpaceSnapshot, StatusInfo, WallpaperPoint, PROTOCOL_VERSION,
+    ModeSchedule, Request, Response, ResponseData, SpaceSnapshot, StatusInfo,
+    TimeRangeInfo, TimeScheduleInfo, WallpaperPoint, WallpaperTimeSegment, PROTOCOL_VERSION,
 };
 pub use server::{Connection, Server};
 
