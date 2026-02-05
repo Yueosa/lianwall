@@ -14,3 +14,11 @@ rand.workspace = true
 dirs.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
+# Phase 2: Async support
+tokio = { workspace = true }
+rayon = { workspace = true }
+walkdir = { workspace = true }
+num_cpus = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.16"
