@@ -4,6 +4,8 @@
 # 构建痕迹
 /build
 
-# 开发者的悄悄话
-!README.md
+# 开发者的悄悄话（先忽略，再取消）
 *.md
+!README.md
+!CHANGELOG.md
+!changelogs/**
