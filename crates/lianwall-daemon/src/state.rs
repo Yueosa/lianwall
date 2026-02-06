@@ -186,6 +186,10 @@ pub struct SharedState {
     /// 下次壁纸切换的时间点（用于 status 查询倒计时）
     pub next_switch: RwLock<Instant>,
     
+    /// 扫描的壁纸原始总数（过滤前），用于 status 显示
+    /// (video_scanned, image_scanned)
+    pub scanned_counts: RwLock<(usize, usize)>,
+    
     /// 启动时间
     start_time: Instant,
     
@@ -232,6 +236,7 @@ impl SharedState {
             time_points: RwLock::new(BTreeSet::new()),
             wallpaper_history: RwLock::new(VecDeque::new()),
             next_switch: RwLock::new(Instant::now() + std::time::Duration::from_secs(initial_interval)),
+            scanned_counts: RwLock::new((0, 0)),
             start_time: Instant::now(),
             shutdown_tx,
         });

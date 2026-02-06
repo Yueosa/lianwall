@@ -62,7 +62,14 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
     };
     
     let locked_count = space.items.iter().filter(|w| w.locked).count();
-    let available_count = space.items.iter().filter(|w| !w.locked).count();
+    let in_cooldown = space.cooldown_queue.len();
+    let available_count = space.items.iter()
+        .filter(|w| !w.locked)
+        .count()
+        .saturating_sub(in_cooldown);
+    
+    // 获取原始扫描总数（过滤前）
+    let (video_scanned, image_scanned) = *state.scanned_counts.read().await;
     
     // 获取 VRAM 信息
     let (vram_used_mb, vram_total_mb, vram_degraded) = match &gpu_snapshot.vram_info {
@@ -87,7 +94,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         total_wallpapers: space.items.len(),
         locked_count,
         available_count,
-        scanned_count: video_space.items.len() + image_space.items.len(),
+        scanned_count: video_scanned + image_scanned,
         vram_used_mb,
         vram_total_mb,
         vram_degraded,
@@ -401,6 +408,7 @@ async fn get_time_info(state: &Arc<SharedState>) -> Response {
     let video_space = state.get_video_space().await;
     let image_space = state.get_image_space().await;
     let time_points = state.get_time_points().await;
+    let (video_scanned, image_scanned) = *state.scanned_counts.read().await;
     
     let current_time = chrono::Local::now().format("%H:%M").to_string();
     let now = TimePoint::now();
@@ -418,8 +426,8 @@ async fn get_time_info(state: &Arc<SharedState>) -> Response {
         .or_else(|| time_points.first()) // 如果当前已是最后一个点，循环到第一个
         .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
     
-    let video_schedule = build_mode_schedule(&video_space, &time_points_vec, &next_time_point);
-    let image_schedule = build_mode_schedule(&image_space, &time_points_vec, &next_time_point);
+    let video_schedule = build_mode_schedule(&video_space, &time_points_vec, &next_time_point, video_scanned);
+    let image_schedule = build_mode_schedule(&image_space, &time_points_vec, &next_time_point, image_scanned);
     
     Response::TimeInfo(TimeScheduleInfo {
         current_time,
@@ -433,6 +441,7 @@ fn build_mode_schedule(
     space: &WallpaperSpace,
     time_points: &[String],
     next_time_point: &Option<String>,
+    scanned_count: usize,
 ) -> ModeSchedule {
     let wallpaper_segments: Vec<WallpaperTimeSegment> = space
         .items
@@ -467,7 +476,7 @@ fn build_mode_schedule(
         .collect();
     
     ModeSchedule {
-        scanned_count: space.items.len(),
+        scanned_count,
         active_count: space.items.iter().filter(|w| !w.locked).count(),
         time_points: time_points.to_vec(),
         next_time_point: next_time_point.clone(),

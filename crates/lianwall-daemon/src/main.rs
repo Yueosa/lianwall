@@ -99,6 +99,9 @@ async fn main() -> anyhow::Result<()> {
     let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers_for_time);
     tracing::info!("Found {} time points", time_points.len());
     state.set_time_points(time_points).await;
+    
+    // 保存原始扫描总数（过滤前）
+    *state.scanned_counts.write().await = (video_wallpapers.len(), image_wallpapers.len());
 
     // 根据当前时间过滤活跃壁纸
     let active_videos = filter_active(&video_wallpapers);

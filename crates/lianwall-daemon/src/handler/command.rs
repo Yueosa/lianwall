@@ -674,6 +674,9 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
         all_wallpapers.extend(video_wallpapers.clone());
         all_wallpapers.extend(image_wallpapers.clone());
         
+        // 保存原始扫描总数（过滤前）到 state，供 status 查询
+        *state.scanned_counts.write().await = (video_wallpapers.len(), image_wallpapers.len());
+        
         // 更新时间点缓存（在过滤前收集）
         let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers);
         tracing::info!("Found {} time points after rescan", time_points.len());

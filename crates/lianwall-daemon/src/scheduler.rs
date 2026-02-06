@@ -54,6 +54,7 @@ pub async fn run(
     let mode = *state.engine.mode.read().await;
     let mut current_interval = get_interval_for_mode(&config, mode);
     let mut timer = interval(current_interval);
+    timer.tick().await; // 消耗立即触发的首次 tick，避免启动后立即切换
     
     // 设置下次切换时间（同步到 state 供 status 查询）
     state.set_next_switch((Instant::now() + current_interval).into()).await;
@@ -129,6 +130,7 @@ pub async fn run(
                             if new_interval != current_interval {
                                 current_interval = new_interval;
                                 timer = interval(current_interval);
+                                timer.tick().await; // 消耗立即触发的首次 tick
                                 state.set_next_switch((Instant::now() + current_interval).into()).await;
                                 tracing::info!("Scheduler interval updated to {:?} (config changed: {})", current_interval, key);
                             }
@@ -142,6 +144,7 @@ pub async fn run(
                         if new_interval != current_interval {
                             current_interval = new_interval;
                             timer = interval(current_interval);
+                            timer.tick().await; // 消耗立即触发的首次 tick
                             state.set_next_switch((Instant::now() + current_interval).into()).await;
                             tracing::info!("Scheduler interval updated to {:?} (mode changed to {:?})", current_interval, to);
                         }
