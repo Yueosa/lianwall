@@ -322,6 +322,7 @@ fn event_to_response(event: &Event) -> Option<Response> {
         }
         // 内部事件不推送给客户端
         Event::SchedulerTick => None,
+        Event::TimePointReached => None,
     }
 }
 

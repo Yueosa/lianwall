@@ -420,6 +420,7 @@ async fn handle_reload_config(state: &Arc<SharedState>, event_bus: &EventBus) ->
 /// 重新扫描壁纸目录
 ///
 /// 设计决策：异步执行 + 进度事件通知
+/// 会根据当前时间过滤活跃壁纸
 async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
     let config = state.get_config().await;
     let state = Arc::clone(state);
@@ -441,29 +442,51 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
             false, // is_video
         ).await;
         
-        // 收集壁纸和时间点
+        // 收集所有壁纸（用于时间点）
         let mut all_wallpapers = Vec::new();
+        let video_wallpapers = video_result.as_ref().map(|r| r.wallpapers.clone()).unwrap_or_default();
+        let image_wallpapers = image_result.as_ref().map(|r| r.wallpapers.clone()).unwrap_or_default();
+        all_wallpapers.extend(video_wallpapers.clone());
+        all_wallpapers.extend(image_wallpapers.clone());
         
-        // 更新视频空间
-        if let Ok(ref result) = video_result {
-            all_wallpapers.extend(result.wallpapers.clone());
-            let paths: Vec<_> = result.wallpapers.iter().map(|w| w.path.clone()).collect();
-            let mut video_space = state.video_space.write().await;
-            *video_space = lianwall_core::wallpaper::build_space(paths, 0);
-        }
-        
-        // 更新图片空间
-        if let Ok(ref result) = image_result {
-            all_wallpapers.extend(result.wallpapers.clone());
-            let paths: Vec<_> = result.wallpapers.iter().map(|w| w.path.clone()).collect();
-            let mut image_space = state.image_space.write().await;
-            *image_space = lianwall_core::wallpaper::build_space(paths, 0);
-        }
-        
-        // 更新时间点缓存
+        // 更新时间点缓存（在过滤前收集）
         let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers);
         tracing::info!("Found {} time points after rescan", time_points.len());
         state.set_time_points(time_points).await;
+        
+        // 根据当前时间过滤活跃壁纸
+        let active_videos = lianwall_core::wallpaper::filter_active(&video_wallpapers);
+        let active_images = lianwall_core::wallpaper::filter_active(&image_wallpapers);
+        
+        tracing::info!(
+            "Time filter: {}/{} videos active, {}/{} images active",
+            active_videos.len(), video_wallpapers.len(),
+            active_images.len(), image_wallpapers.len()
+        );
+        
+        // 更新视频空间（保留历史状态）
+        {
+            let video_paths: Vec<_> = active_videos.iter().map(|w| w.path.clone()).collect();
+            let mut video_space = state.video_space.write().await;
+            *video_space = lianwall_core::wallpaper::rebuild_space(
+                video_paths,
+                Some(&video_space),
+                None,
+                0,
+            );
+        }
+        
+        // 更新图片空间（保留历史状态）
+        {
+            let image_paths: Vec<_> = active_images.iter().map(|w| w.path.clone()).collect();
+            let mut image_space = state.image_space.write().await;
+            *image_space = lianwall_core::wallpaper::rebuild_space(
+                image_paths,
+                Some(&image_space),
+                None,
+                0,
+            );
+        }
         
         // 发布完成事件（分别发布视频和图片空间的更新）
         {

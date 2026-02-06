@@ -2,16 +2,17 @@
 //!
 //! 负责：
 //! - 定时触发壁纸切换
-//! - 时间点调度（如果配置了特定时间）
+//! - 时间点调度（到达新时间段时重建向量空间）
 //! - GPU 监控触发
 
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::{interval, Instant};
+use tokio::time::{interval, sleep, Instant};
 
 use lianwall_core::socket::Request;
 use lianwall_core::config::WallMode;
+use lianwall_core::wallpaper::TimePoint;
 
 use crate::command::CommandMsg;
 use crate::event::{Event, EventBus};
@@ -57,9 +58,12 @@ pub async fn run(
     // 记录下次切换时间
     let mut _next_switch = Instant::now() + current_interval;
     
+    // 计算下一个时间点的等待时间
+    let mut time_point_sleep = create_time_point_sleep(&state).await;
+    
     loop {
         tokio::select! {
-            // 定时触发
+            // 定时触发壁纸切换
             _ = timer.tick() => {
                 // 检查是否需要切换
                 if should_switch(&state, &event_bus).await {
@@ -80,6 +84,24 @@ pub async fn run(
                 
                 // 发布 tick 事件（内部使用）
                 event_bus.publish(Event::SchedulerTick);
+            }
+            
+            // 时间点到达，重建向量空间
+            _ = &mut time_point_sleep => {
+                tracing::info!("Time point reached, triggering rescan to rebuild space");
+                
+                // 发送 Rescan 命令重建向量空间
+                let (response_tx, _) = tokio::sync::oneshot::channel();
+                let _ = cmd_tx.send(CommandMsg {
+                    request: Request::Rescan,
+                    response_tx,
+                }).await;
+                
+                // 发布事件
+                event_bus.publish(Event::TimePointReached);
+                
+                // 重新计算下一个时间点
+                time_point_sleep = create_time_point_sleep(&state).await;
             }
             
             // 监听事件
@@ -110,6 +132,10 @@ pub async fn run(
                             tracing::info!("Scheduler interval updated to {:?} (mode changed to {:?})", current_interval, to);
                         }
                     }
+                    Ok(Event::SpaceUpdated { .. }) => {
+                        // 空间更新后（如 Rescan），重新计算时间点
+                        time_point_sleep = create_time_point_sleep(&state).await;
+                    }
                     Ok(_) => {
                         // 忽略其他事件
                     }
@@ -132,6 +158,30 @@ pub async fn run(
     }
     
     tracing::info!("Scheduler stopped");
+}
+
+/// 创建等待下一个时间点的 sleep future
+async fn create_time_point_sleep(state: &SharedState) -> std::pin::Pin<Box<tokio::time::Sleep>> {
+    let time_points = state.get_time_points().await;
+    
+    if time_points.is_empty() {
+        // 没有时间点，返回一个很长的等待（实际上不会触发）
+        tracing::debug!("No time points configured, time point scheduler disabled");
+        return Box::pin(sleep(Duration::from_secs(86400 * 365))); // 1 年
+    }
+    
+    let now = TimePoint::now();
+    if let Some(next_point) = lianwall_core::wallpaper::next_key_point(&now, &time_points) {
+        let wait_secs = now.seconds_until(&next_point);
+        tracing::info!(
+            "Next time point: {:02}:{:02}, waiting {} seconds",
+            next_point.hour, next_point.minute, wait_secs
+        );
+        Box::pin(sleep(Duration::from_secs(wait_secs)))
+    } else {
+        // 不应该发生（如果 time_points 非空）
+        Box::pin(sleep(Duration::from_secs(86400 * 365)))
+    }
 }
 
 /// 根据模式获取切换间隔

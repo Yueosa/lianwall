@@ -63,6 +63,9 @@ pub enum Event {
     /// 调度器 tick（内部事件，用于触发定时切换）
     SchedulerTick,
     
+    /// 时间点到达（触发重建向量空间）
+    TimePointReached,
+    
     /// 错误事件
     Error {
         message: String,
