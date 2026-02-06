@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.0.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.1.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
@@ -315,8 +315,9 @@ wallpaper[3].angle = 52.524°   (mod 360°)
 
 ### 历史栈（prev 支持）
 
-- 每次 `next` 将当前壁纸压入历史栈
-- `prev` 从历史栈弹出，忽略锁定状态强制播放
+- 每次切换壁纸时将当前壁纸路径压入历史栈
+- `prev` 从历史栈弹出，**支持跨模式播放**
+- 历史栈存储在 daemon 层，与向量空间解耦
 - 历史栈最大 100 条
 
 ---

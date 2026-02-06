@@ -4,7 +4,9 @@
 
 ## 🎯 概述
 
-本版本通过全面的 TODO 审计，修复了多个核心逻辑问题，完善了 Daemon 的功能。主要改进包括：黄金角算法修复、GPU 降级壁纸切换、启动状态恢复、时间约束过滤、事件订阅过滤等。
+本版本通过全面的 TODO 审计和 Socket API 审计，修复了多个核心逻辑问题，完善了 Daemon 的功能。主要改进包括：黄金角算法修复、GPU 降级壁纸切换、启动状态恢复、时间约束过滤、事件订阅过滤、Socket API 完整性修复等。
+
+---
 
 ## ✅ 第一轮修复（TODO 审计）
 
@@ -63,7 +65,7 @@
 **问题**：Scheduler 通过轮询检查配置变更。
 
 **修复**：
-- Scheduler 订阅 `EventBus`，监听 `ConfigReloaded` 和 `ModeChanged` 事件
+- Scheduler 订阅 `EventBus`，监听 `ConfigChanged` 和 `ModeChanged` 事件
 - 收到事件时立即更新定时器间隔
 
 ---
@@ -197,6 +199,166 @@
 
 ---
 
+## ✅ 第三轮修复（Socket API 审计）
+
+### 15. SetConfig 支持全部 18 个配置键 🔴
+
+**问题**：
+- `GetConfig` 返回 18 个可配置键
+- `SetConfig` 只支持 4 个（image_engine.interval, video_engine.interval, paths.video_dir, paths.image_dir）
+- API 语义不一致
+
+**修复**：扩展 `handle_set_config()` 支持全部 18 个键：
+
+| 分类 | 键名 |
+|------|------|
+| paths | `paths.mode`, `paths.video_dir`, `paths.image_dir` |
+| video_engine | `video_engine.interval`, `video_engine.display`, `video_engine.mpvpaper_args`, `video_engine.mpv_args` |
+| image_engine | `image_engine.interval`, `image_engine.outputs`, `image_engine.swww_args` |
+| vram | `vram.enabled`, `vram.threshold_percent`, `vram.recovery_percent`, `vram.check_interval`, `vram.cooldown_seconds` |
+| daemon | `daemon.socket_path`, `daemon.pid_path`, `daemon.log_level` |
+
+---
+
+### 16. TimePointReached 事件推送 🔴
+
+**问题**：
+- 内部 `Event::TimePointReached` 在 `event_to_response()` 中返回 `None`
+- 订阅的客户端无法得知向量空间何时重建
+
+**修复**：
+- 内部 `Event::TimePointReached` 添加 `time` 和 `next_time` 字段
+- `event_to_response()` 正确转换为 `SocketEvent::TimePointReached { time, next_time }`
+
+---
+
+### 17. WallpaperChanged.trigger 正确设置 🟡
+
+**问题**：
+- `trigger` 始终硬编码为 `WallpaperTrigger::Scheduled`
+- GUI 无法区分手动切换和自动切换
+
+**修复**：
+- `Request::Next/Prev` 添加 `trigger_hint: Option<WallpaperTrigger>` 字段
+- 内部 `Event::WallpaperChanged` 添加 `trigger` 字段
+- 各调用点传入正确的 trigger
+
+| 场景 | trigger |
+|------|---------|
+| 用户 Socket `Next` | `ManualNext` |
+| 用户 Socket `Prev` | `ManualPrev` |
+| Scheduler 定时切换 | `Scheduled` |
+| GPU 降级 | `VramDowngrade` |
+| GPU 恢复 | `VramUpgrade` |
+| Daemon 启动 | `DaemonStart` |
+
+---
+
+### 18. ConfigChanged 事件携带 old/new value 🟡
+
+**问题**：
+- `ConfigChanged` 事件的 `old_value` 和 `new_value` 始终为 `null`
+- GUI 无法做增量更新
+
+**修复**：
+- 内部 `Event::ConfigReloaded` 改为 `Event::ConfigChanged { key, old_value, new_value }`
+- `SetConfig`: 先获取旧值，更新后发布带具体 old/new 的事件
+- `ReloadConfig`: key="all"，old_value/new_value 为 null
+- 新增 `get_config_value()` 辅助函数提取配置键当前值
+
+---
+
+### 19. GetTimeInfo 完整实现 🟡
+
+**问题**：
+- `wallpaper_segments` 始终为空数组
+- `time_points` 始终为空数组
+- GUI 无法绘制时间轴可视化
+
+**修复**：
+- `WallpaperRecord` 添加 `time_constraints` 字段
+- `build_space`/`rebuild_space` 接收 `Vec<ScannedWallpaper>` 保留时间约束
+- `get_time_info()` 完整实现返回：
+  - `time_points`: 所有关键时间点列表
+  - `next_time_point`: 下一个时间点
+  - `wallpaper_segments`: 每个壁纸的活跃时间段（含 all_day 标志）
+- `TimeRange::crosses_midnight()` 新方法判断是否跨天
+
+---
+
+## ✅ 第四轮修复（代码质量审计）
+
+### 20. Lock/Unlock/ToggleLock 代码重复 🟢
+
+**问题**：三个函数有大量重复的模式判断、空间读写、事件发布逻辑。
+
+**修复**：
+- 新增 `LockAction` 枚举（Lock/Unlock/Toggle）
+- 抽取 `modify_lock_state()` 统一处理锁定逻辑
+- 抽取 `publish_space_updated_event()` 统一发布事件
+- 额外改进：壁纸不存在时返回 `NotFound` 错误
+
+---
+
+### 21. apply_wallpaper 文件存在性检查 🟢
+
+**问题**：`apply_wallpaper()` 直接传路径给 mpvpaper/swww，未检查文件存在性。
+
+**修复**：在函数开头添加 `path.exists()` 检查，不存在时返回明确错误。
+
+---
+
+### 22. next_switch_secs 模式选择 Bug 🔴
+
+**问题**：`GetStatus` 返回的 `next_switch_secs` 始终使用 `image_engine.interval`，即使当前是 Video 模式。
+
+**修复**：根据当前模式选择正确的 interval：
+```rust
+let next_switch_secs = match mode {
+    WallMode::Video => config.video_engine.interval,
+    WallMode::Image => config.image_engine.interval,
+};
+```
+
+---
+
+### 23. Rescan 后壁纸有效性处理 🔴
+
+**问题**：
+- 之前的修复错误地清除了 `engine.current`
+- 正确行为：空间重建后当前壁纸不在空间中，应保持显示旧壁纸，等待 interval 或 next
+
+**修复**：
+- 移除清除 `engine.current` 的逻辑
+- 只输出警告日志
+- 屏幕继续显示旧壁纸，`current_index = None`
+- 下次 interval 或用户 next 时自动选择新壁纸
+
+---
+
+### 24. Prev 历史栈移至 Daemon 层 🔴
+
+**问题**：
+- `WallpaperSpace.history` 存储的是索引（index）
+- 向量空间重建后索引可能指向错误的壁纸
+- Prev 无法播放不在当前空间的壁纸
+
+**修复**：
+- `SharedState` 新增 `wallpaper_history: RwLock<VecDeque<PathBuf>>`
+- `handle_next()` 将当前路径压入 daemon 层历史栈
+- `handle_prev()` 从历史栈弹出路径，直接调用 `apply_wallpaper`
+- Prev 不再依赖向量空间，可以播放任何历史壁纸
+- 支持跨模式回退（Video → Image 或反向）
+
+**行为变化**：
+| 场景 | 旧行为 | 新行为 |
+|------|--------|--------|
+| Prev 壁纸不在空间 | 索引错误或失败 | 直接播放路径 |
+| Prev 跨模式 | 只能回退当前模式 | 可以回退到任意模式 |
+| 空间重建后 Prev | 可能播放错误壁纸 | 始终播放正确壁纸 |
+
+---
+
 ## 🆕 新增 API
 
 ### ErrorCode
@@ -208,12 +370,53 @@ pub enum ErrorCode {
 }
 ```
 
+### Request 变更
+
+```rust
+pub enum Request {
+    Next {
+        #[serde(default)]
+        trigger_hint: Option<WallpaperTrigger>,  // 新增
+    },
+    Prev {
+        #[serde(default)]
+        trigger_hint: Option<WallpaperTrigger>,  // 新增
+    },
+    // ... existing
+}
+```
+
 ### Event (内部)
 
 ```rust
 pub enum Event {
+    ConfigChanged {  // 替代 ConfigReloaded
+        key: String,
+        old_value: serde_json::Value,
+        new_value: serde_json::Value,
+    },
+    TimePointReached {
+        time: String,       // 新增
+        next_time: Option<String>,  // 新增
+    },
+    WallpaperChanged {
+        path: PathBuf,
+        mode: WallMode,
+        trigger: WallpaperTrigger,  // 新增
+    },
     // ... existing
-    TimePointReached,  // 时间点到达（触发重建向量空间）
+}
+```
+
+### WallpaperRecord (运行时)
+
+```rust
+pub struct WallpaperRecord {
+    pub path: PathBuf,
+    pub angle: f64,
+    pub locked: bool,
+    pub last_played: Option<u64>,
+    pub time_constraints: Vec<TimeRange>,  // 新增
 }
 ```
 
@@ -222,8 +425,26 @@ pub enum Event {
 ```rust
 pub struct ModeData {
     pub pointer: f64,
-    pub current_path: Option<PathBuf>,  // 新增：当前壁纸路径
+    pub current_path: Option<PathBuf>,  // 新增
     pub items: Vec<PersistedRecord>,
+}
+```
+
+### TimeRange (新增方法)
+
+```rust
+impl TimeRange {
+    pub fn crosses_midnight(&self) -> bool;  // 新增
+}
+```
+
+### SharedState (Daemon 层新增)
+
+```rust
+pub struct SharedState {
+    // ... existing
+    /// 壁纸历史栈（存储路径，用于 Prev 操作）
+    pub wallpaper_history: RwLock<VecDeque<PathBuf>>,  // 新增
 }
 ```
 
@@ -234,16 +455,21 @@ pub struct ModeData {
 | 文件 | 变更类型 |
 |------|----------|
 | `Cargo.toml` | 版本号 5.0.0 → 5.1.0 |
-| `crates/lianwall-core/src/socket/protocol.rs` | 移除 Restart，添加 NoHistory |
-| `crates/lianwall-core/src/wallpaper/struct.rs` | ModeData 添加 current_path |
-| `crates/lianwall-core/src/wallpaper/space.rs` | rebuild_space 恢复 current_index |
-| `crates/lianwall-daemon/src/state.rs` | GpuSnapshot、time_points |
-| `crates/lianwall-daemon/src/event.rs` | TimePointReached 事件 |
-| `crates/lianwall-daemon/src/scheduler.rs` | 时间点监听、GPU cmd_tx |
-| `crates/lianwall-daemon/src/connection.rs` | 事件过滤、immediate_sync |
-| `crates/lianwall-daemon/src/handler/query.rs` | VRAM、时间点、可配置键 |
-| `crates/lianwall-daemon/src/handler/command.rs` | Next/Prev 算法、Rescan 过滤 |
+| `crates/lianwall-core/src/socket/protocol.rs` | 移除 Restart，添加 NoHistory，Next/Prev trigger_hint |
+| `crates/lianwall-core/src/wallpaper/struct.rs` | WallpaperRecord 添加 time_constraints，ModeData 添加 current_path |
+| `crates/lianwall-core/src/wallpaper/space.rs` | build_space/rebuild_space 接收 ScannedWallpaper |
+| `crates/lianwall-core/src/wallpaper/time_range.rs` | TimeRange::crosses_midnight() |
+| `crates/lianwall-core/src/algorithm/selector.rs` | 测试更新 |
+| `crates/lianwall-daemon/src/state.rs` | GpuSnapshot、time_points、wallpaper_history |
+| `crates/lianwall-daemon/src/event.rs` | ConfigChanged 替代 ConfigReloaded，TimePointReached 添加字段，WallpaperChanged 添加 trigger |
+| `crates/lianwall-daemon/src/scheduler.rs` | 时间点监听、GPU cmd_tx、ConfigChanged 监听 |
+| `crates/lianwall-daemon/src/connection.rs` | 事件过滤、immediate_sync、event_to_response 更新 |
+| `crates/lianwall-daemon/src/handler/query.rs` | VRAM、时间点、可配置键、GetTimeInfo、next_switch_secs 模式选择 |
+| `crates/lianwall-daemon/src/handler/command.rs` | Next/Prev 历史栈、LockAction 抽取、apply_wallpaper 检查、Rescan 改进 |
 | `crates/lianwall-daemon/src/main.rs` | 启动恢复、关闭保存、时间过滤 |
+| `crates/lianwall-cli/src/client.rs` | Next/Prev trigger_hint 传参 |
+| `crates/lianwall-core/src/socket/client_legacy.rs` | Next/Prev trigger_hint 传参 |
+| `crates/lianwall-core/src/socket/codec.rs` | 测试更新 |
 
 ---
 
@@ -257,6 +483,12 @@ pub struct ModeData {
 ### 破坏性变更
 
 - **移除 `Request::Restart`**：需要改为 Shutdown + 启动新进程
-- **Prev 行为变更**：不再是简单的索引减一，而是真正的历史回退
+- **Prev 行为变更**：历史栈移至 daemon 层，存储路径而非索引，支持跨模式回退
+- **ConfigReloaded → ConfigChanged**：内部事件结构变更
+
+### JSON 协议兼容性
+
+- `Request::Next` 和 `Request::Prev` 新增可选字段 `trigger_hint`，旧客户端不传此字段仍可正常工作
+- 事件推送格式变化，订阅客户端需要处理新的字段
 
 ---
