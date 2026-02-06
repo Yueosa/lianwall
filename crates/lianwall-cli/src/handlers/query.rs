@@ -60,17 +60,9 @@ fn print_status(fmt: &Formatter, status: &lianwall_core::socket::StatusInfo) {
 
     fmt.print_kv("Engine", &status.engine);
 
-    // VRAM
-    if status.vram_total_mb > 0 {
-        let vram_percent =
-            100.0 - (status.vram_used_mb as f64 / status.vram_total_mb as f64 * 100.0);
-        fmt.print_kv(
-            "VRAM",
-            &format!(
-                "{}/{} MB ({:.0}% free)",
-                status.vram_used_mb, status.vram_total_mb, vram_percent
-            ),
-        );
+    // Next switch countdown
+    if let Some(secs) = status.next_switch_secs {
+        fmt.print_kv("Next Switch", &format_uptime(secs));
     }
 
     // Wallpapers section
@@ -79,6 +71,25 @@ fn print_status(fmt: &Formatter, status: &lianwall_core::socket::StatusInfo) {
     fmt.print_kv("Active", &status.total_wallpapers.to_string());
     fmt.print_kv("Locked", &status.locked_count.to_string());
     fmt.print_kv("Available", &status.available_count.to_string());
+
+    // VRAM section
+    if status.vram_total_mb > 0 {
+        fmt.print_separator("VRAM");
+        let vram_percent =
+            100.0 - (status.vram_used_mb as f64 / status.vram_total_mb as f64 * 100.0);
+        fmt.print_kv(
+            "Usage",
+            &format!(
+                "{}/{} MB ({:.0}% free)",
+                status.vram_used_mb, status.vram_total_mb, vram_percent
+            ),
+        );
+        if status.vram_degraded {
+            fmt.print_kv("Status", &format!("{}", fmt.warning("⚠️ Degraded")));
+        } else {
+            fmt.print_kv("Status", "Normal");
+        }
+    }
 
     // Time schedule section (if any time constraints exist)
     if status.time_points_count > 0 {
