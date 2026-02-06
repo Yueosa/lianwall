@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.1.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.1.1-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
@@ -201,13 +201,17 @@ bind = ALT, S, exec, lianwall switch    # 切换模式
 | `set <PATH>` | 设置指定壁纸 |
 | `lock <PATH>` | 锁定壁纸（不参与轮换） |
 | `unlock <PATH>` | 解锁壁纸 |
-| `reload` | 重新扫描壁纸目录并重载配置 |
+| `toggle-lock <PATH>` | 切换壁纸锁定状态 |
+| `reload` | 重新加载配置文件并重新扫描壁纸目录 |
+| `rescan` | 仅重新扫描壁纸目录（不重载配置） |
 
 ### 状态查询
 
 | 命令 | 说明 |
 |------|------|
 | `status` | 查看当前状态 |
+| `space [--mode <video\|image>]` | 查看向量空间详情 |
+| `time` | 查看时间段调度信息 |
 
 ### 配置管理
 

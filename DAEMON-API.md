@@ -1,7 +1,7 @@
 # Lianwall Daemon API 文档
 
 > 协议版本：2  
-> 文档版本：5.1.0
+> 文档版本：5.1.1
 
 ## 📡 通信协议
 
@@ -90,21 +90,31 @@
 | 字段 | 类型 | 描述 |
 |------|------|------|
 | `mode` | `WallMode` | 当前运行模式，取值见 [WallMode 枚举](#wallmode) |
-| `current` | `string?` | 当前壁纸完整路径 |
-| `current_filename` | `string?` | 当前壁纸文件名 |
-| `engine` | `string` | 当前引擎 `"mpvpaper"` / `"swww"` / `"none"` |
-| `total_wallpapers` | `number` | 当前模式活跃壁纸数 |
-| `locked_count` | `number` | 锁定的壁纸数 |
-| `available_count` | `number` | 可用壁纸数（未锁定） |
-| `scanned_count` | `number` | 扫描的壁纸总数（含不活跃） |
-| `vram_used_mb` | `number` | 已用显存 (MB) |
-| `vram_total_mb` | `number` | 总显存 (MB) |
-| `vram_degraded` | `boolean` | 是否处于显存降级状态 |
-| `uptime_secs` | `number` | daemon 运行时间（秒） |
-| `protocol_version` | `number` | 协议版本 |
-| `next_time_point` | `string?` | 下一个时间关键点 "HH:MM" |
-| `time_points_count` | `number` | 时间关键点总数 |
-| `next_switch_secs` | `number?` | 下次壁纸切换倒计时（秒，根据当前模式选择 interval） |
+| `current` | `string?` | 当前壁纸完整路径，启动后未切换过时为 `null` |
+| `current_filename` | `string?` | 当前壁纸文件名，从 `current` 提取 |
+| `engine` | `string` | 当前活跃引擎进程，`"mpvpaper"` / `"swww"` / `"none"`（反映进程实际状态，非配置模式） |
+| `total_wallpapers` | `number` | **当前模式**向量空间中的壁纸数（经时间过滤后的活跃数） |
+| `locked_count` | `number` | 当前模式中被锁定的壁纸数 |
+| `available_count` | `number` | 当前模式中可被选中的壁纸数（= `total` - `locked` - `in_cooldown`） |
+| `scanned_count` | `number` | 目录扫描发现的壁纸文件总数（两个模式之和，含因时间约束未活跃的） |
+| `vram_used_mb` | `number` | GPU 已用显存 (MB)，无 GPU 时为 0 |
+| `vram_total_mb` | `number` | GPU 总显存 (MB)，无 GPU 时为 0 |
+| `vram_degraded` | `boolean` | 是否处于显存降级状态（已自动切换到 Image 模式） |
+| `uptime_secs` | `number` | daemon 进程运行时间（秒） |
+| `protocol_version` | `number` | Socket 协议版本号 |
+| `next_time_point` | `string?` | 下一个时间关键点 `"HH:MM"`，无时间约束壁纸时为 `null` |
+| `time_points_count` | `number` | 时间关键点总数，0 表示所有壁纸均无时间约束 |
+| `next_switch_secs` | `number?` | 距下次自动切换的剩余秒数（实时倒计时，非配置的 interval） |
+
+> **关系公式**：
+> - `available_count = total_wallpapers - locked_count - cooldown_queue.len()`
+> - `scanned_count >= total_wallpapers`（当无时间约束壁纸时两者相等）
+>
+> **数据源**：
+> - `total_wallpapers`, `locked_count`, `available_count` → 从**当前模式**的向量空间计算
+> - `scanned_count` → 从 `SharedState.scanned_counts` 读取（两个模式之和）
+> - `next_switch_secs` → 从 `SharedState.next_switch` 计算剩余时间
+> - `engine` → 检查 mpvpaper/swww 进程是否存活，而非读取配置模式
 
 ---
 
@@ -153,23 +163,26 @@
 
 | 字段 | 类型 | 描述 |
 |------|------|------|
-| `mode` | `string` | 查询的模式 |
-| `items` | `WallpaperPoint[]` | 壁纸列表 |
-| `pointer_angle` | `number` | 当前指针角度 [0, 2π) |
-| `cooldown_size` | `number` | 冷却队列大小 |
-| `current_index` | `number?` | 当前壁纸索引 |
+| `mode` | `WallMode` | 查询的模式（未指定时为当前模式） |
+| `items` | `WallpaperPoint[]` | 向量空间中的壁纸列表（经时间过滤后的活跃壁纸） |
+| `pointer_angle` | `number` | 当前指针角度 [0, 2π)，黄金角算法使用此值选择下一张壁纸 |
+| `cooldown_size` | `number` | 当前冷却队列中的壁纸数（近期播放过，临时不参与选择） |
+| `current_index` | `number?` | 当前壁纸在 items 中的索引，`null` 表示当前壁纸不在此空间中 |
 
 **WallpaperPoint 结构**
 
 | 字段 | 类型 | 描述 |
 |------|------|------|
-| `index` | `number` | 索引位置 |
-| `filename` | `string` | 文件名 |
-| `path` | `string` | 完整路径 |
-| `angle` | `number` | 角度 [0, 2π) |
-| `locked` | `boolean` | 是否锁定 |
-| `in_cooldown` | `boolean` | 是否在冷却中 |
-| `is_current` | `boolean` | 是否当前壁纸 |
+| `index` | `number` | 在 items 数组中的位置索引 |
+| `filename` | `string` | 壁纸文件名 |
+| `path` | `string` | 壁纸完整路径 |
+| `angle` | `number` | 在向量空间中的角度 [0, 2π)，用于黄金角选择 |
+| `locked` | `boolean` | 是否被用户锁定（锁定后不参与轮换） |
+| `in_cooldown` | `boolean` | 是否在冷却队列中（近期播放过，临时不参与选择） |
+| `is_current` | `boolean` | 是否为当前正在显示的壁纸 |
+
+> **数据源**：从 `SharedState.video_space` 或 `SharedState.image_space`（根据请求的 mode）读取。
+> 向量空间中的壁纸已经过时间约束过滤，只包含当前时间段活跃的壁纸。
 
 ---
 
@@ -213,6 +226,31 @@
     "image_schedule": { ... }
   }
 }
+```
+
+**ModeSchedule 字段说明**
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `scanned_count` | `number` | 目录扫描发现的该模式壁纸总数（含因时间约束未活跃的） |
+| `active_count` | `number` | 当前时间段活跃且未锁定的壁纸数 |
+| `time_points` | `string[]` | 所有时间关键点 `"HH:MM"` 格式，已排序 |
+| `next_time_point` | `string?` | 下一个时间关键点 |
+| `wallpaper_segments` | `WallpaperTimeSegment[]` | 壁纸时间分布（用于时间轴可视化） |
+
+**WallpaperTimeSegment 结构**
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `filename` | `string` | 壁纸文件名 |
+| `path` | `string` | 壁纸完整路径 |
+| `active_ranges` | `TimeRangeInfo[]` | 活跃时间范围列表，`all_day=true` 时为空数组 |
+| `all_day` | `boolean` | 是否全天可用（无时间约束） |
+
+> **数据源**：
+> - `scanned_count` → `SharedState.scanned_counts`（各模式独立统计）
+> - `active_count` → 从向量空间中过滤 `!locked` 的数量
+> - `wallpaper_segments` → 从向量空间中读取每个壁纸的 `time_constraints`
 ```
 
 ---
@@ -650,12 +688,12 @@
 
 | field | value 类型 | 描述 |
 |-------|-----------|------|
-| `Mode` | `string` | 模式变化 |
-| `Engine` | `string` | 引擎变化 |
-| `TotalWallpapers` | `number` | 壁纸总数变化 |
-| `AvailableCount` | `number` | 可用数量变化 |
-| `LockedCount` | `number` | 锁定数量变化 |
-| `VramDegraded` | `boolean` | 降级状态变化 |
+| `Mode` | `WallMode` | 模式变化（`"Video"` 或 `"Image"`） |
+| `Engine` | `string` | 活跃引擎变化（`"mpvpaper"` / `"swww"` / `"none"`） |
+| `TotalWallpapers` | `number` | 向量空间壁纸总数变化 |
+| `AvailableCount` | `number` | 可用壁纸数变化（已扣除锁定和冷却） |
+| `LockedCount` | `number` | 锁定壁纸数变化 |
+| `VramDegraded` | `boolean` | 显存降级状态变化 |
 
 ---
 
@@ -677,7 +715,9 @@
 }
 ```
 
-> ReloadConfig 时 `key="all"`，`old_value` 和 `new_value` 为 null。
+> **ReloadConfig 行为**：`key="all"`，`old_value` 和 `new_value` 为 `null`。
+> ReloadConfig **不会**自动触发 Rescan，如需重新扫描目录请另行发送 Rescan 请求。
+> 因此订阅 ConfigChanged 事件后不一定会收到 SpaceUpdated 事件。
 
 ---
 
@@ -712,6 +752,18 @@
 | `rescanned` | 目录重新扫描 |
 | `time_point_refresh` | 时间点刷新 |
 | `config_changed` | 配置变更 |
+
+**summary 字段说明**
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `total` | `number` | 向量空间中的壁纸总数（时间过滤后的活跃数） |
+| `available` | `number` | 可被选中的壁纸数（= `total` - `locked` - `in_cooldown`） |
+| `locked` | `number` | 被用户锁定的壁纸数 |
+| `in_cooldown` | `number` | 在冷却队列中的壁纸数 |
+
+> **注意**：SpaceUpdated 事件按模式分别发布（先 Video 后 Image），每次 rescan 会收到两条。
+> CLI 的 `rescan` 命令只等待第一条即返回。
 
 ---
 
