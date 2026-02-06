@@ -207,30 +207,69 @@ async fn handle_set_mode(
     Response::ok()
 }
 
-/// 锁定壁纸
-async fn handle_lock(
+/// 锁定操作类型
+enum LockAction {
+    Lock,
+    Unlock,
+    Toggle,
+}
+
+/// 修改壁纸锁定状态的统一处理函数
+async fn modify_lock_state(
     state: &Arc<SharedState>,
     event_bus: &EventBus,
     path: PathBuf,
+    action: LockAction,
 ) -> Response {
     let mode = *state.engine.mode.read().await;
     
-    match mode {
+    // 根据模式获取对应的空间并修改锁定状态
+    let found = match mode {
         WallMode::Video => {
             let mut space = state.video_space.write().await;
             if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                item.locked = true;
+                match action {
+                    LockAction::Lock => item.locked = true,
+                    LockAction::Unlock => item.locked = false,
+                    LockAction::Toggle => item.locked = !item.locked,
+                }
+                true
+            } else {
+                false
             }
         }
         WallMode::Image => {
             let mut space = state.image_space.write().await;
             if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                item.locked = true;
+                match action {
+                    LockAction::Lock => item.locked = true,
+                    LockAction::Unlock => item.locked = false,
+                    LockAction::Toggle => item.locked = !item.locked,
+                }
+                true
+            } else {
+                false
             }
         }
+    };
+    
+    if !found {
+        return Response::error(ErrorCode::NotFound, format!("Wallpaper not found: {:?}", path));
     }
     
-    // 发布事件
+    // 发布空间更新事件
+    publish_space_updated_event(state, event_bus, mode, SpaceUpdateReason::LockChange).await;
+    
+    Response::ok()
+}
+
+/// 发布空间更新事件的辅助函数
+async fn publish_space_updated_event(
+    state: &Arc<SharedState>,
+    event_bus: &EventBus,
+    mode: WallMode,
+    reason: SpaceUpdateReason,
+) {
     let (total, available, locked, in_cooldown) = {
         let space = if mode == WallMode::Video {
             state.video_space.read().await
@@ -244,15 +283,22 @@ async fn handle_lock(
         (total, available, locked, in_cooldown)
     };
     event_bus.publish(Event::SpaceUpdated {
-        reason: SpaceUpdateReason::LockChange,
+        reason,
         mode,
         total,
         available,
         locked,
         in_cooldown,
     });
-    
-    Response::ok()
+}
+
+/// 锁定壁纸
+async fn handle_lock(
+    state: &Arc<SharedState>,
+    event_bus: &EventBus,
+    path: PathBuf,
+) -> Response {
+    modify_lock_state(state, event_bus, path, LockAction::Lock).await
 }
 
 /// 解锁壁纸
@@ -261,46 +307,7 @@ async fn handle_unlock(
     event_bus: &EventBus,
     path: PathBuf,
 ) -> Response {
-    let mode = *state.engine.mode.read().await;
-    
-    match mode {
-        WallMode::Video => {
-            let mut space = state.video_space.write().await;
-            if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                item.locked = false;
-            }
-        }
-        WallMode::Image => {
-            let mut space = state.image_space.write().await;
-            if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                item.locked = false;
-            }
-        }
-    }
-    
-    // 发布事件
-    let (total, available, locked, in_cooldown) = {
-        let space = if mode == WallMode::Video {
-            state.video_space.read().await
-        } else {
-            state.image_space.read().await
-        };
-        let total = space.items.len();
-        let locked = space.items.iter().filter(|w| w.locked).count();
-        let in_cooldown = space.cooldown_queue.len();
-        let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
-        (total, available, locked, in_cooldown)
-    };
-    event_bus.publish(Event::SpaceUpdated {
-        reason: SpaceUpdateReason::LockChange,
-        mode,
-        total,
-        available,
-        locked,
-        in_cooldown,
-    });
-    
-    Response::ok()
+    modify_lock_state(state, event_bus, path, LockAction::Unlock).await
 }
 
 /// 切换锁定状态
@@ -309,46 +316,7 @@ async fn handle_toggle_lock(
     event_bus: &EventBus,
     path: PathBuf,
 ) -> Response {
-    let mode = *state.engine.mode.read().await;
-    
-    match mode {
-        WallMode::Video => {
-            let mut space = state.video_space.write().await;
-            if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                item.locked = !item.locked;
-            }
-        }
-        WallMode::Image => {
-            let mut space = state.image_space.write().await;
-            if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                item.locked = !item.locked;
-            }
-        }
-    }
-    
-    // 发布事件
-    let (total, available, locked, in_cooldown) = {
-        let space = if mode == WallMode::Video {
-            state.video_space.read().await
-        } else {
-            state.image_space.read().await
-        };
-        let total = space.items.len();
-        let locked = space.items.iter().filter(|w| w.locked).count();
-        let in_cooldown = space.cooldown_queue.len();
-        let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
-        (total, available, locked, in_cooldown)
-    };
-    event_bus.publish(Event::SpaceUpdated {
-        reason: SpaceUpdateReason::LockChange,
-        mode,
-        total,
-        available,
-        locked,
-        in_cooldown,
-    });
-    
-    Response::ok()
+    modify_lock_state(state, event_bus, path, LockAction::Toggle).await
 }
 
 /// 获取配置键的当前值（用于事件通知）
@@ -728,6 +696,39 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
             });
         }
         
+        // 检查当前壁纸是否仍在空间中，如果不在则自动选择新壁纸
+        let current_mode = *state.engine.mode.read().await;
+        let current_path = state.engine.current.read().await.clone();
+        
+        let current_valid = if let Some(ref path) = current_path {
+            let space = if current_mode == WallMode::Video {
+                state.video_space.read().await
+            } else {
+                state.image_space.read().await
+            };
+            space.items.iter().any(|w| &w.path == path)
+        } else {
+            false
+        };
+        
+        if !current_valid {
+            tracing::warn!("Current wallpaper no longer in space after rescan, will select new one");
+            // 发布错误事件通知客户端
+            event_bus.publish(Event::Error {
+                message: "Current wallpaper removed from space after rescan, auto-selecting new wallpaper".to_string(),
+            });
+            // 注意：这里不能直接调用 handle_next，因为我们在 spawn 内部
+            // 正确做法是清除 current_index，让 scheduler 在下次 tick 时选择新壁纸
+            // 或者通过发送内部命令来触发
+            let space = if current_mode == WallMode::Video {
+                &state.video_space
+            } else {
+                &state.image_space
+            };
+            space.write().await.current_index = None;
+            *state.engine.current.write().await = None;
+        }
+        
         let video_count = state.video_space.read().await.len();
         let image_count = state.image_space.read().await.len();
         tracing::info!("Rescan complete: {} videos, {} images", video_count, image_count);
@@ -755,11 +756,18 @@ async fn handle_shutdown(state: &Arc<SharedState>, event_bus: &EventBus) -> Resp
 }
 
 /// 应用壁纸
+///
+/// 注意：此函数会检查文件存在性，如果文件不存在会返回错误
 async fn apply_wallpaper(
     state: &SharedState,
     path: &PathBuf,
     mode: WallMode,
 ) -> anyhow::Result<()> {
+    // 检查文件是否存在
+    if !path.exists() {
+        anyhow::bail!("Wallpaper file not found: {:?}", path);
+    }
+    
     let config = state.get_config().await;
     
     match mode {

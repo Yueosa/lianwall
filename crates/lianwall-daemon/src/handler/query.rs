@@ -77,6 +77,12 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
     let next_time_point = next_tp.map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
     let time_points_count = time_points.len();
     
+    // 根据当前模式选择正确的切换间隔
+    let next_switch_secs = match mode {
+        WallMode::Video => config.video_engine.interval,
+        WallMode::Image => config.image_engine.interval,
+    };
+    
     Response::Status(StatusInfo {
         mode,
         current: engine.current.clone(),
@@ -93,7 +99,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         protocol_version: PROTOCOL_VERSION,
         next_time_point,
         time_points_count,
-        next_switch_secs: Some(config.image_engine.interval),
+        next_switch_secs: Some(next_switch_secs),
     })
 }
 
