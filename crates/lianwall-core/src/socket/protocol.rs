@@ -20,6 +20,7 @@
 //!
 //! - [ ] `Unsubscribe` 添加可选 `events` 参数支持部分取消订阅
 //! - [ ] `GetStatus` 中的 `next_time_point` 和 `time_points_count` 与 `GetTimeInfo` 功能重复，考虑移除
+//! - [ ] 当前 SetWallpaper 会自动切换mode, 后续可以考虑做户切换的逻辑
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
