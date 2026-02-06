@@ -46,7 +46,6 @@ pub async fn handle_command(
         Request::Rescan => handle_rescan(state, event_bus).await,
         
         Request::Shutdown => handle_shutdown(state, event_bus).await,
-        Request::Restart => handle_restart(state, event_bus).await,
         
         // Query 请求不应该到这里
         _ => Response::error(ErrorCode::InvalidRequest, "Not a command request"),
@@ -527,24 +526,6 @@ async fn handle_shutdown(state: &Arc<SharedState>, event_bus: &EventBus) -> Resp
     state.engine.mpvpaper.kill().await;
     
     // 触发关闭信号
-    state.trigger_shutdown();
-    
-    Response::ok()
-}
-
-/// 重启 daemon
-async fn handle_restart(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
-    tracing::info!("Restart requested");
-    
-    // 发布关闭事件
-    event_bus.publish(Event::ShuttingDown);
-    
-    // 停止引擎进程
-    state.engine.swww_daemon.kill().await;
-    state.engine.mpvpaper.kill().await;
-    
-    // TODO: 实际重启逻辑（可能需要 exec 或外部管理）
-    // 目前只是停止
     state.trigger_shutdown();
     
     Response::ok()

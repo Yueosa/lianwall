@@ -108,9 +108,6 @@ pub enum Request {
     /// 关闭守护进程
     Shutdown,
 
-    /// 重启守护进程
-    Restart,
-
     // ==================== Subscribe (订阅管理) ====================
     /// 订阅事件
     Subscribe {
@@ -147,7 +144,6 @@ impl Request {
             Request::Rescan => "Rescan",
             Request::ReloadConfig => "ReloadConfig",
             Request::Shutdown => "Shutdown",
-            Request::Restart => "Restart",
             // Subscribe
             Request::Subscribe { .. } => "Subscribe",
             Request::Unsubscribe => "Unsubscribe",
@@ -181,7 +177,6 @@ impl Request {
                 | Request::Rescan
                 | Request::ReloadConfig
                 | Request::Shutdown
-                | Request::Restart
         )
     }
 

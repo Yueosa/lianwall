@@ -212,7 +212,7 @@ fn get_request_timeout(request: &Request) -> Duration {
         Request::Lock { .. } | Request::Unlock { .. } | Request::ToggleLock { .. } => Duration::from_secs(2),
         Request::SetConfig { .. } | Request::ReloadConfig => Duration::from_secs(5),
         Request::Rescan => Duration::from_secs(60), // 大目录可能很慢
-        Request::Shutdown | Request::Restart => Duration::from_secs(10),
+        Request::Shutdown => Duration::from_secs(10),
         
         // Subscribe: 无需长超时
         Request::Subscribe { .. } | Request::Unsubscribe => Duration::from_secs(5),
