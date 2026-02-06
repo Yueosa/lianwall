@@ -37,7 +37,6 @@ pub async fn handle_query(state: &Arc<SharedState>, request: Request) -> Respons
 
 /// 获取状态
 async fn get_status(state: &Arc<SharedState>) -> Response {
-    let config = state.get_config().await;
     let engine = state.get_engine_state().await;
     let video_space = state.get_video_space().await;
     let image_space = state.get_image_space().await;
@@ -77,11 +76,8 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
     let next_time_point = next_tp.map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
     let time_points_count = time_points.len();
     
-    // 根据当前模式选择正确的切换间隔
-    let next_switch_secs = match mode {
-        WallMode::Video => config.video_engine.interval,
-        WallMode::Image => config.image_engine.interval,
-    };
+    // 获取下次切换的剩余秒数（真实倒计时）
+    let next_switch_secs = state.next_switch_remaining_secs().await;
     
     Response::Status(StatusInfo {
         mode,

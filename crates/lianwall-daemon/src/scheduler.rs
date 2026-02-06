@@ -55,8 +55,8 @@ pub async fn run(
     let mut current_interval = get_interval_for_mode(&config, mode);
     let mut timer = interval(current_interval);
     
-    // 记录下次切换时间
-    let mut _next_switch = Instant::now() + current_interval;
+    // 设置下次切换时间（同步到 state 供 status 查询）
+    state.set_next_switch((Instant::now() + current_interval).into()).await;
     
     // 计算下一个时间点的等待时间
     let mut time_point_sleep = create_time_point_sleep(&state).await;
@@ -79,8 +79,8 @@ pub async fn run(
                     }
                 }
                 
-                // 更新下次切换时间
-                _next_switch = Instant::now() + current_interval;
+                // 更新下次切换时间（同步到 state）
+                state.set_next_switch((Instant::now() + current_interval).into()).await;
                 
                 // 发布 tick 事件（内部使用）
                 event_bus.publish(Event::SchedulerTick);
@@ -129,7 +129,7 @@ pub async fn run(
                             if new_interval != current_interval {
                                 current_interval = new_interval;
                                 timer = interval(current_interval);
-                                _next_switch = Instant::now() + current_interval;
+                                state.set_next_switch((Instant::now() + current_interval).into()).await;
                                 tracing::info!("Scheduler interval updated to {:?} (config changed: {})", current_interval, key);
                             }
                         }
@@ -142,7 +142,7 @@ pub async fn run(
                         if new_interval != current_interval {
                             current_interval = new_interval;
                             timer = interval(current_interval);
-                            _next_switch = Instant::now() + current_interval;
+                            state.set_next_switch((Instant::now() + current_interval).into()).await;
                             tracing::info!("Scheduler interval updated to {:?} (mode changed to {:?})", current_interval, to);
                         }
                     }

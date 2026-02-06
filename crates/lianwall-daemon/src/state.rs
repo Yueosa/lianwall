@@ -183,6 +183,9 @@ pub struct SharedState {
     /// 注意：这个历史栈独立于向量空间，Prev 可以播放不在当前空间中的壁纸
     pub wallpaper_history: RwLock<VecDeque<PathBuf>>,
     
+    /// 下次壁纸切换的时间点（用于 status 查询倒计时）
+    pub next_switch: RwLock<Instant>,
+    
     /// 启动时间
     start_time: Instant,
     
@@ -213,6 +216,12 @@ impl SharedState {
         
         let initial_mode = config.paths.mode;
         
+        // 根据初始模式计算首次切换间隔
+        let initial_interval = match initial_mode {
+            WallMode::Video => config.video_engine.interval,
+            WallMode::Image => config.image_engine.interval,
+        };
+        
         let state = Arc::new(Self {
             config: RwLock::new(config),
             video_space: RwLock::new(video_space),
@@ -222,6 +231,7 @@ impl SharedState {
             gpu_snapshot: RwLock::new(GpuSnapshot::empty()),
             time_points: RwLock::new(BTreeSet::new()),
             wallpaper_history: RwLock::new(VecDeque::new()),
+            next_switch: RwLock::new(Instant::now() + std::time::Duration::from_secs(initial_interval)),
             start_time: Instant::now(),
             shutdown_tx,
         });
@@ -305,6 +315,22 @@ impl SharedState {
     /// 更新时间点集合
     pub async fn set_time_points(&self, points: BTreeSet<TimePoint>) {
         *self.time_points.write().await = points;
+    }
+    
+    /// 获取下次切换的剩余秒数
+    pub async fn next_switch_remaining_secs(&self) -> u64 {
+        let next = *self.next_switch.read().await;
+        let now = Instant::now();
+        if next > now {
+            (next - now).as_secs()
+        } else {
+            0
+        }
+    }
+    
+    /// 更新下次切换时间
+    pub async fn set_next_switch(&self, instant: Instant) {
+        *self.next_switch.write().await = instant;
     }
 }
 
