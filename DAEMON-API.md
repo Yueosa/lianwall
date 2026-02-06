@@ -716,8 +716,7 @@
 ```
 
 > **ReloadConfig 行为**：`key="all"`，`old_value` 和 `new_value` 为 `null`。
-> ReloadConfig **不会**自动触发 Rescan，如需重新扫描目录请另行发送 Rescan 请求。
-> 因此订阅 ConfigChanged 事件后不一定会收到 SpaceUpdated 事件。
+> ReloadConfig 会自动触发 Rescan（v5.1.1+），因此订阅者会先收到 `ConfigChanged`，随后收到 `SpaceUpdated` 事件。
 
 ---
 
