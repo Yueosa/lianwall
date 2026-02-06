@@ -19,7 +19,18 @@ use super::{connect, normalize_path, HandlerError, Result};
 pub fn handle_next(fmt: &Formatter) -> Result<()> {
     let mut client = connect()?;
     client.next()?;
-    fmt.print_success("Switched to next wallpaper");
+
+    // 查询新壁纸
+    let status = client.status()?;
+    if let Some(ref path) = status.current {
+        let filename = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        fmt.print_success(&format!("Switched to: {}", filename));
+    } else {
+        fmt.print_success("Switched to next wallpaper");
+    }
     Ok(())
 }
 
@@ -27,7 +38,18 @@ pub fn handle_next(fmt: &Formatter) -> Result<()> {
 pub fn handle_prev(fmt: &Formatter) -> Result<()> {
     let mut client = connect()?;
     client.prev()?;
-    fmt.print_success("Switched to previous wallpaper");
+
+    // 查询新壁纸
+    let status = client.status()?;
+    if let Some(ref path) = status.current {
+        let filename = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        fmt.print_success(&format!("Switched to: {} (from history)", filename));
+    } else {
+        fmt.print_success("Switched to previous wallpaper");
+    }
     Ok(())
 }
 
@@ -45,15 +67,30 @@ pub fn handle_switch(fmt: &Formatter) -> Result<()> {
     // 切换
     client.set_mode(new_mode)?;
 
+    // 查询新壁纸
+    let status = client.status()?;
     let icon = match new_mode {
         WallMode::Video => fmt.icon_video(),
         WallMode::Image => fmt.icon_image(),
     };
-    fmt.print_success(&format!("Switched to {} {:?} mode", icon, new_mode));
+
+    if let Some(ref path) = status.current {
+        let filename = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        fmt.print_success(&format!("Switched to {} {:?} mode, now playing: {}", icon, new_mode, filename));
+    } else {
+        fmt.print_success(&format!("Switched to {} {:?} mode", icon, new_mode));
+    }
     Ok(())
 }
 
 /// 处理 set 命令
+///
+/// # TODO
+/// 当前 daemon 实现会根据文件扩展名自动切换 mode。
+/// 后续可考虑添加 `--keep-mode` 参数，允许用户选择是否保持当前模式。
 pub fn handle_set(fmt: &Formatter, path: PathBuf) -> Result<()> {
     // 规范化路径
     let path = normalize_path(path);
@@ -83,10 +120,21 @@ pub fn handle_mode(fmt: &Formatter, mode: ModeArg) -> Result<()> {
     let wall_mode: WallMode = mode.into();
     client.set_mode(wall_mode)?;
 
+    // 查询新壁纸
+    let status = client.status()?;
     let icon = match wall_mode {
         WallMode::Video => fmt.icon_video(),
         WallMode::Image => fmt.icon_image(),
     };
-    fmt.print_success(&format!("Set mode to {} {:?}", icon, wall_mode));
+
+    if let Some(ref path) = status.current {
+        let filename = path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.to_string_lossy().to_string());
+        fmt.print_success(&format!("Set mode to {} {:?}, now playing: {}", icon, wall_mode, filename));
+    } else {
+        fmt.print_success(&format!("Set mode to {} {:?}", icon, wall_mode));
+    }
     Ok(())
 }
