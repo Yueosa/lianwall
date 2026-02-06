@@ -293,6 +293,8 @@ pub enum ErrorCode {
     Timeout,
     /// 向量空间为空（没有可用壁纸）
     EmptySpace,
+    /// 没有历史记录（prev 无法回退）
+    NoHistory,
     /// 已经订阅
     AlreadySubscribed,
     /// 未订阅
@@ -312,6 +314,7 @@ impl std::fmt::Display for ErrorCode {
             ErrorCode::PermissionDenied => write!(f, "permission_denied"),
             ErrorCode::Timeout => write!(f, "timeout"),
             ErrorCode::EmptySpace => write!(f, "empty_space"),
+            ErrorCode::NoHistory => write!(f, "no_history"),
             ErrorCode::AlreadySubscribed => write!(f, "already_subscribed"),
             ErrorCode::NotSubscribed => write!(f, "not_subscribed"),
             ErrorCode::InternalError => write!(f, "internal_error"),

@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use lianwall_core::socket::{Request, Response, ErrorCode};
 use lianwall_core::config::WallMode;
+use lianwall_core::algorithm::{select_next, select_previous};
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
 use crate::state::SharedState;
@@ -53,27 +54,25 @@ pub async fn handle_command(
 }
 
 /// 切换到下一张壁纸
+///
+/// 使用黄金角算法选择下一张壁纸，并将当前壁纸压入历史栈
 async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
     let mode = *state.engine.mode.read().await;
     
     let path = match mode {
         WallMode::Video => {
             let mut space = state.video_space.write().await;
-            if space.items.is_empty() {
-                return Response::error(ErrorCode::EmptySpace, "No video wallpapers available");
+            match select_next(&mut space) {
+                Some(output) => space.items[output.index].path.clone(),
+                None => return Response::error(ErrorCode::EmptySpace, "No available video wallpapers"),
             }
-            let next_idx = space.current_index.map(|i| (i + 1) % space.items.len()).unwrap_or(0);
-            space.current_index = Some(next_idx);
-            space.items[next_idx].path.clone()
         }
         WallMode::Image => {
             let mut space = state.image_space.write().await;
-            if space.items.is_empty() {
-                return Response::error(ErrorCode::EmptySpace, "No image wallpapers available");
+            match select_next(&mut space) {
+                Some(output) => space.items[output.index].path.clone(),
+                None => return Response::error(ErrorCode::EmptySpace, "No available image wallpapers"),
             }
-            let next_idx = space.current_index.map(|i| (i + 1) % space.items.len()).unwrap_or(0);
-            space.current_index = Some(next_idx);
-            space.items[next_idx].path.clone()
         }
     };
     
@@ -92,31 +91,25 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus) -> Response
 }
 
 /// 切换到上一张壁纸
+///
+/// 从历史栈中弹出上一张壁纸，实现真正的回退
 async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
     let mode = *state.engine.mode.read().await;
     
     let path = match mode {
         WallMode::Video => {
             let mut space = state.video_space.write().await;
-            if space.items.is_empty() {
-                return Response::error(ErrorCode::EmptySpace, "No video wallpapers available");
+            match select_previous(&mut space) {
+                Some(output) => space.items[output.index].path.clone(),
+                None => return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history"),
             }
-            let prev_idx = space.current_index
-                .map(|i| if i == 0 { space.items.len() - 1 } else { i - 1 })
-                .unwrap_or(0);
-            space.current_index = Some(prev_idx);
-            space.items[prev_idx].path.clone()
         }
         WallMode::Image => {
             let mut space = state.image_space.write().await;
-            if space.items.is_empty() {
-                return Response::error(ErrorCode::EmptySpace, "No image wallpapers available");
+            match select_previous(&mut space) {
+                Some(output) => space.items[output.index].path.clone(),
+                None => return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history"),
             }
-            let prev_idx = space.current_index
-                .map(|i| if i == 0 { space.items.len() - 1 } else { i - 1 })
-                .unwrap_or(0);
-            space.current_index = Some(prev_idx);
-            space.items[prev_idx].path.clone()
         }
     };
     
