@@ -21,7 +21,7 @@ mod wallpaper;
 pub use config::handle_config;
 pub use directory::{handle_reload, handle_rescan};
 pub use lifecycle::{handle_restart, handle_start, handle_stop};
-pub use lock::{handle_lock, handle_unlock};
+pub use lock::{handle_lock, handle_toggle_lock, handle_unlock};
 pub use query::handle_status;
 pub use wallpaper::{handle_mode, handle_next, handle_prev, handle_set, handle_switch};
 

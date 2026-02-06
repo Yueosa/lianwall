@@ -80,6 +80,12 @@ pub enum Command {
         path: PathBuf,
     },
 
+    /// Toggle wallpaper lock state
+    ToggleLock {
+        /// Path to wallpaper file
+        path: PathBuf,
+    },
+
     /// Reload config file and rescan wallpaper directories
     ///
     /// Use this after editing config.toml manually.

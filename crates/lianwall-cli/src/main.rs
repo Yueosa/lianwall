@@ -48,6 +48,7 @@ fn main() {
         Command::Mode { mode } => handlers::handle_mode(&fmt, mode),
         Command::Lock { path } => handlers::handle_lock(&fmt, path),
         Command::Unlock { path } => handlers::handle_unlock(&fmt, path),
+        Command::ToggleLock { path } => handlers::handle_toggle_lock(&fmt, path),
         Command::Reload => handlers::handle_reload(&fmt),
         Command::Rescan => handlers::handle_rescan(&fmt),
         // 配置
