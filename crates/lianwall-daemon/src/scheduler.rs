@@ -135,6 +135,16 @@ pub async fn run(
                                 tracing::info!("Scheduler interval updated to {:?} (config changed: {})", current_interval, key);
                             }
                         }
+                        
+                        // 整体重载时自动触发 rescan，使壁纸目录与新配置同步
+                        if key == "all" {
+                            tracing::info!("Full config reload detected, triggering rescan");
+                            let (response_tx, _) = tokio::sync::oneshot::channel();
+                            let _ = cmd_tx.send(CommandMsg {
+                                request: Request::Rescan,
+                                response_tx,
+                            }).await;
+                        }
                     }
                     Ok(Event::ModeChanged { to, .. }) => {
                         // 模式切换，Video/Image 有不同的 interval
