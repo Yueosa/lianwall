@@ -262,7 +262,7 @@ fn event_to_type(event: &Event) -> EventType {
         Event::ScanProgress { .. } => EventType::ScanProgress,
         Event::ConfigReloaded => EventType::ConfigChanged,
         Event::GpuStateUpdated { .. } => EventType::VramChanged,
-        Event::TimePointReached => EventType::TimePointReached,
+        Event::TimePointReached { .. } => EventType::TimePointReached,
         Event::Error { .. } => EventType::Error,
         Event::ShuttingDown => EventType::Error,
         Event::SchedulerTick => EventType::Error, // 内部事件，不会推送
@@ -370,9 +370,15 @@ fn event_to_response(event: &Event) -> Option<Response> {
                 recoverable: false,
             }))
         }
+        // 时间点到达事件
+        Event::TimePointReached { time, next_time } => {
+            Some(Response::Event(SocketEvent::TimePointReached {
+                time: time.clone(),
+                next_time: next_time.clone(),
+            }))
+        }
         // 内部事件不推送给客户端
         Event::SchedulerTick => None,
-        Event::TimePointReached => None,
     }
 }
 

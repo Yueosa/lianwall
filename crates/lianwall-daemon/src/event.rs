@@ -64,7 +64,12 @@ pub enum Event {
     SchedulerTick,
     
     /// 时间点到达（触发重建向量空间）
-    TimePointReached,
+    TimePointReached {
+        /// 当前时间点 "HH:MM"
+        time: String,
+        /// 下一个时间点 "HH:MM"（可能为 None）
+        next_time: Option<String>,
+    },
     
     /// 错误事件
     Error {

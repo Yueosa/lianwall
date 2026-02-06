@@ -88,7 +88,11 @@ pub async fn run(
             
             // 时间点到达，重建向量空间
             _ = &mut time_point_sleep => {
-                tracing::info!("Time point reached, triggering rescan to rebuild space");
+                // 获取当前时间和下一个时间点
+                let now = lianwall_core::wallpaper::TimePoint::now();
+                let time_str = format!("{:02}:{:02}", now.hour, now.minute);
+                
+                tracing::info!("Time point {} reached, triggering rescan to rebuild space", time_str);
                 
                 // 发送 Rescan 命令重建向量空间
                 let (response_tx, _) = tokio::sync::oneshot::channel();
@@ -97,8 +101,16 @@ pub async fn run(
                     response_tx,
                 }).await;
                 
+                // 计算下一个时间点用于事件推送
+                let time_points = state.get_time_points().await;
+                let next_tp = lianwall_core::wallpaper::next_key_point(&now, &time_points);
+                let next_time_str = next_tp.map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
+                
                 // 发布事件
-                event_bus.publish(Event::TimePointReached);
+                event_bus.publish(Event::TimePointReached {
+                    time: time_str,
+                    next_time: next_time_str,
+                });
                 
                 // 重新计算下一个时间点
                 time_point_sleep = create_time_point_sleep(&state).await;
