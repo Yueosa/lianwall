@@ -33,6 +33,7 @@ pub fn parse_event_types(args: &[String]) -> Vec<EventType> {
             "space" | "sp" => Some(EventType::SpaceUpdated),
             "vram" | "gpu" => Some(EventType::VramChanged),
             "time" | "tp" => Some(EventType::TimePointReached),
+            "scan" | "progress" => Some(EventType::ScanProgress),
             "error" | "err" => Some(EventType::Error),
             _ => {
                 eprintln!("Warning: unknown event type '{}', ignoring", s);
