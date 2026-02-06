@@ -4,9 +4,53 @@
 //! - 终端能力检测 (颜色, emoji)
 //! - 彩色/ASCII 降级输出
 //! - JSON 输出模式
+//! - 消息常量 (i18n ready)
 
 use colored::{ColoredString, Colorize};
 use std::env;
+
+// ============================================================================
+// Messages (i18n ready)
+// ============================================================================
+
+/// User-facing messages
+///
+/// TODO: i18n implementation plan
+/// 1. Detect locale from LANG/LC_ALL environment variables
+/// 2. Create locale modules: locales/en.rs, locales/zh.rs
+/// 3. Load messages based on detected locale
+/// 4. Fallback to English if locale not supported
+///
+/// Example future structure:
+/// ```ignore
+/// output/
+/// ├── mod.rs          // Formatter + locale detection
+/// ├── messages.rs     // Message trait + loader
+/// └── locales/
+///     ├── en.rs       // English (default)
+///     └── zh.rs       // Simplified Chinese
+/// ```
+pub mod messages {
+    // ==================== reload/rescan ====================
+    pub const RELOADING: &str = "Reloading...";
+    pub const RESCANNING: &str = "Rescanning...";
+    pub const WAITING: &str = "Waiting...";
+    pub const SCAN_HINT_LINE1: &str = "(daemon not responding, large wallpaper directory may take longer to scan)";
+    pub const SCAN_HINT_LINE2: &str = "(press Ctrl+C to exit waiting, scan continues in background)";
+    pub const TIMEOUT_WARNING: &str = "Timeout waiting for scan completion";
+    pub const SCAN_BACKGROUND_HINT: &str = "Scan continues in background, use 'lianwall status' to check";
+    
+    // ==================== status ====================
+    pub const DAEMON_RUNNING: &str = "lianwall daemon running";
+    pub const DAEMON_NOT_RUNNING: &str = "Daemon is not running. Start it with: lianwall start";
+    
+    // ==================== common ====================
+    pub const CANCELLED: &str = "Cancelled";
+}
+
+// ============================================================================
+// Terminal Capabilities
+// ============================================================================
 
 /// 终端能力
 #[derive(Debug, Clone, Copy)]
@@ -240,7 +284,11 @@ impl Formatter {
     }
 }
 
-/// 格式化运行时间
+// ============================================================================
+// Formatting Functions
+// ============================================================================
+
+/// Format uptime duration
 pub fn format_uptime(secs: u64) -> String {
     if secs < 60 {
         format!("{}s", secs)
@@ -253,7 +301,30 @@ pub fn format_uptime(secs: u64) -> String {
     }
 }
 
-/// 格式化文件大小 (bytes -> human readable)
+/// Format countdown duration (for next switch)
+pub fn format_countdown(secs: u64) -> String {
+    if secs < 60 {
+        format!("{}s", secs)
+    } else if secs < 3600 {
+        let mins = secs / 60;
+        let s = secs % 60;
+        if s == 0 {
+            format!("{}m", mins)
+        } else {
+            format!("{}m {}s", mins, s)
+        }
+    } else {
+        let hours = secs / 3600;
+        let mins = (secs % 3600) / 60;
+        if mins == 0 {
+            format!("{}h", hours)
+        } else {
+            format!("{}h {}m", hours, mins)
+        }
+    }
+}
+
+/// Format file size (bytes -> human readable)
 #[allow(dead_code)]
 pub fn format_size(bytes: u64) -> String {
     if bytes < 1024 {
@@ -264,6 +335,39 @@ pub fn format_size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else {
         format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
+    }
+}
+
+/// Format VRAM usage
+pub fn format_vram(used_mb: u64, total_mb: u64) -> String {
+    if total_mb == 0 {
+        return "N/A".to_string();
+    }
+    let free_percent = ((total_mb - used_mb) as f64 / total_mb as f64) * 100.0;
+    format!("{}/{} MB ({:.0}% free)", used_mb, total_mb, free_percent)
+}
+
+/// Format VRAM status
+pub fn format_vram_status(degraded: bool) -> &'static str {
+    if degraded { "Degraded" } else { "Normal" }
+}
+
+/// Format wallpaper status indicators
+pub fn format_wallpaper_flags(locked: bool, in_cooldown: bool, is_current: bool) -> String {
+    let mut flags = Vec::new();
+    if is_current {
+        flags.push("*");
+    }
+    if locked {
+        flags.push("L");
+    }
+    if in_cooldown {
+        flags.push("C");
+    }
+    if flags.is_empty() {
+        String::new()
+    } else {
+        format!("[{}]", flags.join(""))
     }
 }
 
