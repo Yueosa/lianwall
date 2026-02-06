@@ -2,11 +2,71 @@
 
 > 发布日期：2026-02-06
 
-## 🎯 概述
+---
 
-本版本通过全面的 TODO 审计和 Socket API 审计，修复了多个核心逻辑问题，完善了 Daemon 的功能。主要改进包括：黄金角算法修复、GPU 降级壁纸切换、启动状态恢复、时间约束过滤、事件订阅过滤、Socket API 完整性修复等。
+## 📊 版本摘要
+
+| 分类 | 数量 |
+|------|------|
+| 🔴 严重 Bug 修复 | 7 |
+| 🟡 功能修复/增强 | 8 |
+| 🟢 代码优化 | 4 |
+| 🆕 新增命令 (CLI) | 3 |
+| 📝 命令输出改进 (CLI) | 8 |
+| ⚠️ 破坏式变更 | 3 |
+
+**严重程度图例**：
+- 🔴 **Critical** - 核心功能失效或数据丢失风险
+- 🟡 **Medium** - 功能不完整或行为不符合预期
+- 🟢 **Minor** - 代码质量、性能优化
 
 ---
+
+## ⚠️ 破坏式变更
+
+升级前请仔细阅读以下变更：
+
+| 变更 | 影响 | 迁移方式 |
+|------|------|----------|
+| 移除 `Request::Restart` | 无法通过 Socket 重启 Daemon | 改用 `Shutdown` + 启动新进程 |
+| `Prev` 行为变更 | 历史栈改为存储路径 | 无需操作，向后兼容 |
+| `ConfigReloaded` → `ConfigChanged` | 事件结构变更 | 订阅客户端需更新事件处理 |
+
+---
+
+## 🎯 概述
+
+本版本通过全面的 TODO 审计和 Socket API 审计，修复了多个核心逻辑问题，完善了 Daemon 和 CLI 的功能。
+
+### 🔴 重点修复
+
+- **Next/Prev 黄金角算法** - 之前完全未使用，现已正确实现
+- **GPU 降级壁纸切换** - 降级时只改模式不换壁纸，现已修复
+- **启动状态恢复** - 启动后不会自动应用壁纸，现已修复
+- **next_switch_secs 模式选择** - 始终返回 Image interval，现已修复
+- **Prev 历史栈** - 空间重建后索引错乱，现改用路径存储
+- **Lock 搜索范围** - 只搜索当前模式，现改为搜索两个空间
+- **SetConfig 配置键** - 只支持 4 个，现扩展到 18 个
+
+### 📑 目录
+
+- [Daemon 改动](#-daemon-改动) - 共 26 项
+  - [第一轮修复（TODO 审计）](#-第一轮修复todo-审计) - #1~8
+  - [第二轮修复（Daemon 逻辑审计）](#-第二轮修复daemon-逻辑审计) - #9~14
+  - [第三轮修复（Socket API 审计）](#-第三轮修复socket-api-审计) - #15~19
+  - [第四轮修复（代码质量审计）](#-第四轮修复代码质量审计) - #20~25
+  - [第五轮修复（Lock 逻辑审计）](#-第五轮修复lock-逻辑审计) - #26
+  - [新增 API](#-新增-api)
+- [CLI 改动](#-cli-改动) - 共 12 项
+  - [代码重构](#-cli-第一阶段代码重构) - CLI-1
+  - [新增命令](#-cli-第二阶段新增命令) - CLI-2~4
+  - [更新命令](#-cli-第三阶段更新现有命令) - CLI-5~12
+- [影响的文件](#-影响的文件daemon)
+- [升级指南](#️-升级指南)
+
+---
+
+# 🖥️ Daemon 改动
 
 ## ✅ 第一轮修复（TODO 审计）
 
@@ -359,6 +419,25 @@ let next_switch_secs = match mode {
 
 ---
 
+### 25. Lock 状态即时持久化 🟡
+
+**问题**：
+- `modify_lock_state()` 只修改内存中的锁定状态
+- `save_weights()` 只在 daemon 关闭时调用一次
+- 如果 daemon 崩溃或被 `kill -9`，锁定状态丢失
+
+**修复**：
+- `modify_lock_state()` 修改后立即调用 `save_weights()` 保存到文件
+- 引入 `export_to_persisted` 和 `save_weights` 到 command.rs
+
+**行为变化**：
+| 场景 | 旧行为 | 新行为 |
+|------|--------|--------|
+| 锁定壁纸后 daemon 崩溃 | 锁定状态丢失 | 锁定状态保留 ✅ |
+| 正常关闭 | 关闭时保存 | 早已保存 ✅ |
+
+---
+
 ## 🆕 新增 API
 
 ### ErrorCode
@@ -450,7 +529,187 @@ pub struct SharedState {
 
 ---
 
-## 📁 影响的文件
+## ✅ 第五轮修复（Lock 逻辑审计）
+
+### 26. Lock/Unlock/ToggleLock 搜索范围修复 🔴
+
+**问题**：
+- `modify_lock_state()` 只搜索当前模式的活跃向量空间
+- 壁纸必须同时满足：1) 属于当前模式 2) 通过时间过滤 才能被找到
+- 用户无法锁定：
+  - 不在当前模式的壁纸（Image 模式下无法锁定 Video 壁纸）
+  - 被时间约束排除的壁纸（夜晚无法锁定只在白天激活的壁纸）
+- 返回错误的 `NotFound` 错误
+
+**修复**：
+- `modify_lock_state()` 同时搜索 `video_space` 和 `image_space`
+- 两个空间都找不到时再返回 `NotFound`
+- 如果壁纸在两个空间都存在（理论上不会，但防御性处理），两边都更新
+
+**行为变化**：
+| 场景 | 旧行为 | 新行为 |
+|------|--------|--------|
+| Video 模式下锁定图片 | `NotFound` 错误 | 正常锁定 |
+| 锁定被时间过滤的壁纸 | `NotFound` 错误 | 正常锁定（如果在空间中） |
+| 跨模式锁定 | 不支持 | 支持 |
+
+---
+
+# 🖥️ CLI 改动
+
+## ✅ CLI 第一阶段：代码重构
+
+### CLI-1. handlers.rs 模块化拆分
+
+**问题**：`handlers.rs` 单文件 726 行，职责混杂，难以维护。
+
+**修复**：拆分为 7 个模块文件：
+
+| 文件 | 内容 |
+|------|------|
+| `handlers/mod.rs` | 公共类型、错误处理、辅助函数、re-exports |
+| `handlers/lifecycle.rs` | `start`, `stop`, `restart` |
+| `handlers/wallpaper.rs` | `next`, `prev`, `switch`, `set`, `mode` |
+| `handlers/lock.rs` | `lock`, `unlock`, `toggle_lock` |
+| `handlers/directory.rs` | `reload`, `rescan` |
+| `handlers/config.rs` | `config show/get/set/reset` |
+| `handlers/query.rs` | `status`, `space`, `time` |
+
+---
+
+## ✅ CLI 第二阶段：新增命令
+
+### CLI-2. 新增 `toggle-lock` 命令
+
+```bash
+lianwall toggle-lock <PATH>
+```
+
+**功能**：切换壁纸锁定状态（已锁定 → 解锁，未锁定 → 锁定）
+
+---
+
+### CLI-3. 新增 `space` 命令
+
+```bash
+lianwall space              # 当前模式的向量空间
+lianwall space --video      # Video 模式空间
+lianwall space --image      # Image 模式空间
+lianwall space --json       # JSON 输出
+```
+
+**功能**：查询向量空间详情（壁纸数量、指针位置、锁定/冷却状态）
+
+---
+
+### CLI-4. 新增 `time` 命令
+
+```bash
+lianwall time               # 时间调度信息
+lianwall time --json        # JSON 输出
+```
+
+**功能**：查询时间调度信息（下次切换倒计时、时间点列表、各时段壁纸统计）
+
+---
+
+## ✅ CLI 第三阶段：更新现有命令
+
+### CLI-5. `subscribe` 支持 ScanProgress 事件
+
+**修改**：事件类型解析添加 `"scan"` / `"progress"` → `ScanProgress`
+
+---
+
+### CLI-6. `status` 输出增强
+
+**新增字段**：
+- `Next Switch:` 下次壁纸切换倒计时
+- `History:` 历史栈深度
+- `VRAM Status:` Normal/Degraded
+
+---
+
+### CLI-7. 壁纸控制命令输出增强
+
+**修改**：`next`, `prev`, `set`, `switch`, `mode` 命令执行后显示新壁纸文件名
+
+```
+# 旧输出
+Switched to next wallpaper
+
+# 新输出
+Now playing: sunset_city.mp4
+```
+
+---
+
+### CLI-8. lock 命令错误处理增强
+
+**修改**：`lock`/`unlock`/`toggle-lock` 命令将 `NotFound` 错误转换为更友好的提示
+
+```
+# 旧输出
+Daemon error [NotFound]: wallpaper not found
+
+# 新输出
+Wallpaper not found in any space: /path/to/wallpaper.mp4
+```
+
+---
+
+### CLI-9. config 命令改进
+
+**修改**：
+
+| 命令 | 改进 |
+|------|------|
+| `config show` | 显示来源 "(from daemon)" 或 "(from file)" |
+| `config get` | 输出格式改为 "key = value" |
+| `config set` | 显示 old → new 变化 |
+| `config reset` | 添加 y/N 确认 + 重置后显示新配置 |
+
+---
+
+### CLI-10. reload/rescan 事件订阅等待
+
+**修改**：
+- 订阅 ConfigChanged + SpaceUpdated (reload) 或 SpaceUpdated (rescan) 事件
+- 发送命令后阻塞等待，显示 "Reloading..." / "Rescanning..."
+- 超时 30 秒，从第 10 秒开始显示提示（可 Ctrl+C 退出等待）
+- 扫描完成后显示壁纸统计
+
+---
+
+### CLI-11. output.rs 消息模块化与 i18n 准备
+
+**修改**：
+- 添加 `output::messages` 模块集中所有用户可见文本
+- 添加格式化函数：`format_countdown()`, `format_vram()`, `format_vram_status()`, `format_wallpaper_flags()`
+- 模块顶部 TODO 注释预留未来 i18n 扩展点
+- 当前版本保持纯英文输出
+
+---
+
+### CLI-12. 统一错误处理
+
+**修改**：
+- 添加 `format_error_code()` 函数将 ErrorCode 转换为用户友好消息
+- 更新 `HandlerError::Display` 使用统一的错误消息格式
+- 所有 DaemonError 输出格式统一为 "Friendly message: detail"
+
+| ErrorCode | 输出消息 |
+|-----------|----------|
+| `NotFound` | "Not found: {detail}" |
+| `EmptySpace` | "No wallpapers available" |
+| `NoHistory` | "History is empty, cannot go back" |
+| `EngineError` | "Engine error: {detail}" |
+| `ConfigError` | "Config error: {detail}" |
+| ... | ... |
+
+---
+
+## 📁 影响的文件（Daemon）
 
 | 文件 | 变更类型 |
 |------|----------|
@@ -465,9 +724,26 @@ pub struct SharedState {
 | `crates/lianwall-daemon/src/scheduler.rs` | 时间点监听、GPU cmd_tx、ConfigChanged 监听 |
 | `crates/lianwall-daemon/src/connection.rs` | 事件过滤、immediate_sync、event_to_response 更新 |
 | `crates/lianwall-daemon/src/handler/query.rs` | VRAM、时间点、可配置键、GetTimeInfo、next_switch_secs 模式选择 |
-| `crates/lianwall-daemon/src/handler/command.rs` | Next/Prev 历史栈、LockAction 抽取、apply_wallpaper 检查、Rescan 改进 |
+| `crates/lianwall-daemon/src/handler/command.rs` | Next/Prev 历史栈、LockAction 抽取、apply_wallpaper 检查、Rescan 改进、Lock 搜索范围修复、Lock 状态即时持久化 |
 | `crates/lianwall-daemon/src/main.rs` | 启动恢复、关闭保存、时间过滤 |
-| `crates/lianwall-cli/src/client.rs` | Next/Prev trigger_hint 传参 |
+
+## 📁 影响的文件（CLI）
+
+| 文件 | 变更类型 |
+|------|----------|
+| `crates/lianwall-cli/src/handlers.rs` | 删除（重构为模块目录） |
+| `crates/lianwall-cli/src/handlers/mod.rs` | 新增 - 公共类型和 re-exports |
+| `crates/lianwall-cli/src/handlers/lifecycle.rs` | 新增 - start/stop/restart |
+| `crates/lianwall-cli/src/handlers/wallpaper.rs` | 新增 - 壁纸控制命令（增强输出） |
+| `crates/lianwall-cli/src/handlers/lock.rs` | 新增 - 锁定命令（含 toggle-lock, 友好错误处理） |
+| `crates/lianwall-cli/src/handlers/directory.rs` | 新增 - reload/rescan（事件订阅等待） |
+| `crates/lianwall-cli/src/handlers/config.rs` | 新增 - 配置命令（改进输出, 确认提示） |
+| `crates/lianwall-cli/src/handlers/query.rs` | 新增 - status/space/time（增强输出） |
+| `crates/lianwall-cli/src/commands.rs` | 添加 Space、Time、ToggleLock 命令 |
+| `crates/lianwall-cli/src/main.rs` | 添加新命令分发 |
+| `crates/lianwall-cli/src/subscribe.rs` | 添加 ScanProgress 事件支持 |
+| `crates/lianwall-cli/src/client.rs` | Next/Prev trigger_hint 传参, set_read_timeout() |
+| `crates/lianwall-cli/src/output.rs` | 新增 messages 模块, format_error_code(), 格式化函数 |
 | `crates/lianwall-core/src/socket/client_legacy.rs` | Next/Prev trigger_hint 传参 |
 | `crates/lianwall-core/src/socket/codec.rs` | 测试更新 |
 
@@ -477,18 +753,19 @@ pub struct SharedState {
 
 ### 从 5.0.0 升级
 
-1. 替换二进制文件
-2. 重启 Daemon：`lianwall restart`
+```bash
+# 1. 替换二进制文件
+# 2. 重启 Daemon
+lianwall restart
+```
 
-### 破坏性变更
-
-- **移除 `Request::Restart`**：需要改为 Shutdown + 启动新进程
-- **Prev 行为变更**：历史栈移至 daemon 层，存储路径而非索引，支持跨模式回退
-- **ConfigReloaded → ConfigChanged**：内部事件结构变更
+> ⚠️ 破坏式变更详情请参阅文档顶部的 [破坏式变更](#️-破坏式变更) 部分
 
 ### JSON 协议兼容性
 
-- `Request::Next` 和 `Request::Prev` 新增可选字段 `trigger_hint`，旧客户端不传此字段仍可正常工作
-- 事件推送格式变化，订阅客户端需要处理新的字段
+| 变更 | 兼容性 |
+|------|--------|
+| `Next/Prev` 新增 `trigger_hint` | ✅ 向后兼容（可选字段） |
+| 事件推送格式变化 | ⚠️ 订阅客户端需更新 |
 
 ---
