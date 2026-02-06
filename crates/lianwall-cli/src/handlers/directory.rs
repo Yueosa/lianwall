@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use lianwall_core::socket::{Event, EventType};
 
 use crate::client::ClientError;
-use crate::output::Formatter;
+use crate::output::{messages, Formatter};
 
 use super::{connect, Result};
 
@@ -36,7 +36,7 @@ pub fn handle_reload(fmt: &Formatter) -> Result<()> {
     client.reload_config()?;
 
     if !fmt.is_json() {
-        eprint!("Reloading...");
+        eprint!("{}...", messages::RELOADING);
         io::stderr().flush().unwrap();
     }
 
@@ -115,7 +115,7 @@ pub fn handle_rescan(fmt: &Formatter) -> Result<()> {
     client.rescan()?;
 
     if !fmt.is_json() {
-        eprint!("Rescanning...");
+        eprint!("{}...", messages::RESCANNING);
         io::stderr().flush().unwrap();
     }
 

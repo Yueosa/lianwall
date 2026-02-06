@@ -32,9 +32,9 @@ use std::env;
 /// ```
 pub mod messages {
     // ==================== reload/rescan ====================
-    pub const RELOADING: &str = "Reloading...";
-    pub const RESCANNING: &str = "Rescanning...";
-    pub const WAITING: &str = "Waiting...";
+    pub const RELOADING: &str = "Reloading";
+    pub const RESCANNING: &str = "Rescanning";
+    pub const WAITING: &str = "Waiting";
     pub const SCAN_HINT_LINE1: &str = "(daemon not responding, large wallpaper directory may take longer to scan)";
     pub const SCAN_HINT_LINE2: &str = "(press Ctrl+C to exit waiting, scan continues in background)";
     pub const TIMEOUT_WARNING: &str = "Timeout waiting for scan completion";
