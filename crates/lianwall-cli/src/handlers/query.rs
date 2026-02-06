@@ -170,3 +170,71 @@ fn truncate_filename(name: &str, max_len: usize) -> String {
         format!("{}...", &name[..max_len - 3])
     }
 }
+
+/// 处理 time 命令
+pub fn handle_time(fmt: &Formatter) -> Result<()> {
+    let mut client = connect()?;
+    let time_info = client.time_info()?;
+
+    if fmt.is_json() {
+        println!("{}", serde_json::to_string_pretty(&time_info).unwrap());
+    } else {
+        print_time_info(fmt, &time_info);
+    }
+
+    Ok(())
+}
+
+fn print_time_info(fmt: &Formatter, info: &lianwall_core::socket::TimeScheduleInfo) {
+    println!("Time Schedule");
+    println!();
+
+    // Current time
+    fmt.print_separator("Current");
+    fmt.print_kv("Time", &info.current_time);
+
+    // Video mode
+    fmt.print_separator("Video Mode");
+    print_mode_schedule(fmt, &info.video_schedule);
+
+    // Image mode
+    fmt.print_separator("Image Mode");
+    print_mode_schedule(fmt, &info.image_schedule);
+
+    // Time points (combined from both modes)
+    let mut all_points: Vec<&String> = info
+        .video_schedule
+        .time_points
+        .iter()
+        .chain(info.image_schedule.time_points.iter())
+        .collect();
+    all_points.sort();
+    all_points.dedup();
+
+    if !all_points.is_empty() {
+        fmt.print_separator("Time Points");
+        for tp in all_points {
+            println!("  {}", tp);
+        }
+    }
+}
+
+fn print_mode_schedule(fmt: &Formatter, schedule: &lianwall_core::socket::ModeSchedule) {
+    fmt.print_kv("Scanned", &schedule.scanned_count.to_string());
+    fmt.print_kv("Active", &schedule.active_count.to_string());
+
+    if let Some(ref next_tp) = schedule.next_time_point {
+        fmt.print_kv("Next Time Point", next_tp);
+    }
+
+    // Show wallpapers with time constraints
+    let constrained: Vec<_> = schedule
+        .wallpaper_segments
+        .iter()
+        .filter(|s| !s.all_day)
+        .collect();
+
+    if !constrained.is_empty() {
+        println!("  Time-constrained wallpapers: {}", constrained.len());
+    }
+}

@@ -56,6 +56,9 @@ pub enum Command {
         image: bool,
     },
 
+    /// Show time schedule information
+    Time,
+
     // === 壁纸控制 ===
     /// Switch to next wallpaper
     Next,

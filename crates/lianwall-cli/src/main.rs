@@ -41,6 +41,7 @@ fn main() {
         // 状态查询
         Command::Status => handlers::handle_status(&fmt),
         Command::Space { video, image } => handlers::handle_space(&fmt, video, image),
+        Command::Time => handlers::handle_time(&fmt),
         // 壁纸控制
         Command::Next => handlers::handle_next(&fmt),
         Command::Prev => handlers::handle_prev(&fmt),
