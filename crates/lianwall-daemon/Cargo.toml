@@ -1,10 +1,10 @@
 [package]
 name = "lianwall-daemon"
-version = "5.0.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
 description = "LianWall wallpaper daemon"
-authors = ["Sakurine"]
-license = "MIT"
 
 [[bin]]
 name = "lianwalld"
