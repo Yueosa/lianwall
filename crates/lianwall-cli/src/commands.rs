@@ -45,6 +45,17 @@ pub enum Command {
     /// Show daemon status
     Status,
 
+    /// Show vector space information
+    Space {
+        /// Show Video mode space
+        #[arg(long, conflicts_with = "image")]
+        video: bool,
+
+        /// Show Image mode space
+        #[arg(long, conflicts_with = "video")]
+        image: bool,
+    },
+
     // === 壁纸控制 ===
     /// Switch to next wallpaper
     Next,
