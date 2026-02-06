@@ -376,6 +376,17 @@ impl Client {
         }
     }
 
+    /// 设置读取超时
+    ///
+    /// # Arguments
+    /// * `timeout` - 超时时间，None 表示无限等待
+    pub fn set_read_timeout(&self, timeout: Option<Duration>) -> Result<(), ClientError> {
+        self.reader
+            .get_ref()
+            .set_read_timeout(timeout)
+            .map_err(ClientError::Io)
+    }
+
     /// 取消订阅
     pub fn unsubscribe(&mut self) -> Result<(), ClientError> {
         self.request(Request::Unsubscribe)?;
