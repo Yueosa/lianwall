@@ -6,13 +6,14 @@
 //! - 管理订阅状态
 //! - 发送响应和事件
 
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use lianwall_core::socket::{Request, Response, ErrorCode};
+use lianwall_core::socket::{Request, Response, ErrorCode, EventType};
 
 use crate::command::CommandMsg;
 use crate::event::{Event, EventBus, SpaceUpdateReason};
@@ -25,8 +26,12 @@ struct ConnectionState {
     id: u64,
     /// 是否已订阅事件
     subscribed: bool,
+    /// 订阅的事件类型集合
+    subscribed_events: HashSet<EventType>,
     /// 事件接收器
     event_rx: Option<broadcast::Receiver<Event>>,
+    /// 是否需要立即同步状态
+    pending_sync: bool,
 }
 
 /// 处理单个连接
@@ -44,7 +49,9 @@ pub async fn handle(
     let mut conn_state = ConnectionState {
         id,
         subscribed: false,
+        subscribed_events: HashSet::new(),
         event_rx: None,
+        pending_sync: false,
     };
     
     loop {
@@ -67,6 +74,13 @@ pub async fn handle(
                                     &mut conn_state,
                                 ).await {
                                     send_response(&mut writer, &response).await?;
+                                    
+                                    // 处理 immediate_sync：发送当前状态
+                                    if conn_state.pending_sync {
+                                        conn_state.pending_sync = false;
+                                        let status = handler::handle_query(&state, Request::GetStatus).await;
+                                        send_response(&mut writer, &status).await?;
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -80,8 +94,12 @@ pub async fn handle(
                     result = event_rx.recv() => {
                         match result {
                             Ok(event) => {
-                                if let Some(response) = event_to_response(&event) {
-                                    send_response(&mut writer, &response).await?;
+                                // 检查事件是否在订阅列表中
+                                let event_type = event_to_type(&event);
+                                if conn_state.subscribed_events.contains(&event_type) {
+                                    if let Some(response) = event_to_response(&event) {
+                                        send_response(&mut writer, &response).await?;
+                                    }
                                 }
                             }
                             Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -107,6 +125,13 @@ pub async fn handle(
                         &mut conn_state,
                     ).await {
                         send_response(&mut writer, &response).await?;
+                        
+                        // 处理 immediate_sync：发送当前状态
+                        if conn_state.pending_sync {
+                            conn_state.pending_sync = false;
+                            let status = handler::handle_query(&state, Request::GetStatus).await;
+                            send_response(&mut writer, &status).await?;
+                        }
                     }
                 }
                 Err(e) => {
@@ -155,12 +180,20 @@ async fn process_request(
         }
         
         // Subscribe: 管理订阅状态
-        Request::Subscribe { .. } => {
+        Request::Subscribe { events, immediate_sync } => {
+            // 展开 All 为所有具体事件类型
+            let expanded_events = EventType::expand(events);
+            conn_state.subscribed_events = expanded_events.iter().cloned().collect();
+            
             conn_state.subscribed = true;
             conn_state.event_rx = Some(event_bus.subscribe());
+            
+            // 保存 immediate_sync 标志，稍后处理
+            conn_state.pending_sync = *immediate_sync;
+            
             Some(Response::Subscribed {
                 session_id: format!("conn-{}", conn_state.id),
-                subscribed_events: vec![lianwall_core::socket::EventType::All],
+                subscribed_events: expanded_events,
             })
         }
         
@@ -216,6 +249,23 @@ fn get_request_timeout(request: &Request) -> Duration {
         
         // Subscribe: 无需长超时
         Request::Subscribe { .. } | Request::Unsubscribe => Duration::from_secs(5),
+    }
+}
+
+/// 将内部事件映射到 EventType（用于订阅过滤）
+fn event_to_type(event: &Event) -> EventType {
+    match event {
+        Event::WallpaperChanged { .. } => EventType::WallpaperChanged,
+        Event::ModeChanged { .. } => EventType::StatusChanged,
+        Event::EngineStateChanged { .. } => EventType::StatusChanged,
+        Event::SpaceUpdated { .. } => EventType::SpaceUpdated,
+        Event::ScanProgress { .. } => EventType::ScanProgress,
+        Event::ConfigReloaded => EventType::ConfigChanged,
+        Event::GpuStateUpdated { .. } => EventType::VramChanged,
+        Event::TimePointReached => EventType::TimePointReached,
+        Event::Error { .. } => EventType::Error,
+        Event::ShuttingDown => EventType::Error,
+        Event::SchedulerTick => EventType::Error, // 内部事件，不会推送
     }
 }
 
