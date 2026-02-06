@@ -13,7 +13,7 @@
 //! 未来期望: 根据实际性能测试结果，可能采用 dashmap 等并发容器
 //! 原因: 需要实际数据支撑优化方向
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -179,6 +179,10 @@ pub struct SharedState {
     /// 时间关键点缓存（用于时间调度）
     pub time_points: RwLock<BTreeSet<TimePoint>>,
     
+    /// 壁纸历史栈（存储路径，用于 Prev 操作）
+    /// 注意：这个历史栈独立于向量空间，Prev 可以播放不在当前空间中的壁纸
+    pub wallpaper_history: RwLock<VecDeque<PathBuf>>,
+    
     /// 启动时间
     start_time: Instant,
     
@@ -217,6 +221,7 @@ impl SharedState {
             gpu_state: RwLock::new(None),
             gpu_snapshot: RwLock::new(GpuSnapshot::empty()),
             time_points: RwLock::new(BTreeSet::new()),
+            wallpaper_history: RwLock::new(VecDeque::new()),
             start_time: Instant::now(),
             shutdown_tx,
         });

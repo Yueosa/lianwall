@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger};
 use lianwall_core::config::WallMode;
-use lianwall_core::algorithm::{select_next, select_previous};
+use lianwall_core::algorithm::select_next;
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
 use crate::state::SharedState;
@@ -59,11 +59,25 @@ pub async fn handle_command(
     }
 }
 
+/// 历史栈最大长度
+const MAX_HISTORY_SIZE: usize = 100;
+
 /// 切换到下一张壁纸
 ///
 /// 使用黄金角算法选择下一张壁纸，并将当前壁纸压入历史栈
 async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
     let mode = *state.engine.mode.read().await;
+    
+    // 将当前壁纸压入 daemon 层历史栈（用于 Prev）
+    let current_path = state.engine.current.read().await.clone();
+    if let Some(ref path) = current_path {
+        let mut history = state.wallpaper_history.write().await;
+        history.push_back(path.clone());
+        // 限制历史栈大小
+        while history.len() > MAX_HISTORY_SIZE {
+            history.pop_front();
+        }
+    }
     
     let path = match mode {
         WallMode::Video => {
@@ -98,33 +112,37 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: Wa
 
 /// 切换到上一张壁纸
 ///
-/// 从历史栈中弹出上一张壁纸，实现真正的回退
+/// 从 daemon 层历史栈中弹出上一张壁纸路径，直接播放
+/// 注意：Prev 不依赖向量空间，可以播放不在当前空间中的壁纸
 async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
-    let mode = *state.engine.mode.read().await;
-    
-    let path = match mode {
-        WallMode::Video => {
-            let mut space = state.video_space.write().await;
-            match select_previous(&mut space) {
-                Some(output) => space.items[output.index].path.clone(),
-                None => return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history"),
-            }
-        }
-        WallMode::Image => {
-            let mut space = state.image_space.write().await;
-            match select_previous(&mut space) {
-                Some(output) => space.items[output.index].path.clone(),
-                None => return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history"),
-            }
+    // 从 daemon 层历史栈弹出
+    let path = {
+        let mut history = state.wallpaper_history.write().await;
+        match history.pop_back() {
+            Some(p) => p,
+            None => return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history"),
         }
     };
     
-    // 应用壁纸
+    // 检测壁纸类型决定模式
+    let ext = path.extension()
+        .and_then(|e| e.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+    
+    let mode = if matches!(ext.as_str(), "mp4" | "webm" | "mkv" | "avi" | "mov" | "gif") {
+        WallMode::Video
+    } else {
+        WallMode::Image
+    };
+    
+    // 应用壁纸（如果文件不存在，apply_wallpaper 会返回错误）
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
         return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
     }
     
-    // 更新当前壁纸
+    // 更新模式和当前壁纸
+    *state.engine.mode.write().await = mode;
     *state.engine.current.write().await = Some(path.clone());
     
     // 发布事件
@@ -711,22 +729,14 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
             false
         };
         
-        if !current_valid {
-            tracing::warn!("Current wallpaper no longer in space after rescan, will select new one");
-            // 发布错误事件通知客户端
-            event_bus.publish(Event::Error {
-                message: "Current wallpaper removed from space after rescan, auto-selecting new wallpaper".to_string(),
-            });
-            // 注意：这里不能直接调用 handle_next，因为我们在 spawn 内部
-            // 正确做法是清除 current_index，让 scheduler 在下次 tick 时选择新壁纸
-            // 或者通过发送内部命令来触发
-            let space = if current_mode == WallMode::Video {
-                &state.video_space
-            } else {
-                &state.image_space
-            };
-            space.write().await.current_index = None;
-            *state.engine.current.write().await = None;
+        if !current_valid && current_path.is_some() {
+            // 当前壁纸不在新空间中，但不清除 engine.current
+            // 这样屏幕会继续显示旧壁纸，等待下次 interval 或用户手动 next
+            tracing::warn!(
+                "Current wallpaper {:?} no longer in space after rescan, will switch on next interval",
+                current_path
+            );
+            // current_index 在 rebuild_space 中已经是 None 了（因为找不到该路径）
         }
         
         let video_count = state.video_space.read().await.len();
