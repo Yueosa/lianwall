@@ -119,17 +119,19 @@ pub async fn run(
             // 监听事件
             result = event_rx.recv() => {
                 match result {
-                    Ok(Event::ConfigReloaded) => {
-                        // 配置重载，更新间隔
-                        let config = state.get_config().await;
-                        let mode = *state.engine.mode.read().await;
-                        let new_interval = get_interval_for_mode(&config, mode);
-                        
-                        if new_interval != current_interval {
-                            current_interval = new_interval;
-                            timer = interval(current_interval);
-                            _next_switch = Instant::now() + current_interval;
-                            tracing::info!("Scheduler interval updated to {:?} (config reloaded)", current_interval);
+                    Ok(Event::ConfigChanged { key, .. }) => {
+                        // 配置变更，如果是 interval 相关的键或整体重载，更新间隔
+                        if key == "all" || key.ends_with(".interval") {
+                            let config = state.get_config().await;
+                            let mode = *state.engine.mode.read().await;
+                            let new_interval = get_interval_for_mode(&config, mode);
+                            
+                            if new_interval != current_interval {
+                                current_interval = new_interval;
+                                timer = interval(current_interval);
+                                _next_switch = Instant::now() + current_interval;
+                                tracing::info!("Scheduler interval updated to {:?} (config changed: {})", current_interval, key);
+                            }
                         }
                     }
                     Ok(Event::ModeChanged { to, .. }) => {

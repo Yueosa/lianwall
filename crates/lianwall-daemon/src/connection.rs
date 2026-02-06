@@ -260,7 +260,7 @@ fn event_to_type(event: &Event) -> EventType {
         Event::EngineStateChanged { .. } => EventType::StatusChanged,
         Event::SpaceUpdated { .. } => EventType::SpaceUpdated,
         Event::ScanProgress { .. } => EventType::ScanProgress,
-        Event::ConfigReloaded => EventType::ConfigChanged,
+        Event::ConfigChanged { .. } => EventType::ConfigChanged,
         Event::GpuStateUpdated { .. } => EventType::VramChanged,
         Event::TimePointReached { .. } => EventType::TimePointReached,
         Event::Error { .. } => EventType::Error,
@@ -315,11 +315,11 @@ fn event_to_response(event: &Event) -> Option<Response> {
                 completed: false,
             }))
         }
-        Event::ConfigReloaded => {
+        Event::ConfigChanged { key, old_value, new_value } => {
             Some(Response::Event(SocketEvent::ConfigChanged {
-                key: "all".to_string(),
-                old_value: serde_json::Value::Null,
-                new_value: serde_json::Value::Null,
+                key: key.clone(),
+                old_value: old_value.clone(),
+                new_value: new_value.clone(),
             }))
         }
         Event::EngineStateChanged { swww_running, mpvpaper_running } => {

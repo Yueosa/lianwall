@@ -351,14 +351,49 @@ async fn handle_toggle_lock(
     Response::ok()
 }
 
+/// 获取配置键的当前值（用于事件通知）
+fn get_config_value(config: &lianwall_core::config::Config, key: &str) -> serde_json::Value {
+    use serde_json::json;
+    
+    match key {
+        // paths
+        "paths.mode" => json!(format!("{:?}", config.paths.mode)),
+        "paths.video_dir" => json!(config.paths.video_dir.display().to_string()),
+        "paths.image_dir" => json!(config.paths.image_dir.display().to_string()),
+        // video_engine
+        "video_engine.interval" => json!(config.video_engine.interval),
+        "video_engine.display" => json!(&config.video_engine.display),
+        "video_engine.mpvpaper_args" => json!(&config.video_engine.mpvpaper_args),
+        "video_engine.mpv_args" => json!(&config.video_engine.mpv_args),
+        // image_engine
+        "image_engine.interval" => json!(config.image_engine.interval),
+        "image_engine.outputs" => json!(&config.image_engine.outputs),
+        "image_engine.swww_args" => json!(&config.image_engine.swww_args),
+        // vram
+        "vram.enabled" => json!(config.vram.enabled),
+        "vram.threshold_percent" => json!(config.vram.threshold_percent),
+        "vram.recovery_percent" => json!(config.vram.recovery_percent),
+        "vram.check_interval" => json!(config.vram.check_interval),
+        "vram.cooldown_seconds" => json!(config.vram.cooldown_seconds),
+        // daemon
+        "daemon.socket_path" => json!(config.daemon.socket_path.display().to_string()),
+        "daemon.pid_path" => json!(config.daemon.pid_path.display().to_string()),
+        "daemon.log_level" => json!(&config.daemon.log_level),
+        _ => serde_json::Value::Null,
+    }
+}
+
 /// 设置配置
 async fn handle_set_config(
     state: &Arc<SharedState>,
-    _event_bus: &EventBus,
+    event_bus: &EventBus,
     key: String,
     value: serde_json::Value,
 ) -> Response {
     let mut config = state.config.write().await;
+    
+    // 先获取旧值
+    let old_value = get_config_value(&config, &key);
     
     match key.as_str() {
         // ==================== paths ====================
@@ -559,6 +594,13 @@ async fn handle_set_config(
         return Response::error(ErrorCode::ConfigError, format!("Failed to save config: {}", e));
     }
     
+    // 发布配置变更事件
+    event_bus.publish(Event::ConfigChanged {
+        key: key.clone(),
+        old_value,
+        new_value: value,
+    });
+    
     tracing::info!("Config key '{}' updated and saved", key);
     Response::ok()
 }
@@ -570,7 +612,12 @@ async fn handle_reload_config(state: &Arc<SharedState>, event_bus: &EventBus) ->
     }) {
         Ok(result) => {
             *state.config.write().await = result.config;
-            event_bus.publish(Event::ConfigReloaded);
+            // 整体重载时 key 为 "all"，old/new 为 null
+            event_bus.publish(Event::ConfigChanged {
+                key: "all".to_string(),
+                old_value: serde_json::Value::Null,
+                new_value: serde_json::Value::Null,
+            });
             Response::ok()
         }
         Err(e) => Response::error(ErrorCode::ConfigError, format!("Failed to reload config: {}", e)),

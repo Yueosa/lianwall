@@ -47,8 +47,15 @@ pub enum Event {
         current_dir: PathBuf,
     },
     
-    /// 配置已重载
-    ConfigReloaded,
+    /// 配置已变更
+    ConfigChanged {
+        /// 配置键（"all" 表示整体重载）
+        key: String,
+        /// 旧值（重载时为 null）
+        old_value: serde_json::Value,
+        /// 新值（重载时为 null）
+        new_value: serde_json::Value,
+    },
     
     /// 引擎状态变更
     EngineStateChanged {
@@ -144,10 +151,14 @@ mod tests {
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
         
-        bus.publish(Event::ConfigReloaded);
+        bus.publish(Event::ConfigChanged {
+            key: "test".to_string(),
+            old_value: serde_json::Value::Null,
+            new_value: serde_json::Value::Null,
+        });
         
         match rx.recv().await {
-            Ok(Event::ConfigReloaded) => {}
+            Ok(Event::ConfigChanged { .. }) => {}
             other => panic!("Unexpected event: {:?}", other),
         }
     }
@@ -160,11 +171,15 @@ mod tests {
         
         assert_eq!(bus.subscriber_count(), 2);
         
-        bus.publish(Event::ConfigReloaded);
+        bus.publish(Event::ConfigChanged {
+            key: "test".to_string(),
+            old_value: serde_json::Value::Null,
+            new_value: serde_json::Value::Null,
+        });
         
         // 两个订阅者都应收到
-        assert!(matches!(rx1.recv().await, Ok(Event::ConfigReloaded)));
-        assert!(matches!(rx2.recv().await, Ok(Event::ConfigReloaded)));
+        assert!(matches!(rx1.recv().await, Ok(Event::ConfigChanged { .. })));
+        assert!(matches!(rx2.recv().await, Ok(Event::ConfigChanged { .. })));
     }
     
     #[tokio::test]
@@ -172,6 +187,10 @@ mod tests {
         let bus = EventBus::new(16);
         
         // 没有订阅者时发布不应 panic
-        bus.publish(Event::ConfigReloaded);
+        bus.publish(Event::ConfigChanged {
+            key: "test".to_string(),
+            old_value: serde_json::Value::Null,
+            new_value: serde_json::Value::Null,
+        });
     }
 }
