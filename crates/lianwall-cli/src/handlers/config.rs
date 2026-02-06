@@ -38,7 +38,18 @@ fn handle_config_show(fmt: &Formatter) -> Result<()> {
         if fmt.is_json() {
             println!("{}", serde_json::to_string_pretty(&snapshot.value).unwrap());
         } else {
-            println!("{}", serde_json::to_string_pretty(&snapshot.value).unwrap());
+            // 将 JSON 值转换为 Config 后以 TOML 格式输出，与离线行为一致
+            match serde_json::from_value::<lianwall_core::config::Config>(snapshot.value.clone()) {
+                Ok(config) => {
+                    let toml_str = toml::to_string_pretty(&config)
+                        .map_err(|e| HandlerError::Other(format!("Failed to serialize config: {}", e)))?;
+                    println!("{}", toml_str);
+                }
+                Err(_) => {
+                    // 回退：如果反序列化失败，直接输出 JSON
+                    println!("{}", serde_json::to_string_pretty(&snapshot.value).unwrap());
+                }
+            }
         }
         return Ok(());
     }
