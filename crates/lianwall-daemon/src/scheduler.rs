@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep, Instant};
 
-use lianwall_core::socket::Request;
+use lianwall_core::socket::{Request, WallpaperTrigger};
 use lianwall_core::config::WallMode;
 use lianwall_core::wallpaper::TimePoint;
 
@@ -71,7 +71,7 @@ pub async fn run(
                     // 发送 Next 命令到命令队列
                     let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
                     let msg = CommandMsg {
-                        request: Request::Next { trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::Scheduled) },
+                        request: Request::Next { trigger_hint: Some(WallpaperTrigger::Scheduled) },
                         response_tx,
                     };
                     
@@ -152,6 +152,19 @@ pub async fn run(
                     Ok(Event::SpaceUpdated { .. }) => {
                         // 空间更新后（如 Rescan），重新计算时间点
                         time_point_sleep = create_time_point_sleep(&state).await;
+                    }
+                    Ok(Event::WallpaperChanged { trigger, .. }) => {
+                        // 手动切换后重置调度器计时器，从此刻重新计时一个完整 interval
+                        if matches!(trigger,
+                            WallpaperTrigger::ManualNext |
+                            WallpaperTrigger::ManualPrev |
+                            WallpaperTrigger::ManualSet
+                        ) {
+                            timer = interval(current_interval);
+                            timer.tick().await; // 消耗立即触发的首次 tick
+                            state.set_next_switch((Instant::now() + current_interval).into()).await;
+                            tracing::debug!("Timer reset after manual switch ({:?})", trigger);
+                        }
                     }
                     Ok(_) => {
                         // 忽略其他事件
@@ -321,8 +334,8 @@ pub async fn gpu_monitor(
                             // 发送 Next 命令切换到新模式的壁纸
                             let (response_tx, _) = tokio::sync::oneshot::channel();
                             let _ = cmd_tx.send(CommandMsg {
-                                request: lianwall_core::socket::Request::Next {
-                                    trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::VramDowngrade),
+                                request: Request::Next {
+                                    trigger_hint: Some(WallpaperTrigger::VramDowngrade),
                                 },
                                 response_tx,
                             }).await;
@@ -342,8 +355,8 @@ pub async fn gpu_monitor(
                             // 发送 Next 命令切换到新模式的壁纸
                             let (response_tx, _) = tokio::sync::oneshot::channel();
                             let _ = cmd_tx.send(CommandMsg {
-                                request: lianwall_core::socket::Request::Next {
-                                    trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::VramUpgrade),
+                                request: Request::Next {
+                                    trigger_hint: Some(WallpaperTrigger::VramUpgrade),
                                 },
                                 response_tx,
                             }).await;
