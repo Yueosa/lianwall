@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lianwall_core::socket::{Request, Response, ErrorCode};
+use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger};
 use lianwall_core::config::WallMode;
 use lianwall_core::algorithm::{select_next, select_previous};
 
@@ -31,10 +31,16 @@ pub async fn handle_command(
             protocol_version: lianwall_core::socket::PROTOCOL_VERSION,
         },
         
-        Request::Next => handle_next(state, event_bus).await,
-        Request::Prev => handle_prev(state, event_bus).await,
+        Request::Next { trigger_hint } => {
+            let trigger = trigger_hint.unwrap_or(WallpaperTrigger::ManualNext);
+            handle_next(state, event_bus, trigger).await
+        }
+        Request::Prev { trigger_hint } => {
+            let trigger = trigger_hint.unwrap_or(WallpaperTrigger::ManualPrev);
+            handle_prev(state, event_bus, trigger).await
+        }
         
-        Request::SetWallpaper { path } => handle_set_wallpaper(state, event_bus, path).await,
+        Request::SetWallpaper { path } => handle_set_wallpaper(state, event_bus, path, WallpaperTrigger::ManualSet).await,
         Request::SetMode { mode } => handle_set_mode(state, event_bus, mode).await,
         
         Request::Lock { path } => handle_lock(state, event_bus, path).await,
@@ -56,7 +62,7 @@ pub async fn handle_command(
 /// 切换到下一张壁纸
 ///
 /// 使用黄金角算法选择下一张壁纸，并将当前壁纸压入历史栈
-async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
+async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
     let mode = *state.engine.mode.read().await;
     
     let path = match mode {
@@ -85,7 +91,7 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus) -> Response
     *state.engine.current.write().await = Some(path.clone());
     
     // 发布事件
-    event_bus.publish(Event::WallpaperChanged { path, mode });
+    event_bus.publish(Event::WallpaperChanged { path, mode, trigger });
     
     Response::ok()
 }
@@ -93,7 +99,7 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus) -> Response
 /// 切换到上一张壁纸
 ///
 /// 从历史栈中弹出上一张壁纸，实现真正的回退
-async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
+async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
     let mode = *state.engine.mode.read().await;
     
     let path = match mode {
@@ -122,7 +128,7 @@ async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus) -> Response
     *state.engine.current.write().await = Some(path.clone());
     
     // 发布事件
-    event_bus.publish(Event::WallpaperChanged { path, mode });
+    event_bus.publish(Event::WallpaperChanged { path, mode, trigger });
     
     Response::ok()
 }
@@ -132,6 +138,7 @@ async fn handle_set_wallpaper(
     state: &Arc<SharedState>,
     event_bus: &EventBus,
     path: PathBuf,
+    trigger: WallpaperTrigger,
 ) -> Response {
     // 检测壁纸类型
     let ext = path.extension()
@@ -155,7 +162,7 @@ async fn handle_set_wallpaper(
     *state.engine.current.write().await = Some(path.clone());
     
     // 发布事件
-    event_bus.publish(Event::WallpaperChanged { path, mode });
+    event_bus.publish(Event::WallpaperChanged { path, mode, trigger });
     
     Response::ok()
 }

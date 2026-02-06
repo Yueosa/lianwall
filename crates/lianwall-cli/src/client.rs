@@ -224,7 +224,7 @@ impl Client {
     ///
     /// 使用黄金角算法选择下一张壁纸
     pub fn next(&mut self) -> Result<(), ClientError> {
-        self.request(Request::Next)?;
+        self.request(Request::Next { trigger_hint: None })?;
         Ok(())
     }
 
@@ -232,7 +232,7 @@ impl Client {
     ///
     /// 从历史栈弹出上一张壁纸
     pub fn prev(&mut self) -> Result<(), ClientError> {
-        self.request(Request::Prev)?;
+        self.request(Request::Prev { trigger_hint: None })?;
         Ok(())
     }
 

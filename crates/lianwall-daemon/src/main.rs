@@ -234,7 +234,9 @@ async fn main() -> anyhow::Result<()> {
             tracing::info!("No previous wallpaper, selecting new one");
             let (response_tx, _) = tokio::sync::oneshot::channel();
             let _ = cmd_queue.sender().send(command::CommandMsg {
-                request: lianwall_core::socket::Request::Next,
+                request: lianwall_core::socket::Request::Next {
+                    trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::DaemonStart),
+                },
                 response_tx,
             }).await;
         }

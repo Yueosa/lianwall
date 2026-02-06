@@ -115,12 +115,12 @@ impl Client {
 
     /// 切换到下一张壁纸
     pub fn next(&mut self) -> Result<(), SocketError> {
-        self.request_ok(Request::Next)
+        self.request_ok(Request::Next { trigger_hint: None })
     }
 
     /// 切换到上一张壁纸
     pub fn previous(&mut self) -> Result<(), SocketError> {
-        self.request_ok(Request::Previous)
+        self.request_ok(Request::Previous { trigger_hint: None })
     }
 
     /// 指定壁纸

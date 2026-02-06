@@ -76,10 +76,18 @@ pub enum Request {
 
     // ==================== Command (状态修改) ====================
     /// 切换到下一张壁纸
-    Next,
+    Next {
+        /// 触发原因提示（内部使用，客户端不需要传，默认 ManualNext）
+        #[serde(default)]
+        trigger_hint: Option<WallpaperTrigger>,
+    },
 
     /// 切换到上一张壁纸
-    Prev,
+    Prev {
+        /// 触发原因提示（内部使用，客户端不需要传，默认 ManualPrev）
+        #[serde(default)]
+        trigger_hint: Option<WallpaperTrigger>,
+    },
 
     /// 指定壁纸
     SetWallpaper { path: PathBuf },
@@ -136,8 +144,8 @@ impl Request {
             Request::GetTimeInfo => "GetTimeInfo",
             Request::GetConfig { .. } => "GetConfig",
             // Command
-            Request::Next => "Next",
-            Request::Prev => "Prev",
+            Request::Next { .. } => "Next",
+            Request::Prev { .. } => "Prev",
             Request::SetWallpaper { .. } => "SetWallpaper",
             Request::SetMode { .. } => "SetMode",
             Request::Lock { .. } => "Lock",
@@ -169,8 +177,8 @@ impl Request {
     pub fn is_command(&self) -> bool {
         matches!(
             self,
-            Request::Next
-                | Request::Prev
+            Request::Next { .. }
+                | Request::Prev { .. }
                 | Request::SetWallpaper { .. }
                 | Request::SetMode { .. }
                 | Request::Lock { .. }
@@ -901,9 +909,9 @@ mod tests {
     fn test_request_classification() {
         assert!(Request::Ping.is_query());
         assert!(Request::GetStatus.is_query());
-        assert!(!Request::Next.is_query());
+        assert!(!Request::Next { trigger_hint: None }.is_query());
 
-        assert!(Request::Next.is_command());
+        assert!(Request::Next { trigger_hint: None }.is_command());
         assert!(Request::SetMode { mode: WallMode::Video }.is_command());
         assert!(!Request::Ping.is_command());
 

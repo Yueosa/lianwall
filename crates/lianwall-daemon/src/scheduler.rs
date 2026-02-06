@@ -70,7 +70,7 @@ pub async fn run(
                     // 发送 Next 命令到命令队列
                     let (response_tx, _response_rx) = tokio::sync::oneshot::channel();
                     let msg = CommandMsg {
-                        request: Request::Next,
+                        request: Request::Next { trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::Scheduled) },
                         response_tx,
                     };
                     
@@ -316,7 +316,9 @@ pub async fn gpu_monitor(
                             // 发送 Next 命令切换到新模式的壁纸
                             let (response_tx, _) = tokio::sync::oneshot::channel();
                             let _ = cmd_tx.send(CommandMsg {
-                                request: lianwall_core::socket::Request::Next,
+                                request: lianwall_core::socket::Request::Next {
+                                    trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::VramDowngrade),
+                                },
                                 response_tx,
                             }).await;
                         }
@@ -335,7 +337,9 @@ pub async fn gpu_monitor(
                             // 发送 Next 命令切换到新模式的壁纸
                             let (response_tx, _) = tokio::sync::oneshot::channel();
                             let _ = cmd_tx.send(CommandMsg {
-                                request: lianwall_core::socket::Request::Next,
+                                request: lianwall_core::socket::Request::Next {
+                                    trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::VramUpgrade),
+                                },
                                 response_tx,
                             }).await;
                         }

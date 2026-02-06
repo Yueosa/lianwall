@@ -11,6 +11,7 @@ use tokio::sync::broadcast;
 
 use lianwall_core::config::WallMode;
 use lianwall_core::gpu::{VramAction, VramInfo};
+use lianwall_core::socket::WallpaperTrigger;
 
 /// 事件类型
 #[derive(Debug, Clone)]
@@ -19,6 +20,7 @@ pub enum Event {
     WallpaperChanged {
         path: PathBuf,
         mode: WallMode,
+        trigger: WallpaperTrigger,
     },
     
     /// 模式已变更

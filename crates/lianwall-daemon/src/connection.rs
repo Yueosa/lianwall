@@ -240,7 +240,7 @@ fn get_request_timeout(request: &Request) -> Duration {
         Request::GetSpace { .. } | Request::GetTimeInfo => Duration::from_secs(5),
         
         // Command: 根据操作类型
-        Request::Next | Request::Prev | Request::SetWallpaper { .. } => Duration::from_secs(5),
+        Request::Next { .. } | Request::Prev { .. } | Request::SetWallpaper { .. } => Duration::from_secs(5),
         Request::SetMode { .. } => Duration::from_secs(10),
         Request::Lock { .. } | Request::Unlock { .. } | Request::ToggleLock { .. } => Duration::from_secs(2),
         Request::SetConfig { .. } | Request::ReloadConfig => Duration::from_secs(5),
@@ -271,10 +271,10 @@ fn event_to_type(event: &Event) -> EventType {
 
 /// 将内部事件转换为客户端响应
 fn event_to_response(event: &Event) -> Option<Response> {
-    use lianwall_core::socket::{Event as SocketEvent, WallpaperTrigger, SpaceUpdateReason as SocketSpaceUpdateReason, SpaceSummary};
+    use lianwall_core::socket::{Event as SocketEvent, SpaceUpdateReason as SocketSpaceUpdateReason, SpaceSummary};
     
     match event {
-        Event::WallpaperChanged { path, mode } => {
+        Event::WallpaperChanged { path, mode, trigger } => {
             let filename = path.file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
@@ -282,7 +282,7 @@ fn event_to_response(event: &Event) -> Option<Response> {
                 path: path.clone(),
                 filename,
                 mode: *mode,
-                trigger: WallpaperTrigger::Scheduled,
+                trigger: *trigger,
             }))
         }
         Event::ModeChanged { from: _, to } => {

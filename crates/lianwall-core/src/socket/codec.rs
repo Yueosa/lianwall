@@ -114,7 +114,7 @@ mod tests {
     fn test_json_roundtrip() {
         use super::super::protocol::{Request, Response};
 
-        let request = Request::Next;
+        let request = Request::Next { trigger_hint: None };
         let mut buffer = Vec::new();
 
         // 发送
@@ -124,7 +124,7 @@ mod tests {
         let mut cursor = Cursor::new(buffer);
         let received: Request = recv_json(&mut cursor).unwrap();
 
-        assert!(matches!(received, Request::Next));
+        assert!(matches!(received, Request::Next { .. }));
 
         // 测试 Response
         let response = Response::ok();
