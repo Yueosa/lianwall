@@ -354,34 +354,187 @@ async fn handle_set_config(
     let mut config = state.config.write().await;
     
     match key.as_str() {
-        "image_engine.interval" => {
-            if let Some(v) = value.as_u64() {
-                config.image_engine.interval = v;
+        // ==================== paths ====================
+        "paths.mode" => {
+            if let Some(v) = value.as_str() {
+                match v {
+                    "Video" => config.paths.mode = WallMode::Video,
+                    "Image" => config.paths.mode = WallMode::Image,
+                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid mode value, expected 'Video' or 'Image'"),
+                }
             } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid interval value");
-            }
-        }
-        "video_engine.interval" => {
-            if let Some(v) = value.as_u64() {
-                config.video_engine.interval = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid interval value");
+                return Response::error(ErrorCode::InvalidRequest, "Invalid mode value");
             }
         }
         "paths.video_dir" => {
             if let Some(v) = value.as_str() {
-                config.paths.video_dir = PathBuf::from(v);
+                config.paths.video_dir = lianwall_core::config::expand_path(v);
             } else {
                 return Response::error(ErrorCode::InvalidRequest, "Invalid video_dir value");
             }
         }
         "paths.image_dir" => {
             if let Some(v) = value.as_str() {
-                config.paths.image_dir = PathBuf::from(v);
+                config.paths.image_dir = lianwall_core::config::expand_path(v);
             } else {
                 return Response::error(ErrorCode::InvalidRequest, "Invalid image_dir value");
             }
         }
+        
+        // ==================== video_engine ====================
+        "video_engine.interval" => {
+            if let Some(v) = value.as_u64() {
+                if v < 10 || v > 86400 {
+                    return Response::error(ErrorCode::InvalidRequest, "interval must be between 10 and 86400");
+                }
+                config.video_engine.interval = v;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid interval value");
+            }
+        }
+        "video_engine.display" => {
+            if let Some(v) = value.as_str() {
+                config.video_engine.display = v.to_string();
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid display value");
+            }
+        }
+        "video_engine.mpvpaper_args" => {
+            if let Some(arr) = value.as_array() {
+                let args: Result<Vec<String>, _> = arr.iter()
+                    .map(|v| v.as_str().map(|s| s.to_string()).ok_or("array item must be string"))
+                    .collect();
+                match args {
+                    Ok(a) => config.video_engine.mpvpaper_args = a,
+                    Err(e) => return Response::error(ErrorCode::InvalidRequest, e),
+                }
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid mpvpaper_args value, expected array");
+            }
+        }
+        "video_engine.mpv_args" => {
+            if let Some(arr) = value.as_array() {
+                let args: Result<Vec<String>, _> = arr.iter()
+                    .map(|v| v.as_str().map(|s| s.to_string()).ok_or("array item must be string"))
+                    .collect();
+                match args {
+                    Ok(a) => config.video_engine.mpv_args = a,
+                    Err(e) => return Response::error(ErrorCode::InvalidRequest, e),
+                }
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid mpv_args value, expected array");
+            }
+        }
+        
+        // ==================== image_engine ====================
+        "image_engine.interval" => {
+            if let Some(v) = value.as_u64() {
+                if v < 10 || v > 86400 {
+                    return Response::error(ErrorCode::InvalidRequest, "interval must be between 10 and 86400");
+                }
+                config.image_engine.interval = v;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid interval value");
+            }
+        }
+        "image_engine.outputs" => {
+            if let Some(v) = value.as_str() {
+                config.image_engine.outputs = v.to_string();
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid outputs value");
+            }
+        }
+        "image_engine.swww_args" => {
+            if let Some(arr) = value.as_array() {
+                let args: Result<Vec<String>, _> = arr.iter()
+                    .map(|v| v.as_str().map(|s| s.to_string()).ok_or("array item must be string"))
+                    .collect();
+                match args {
+                    Ok(a) => config.image_engine.swww_args = a,
+                    Err(e) => return Response::error(ErrorCode::InvalidRequest, e),
+                }
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid swww_args value, expected array");
+            }
+        }
+        
+        // ==================== vram ====================
+        "vram.enabled" => {
+            if let Some(v) = value.as_bool() {
+                config.vram.enabled = v;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid enabled value, expected boolean");
+            }
+        }
+        "vram.threshold_percent" => {
+            if let Some(v) = value.as_f64() {
+                if v < 5.0 || v > 50.0 {
+                    return Response::error(ErrorCode::InvalidRequest, "threshold_percent must be between 5.0 and 50.0");
+                }
+                config.vram.threshold_percent = v as f32;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid threshold_percent value");
+            }
+        }
+        "vram.recovery_percent" => {
+            if let Some(v) = value.as_f64() {
+                if v < 20.0 || v > 80.0 {
+                    return Response::error(ErrorCode::InvalidRequest, "recovery_percent must be between 20.0 and 80.0");
+                }
+                config.vram.recovery_percent = v as f32;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid recovery_percent value");
+            }
+        }
+        "vram.check_interval" => {
+            if let Some(v) = value.as_u64() {
+                if v < 1 || v > 60 {
+                    return Response::error(ErrorCode::InvalidRequest, "check_interval must be between 1 and 60");
+                }
+                config.vram.check_interval = v;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid check_interval value");
+            }
+        }
+        "vram.cooldown_seconds" => {
+            if let Some(v) = value.as_u64() {
+                if v < 10 || v > 600 {
+                    return Response::error(ErrorCode::InvalidRequest, "cooldown_seconds must be between 10 and 600");
+                }
+                config.vram.cooldown_seconds = v;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid cooldown_seconds value");
+            }
+        }
+        
+        // ==================== daemon ====================
+        "daemon.socket_path" => {
+            if let Some(v) = value.as_str() {
+                config.daemon.socket_path = PathBuf::from(v);
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid socket_path value");
+            }
+        }
+        "daemon.pid_path" => {
+            if let Some(v) = value.as_str() {
+                config.daemon.pid_path = PathBuf::from(v);
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid pid_path value");
+            }
+        }
+        "daemon.log_level" => {
+            if let Some(v) = value.as_str() {
+                match v {
+                    "error" | "warn" | "info" | "debug" | "trace" => {
+                        config.daemon.log_level = v.to_string();
+                    }
+                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid log_level, expected: error/warn/info/debug/trace"),
+                }
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid log_level value");
+            }
+        }
+        
         _ => {
             return Response::error(ErrorCode::InvalidRequest, format!("Unknown config key: {}", key));
         }
