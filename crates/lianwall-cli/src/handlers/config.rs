@@ -2,9 +2,10 @@
 //!
 //! - `config show` - 显示完整配置
 //! - `config get` - 获取指定配置项
-//! - `config set` - 设置配置项
-//! - `config reset` - 重置配置为默认值
+//! - `config set` - 设置配置项（显示 old → new）
+//! - `config reset` - 重置配置为默认值（需确认）
 
+use std::io::{self, Write};
 use std::path::PathBuf;
 
 use lianwall_core::config::WallMode;
@@ -30,10 +31,13 @@ fn handle_config_show(fmt: &Formatter) -> Result<()> {
         let mut client = connect()?;
         let snapshot = client.config(None)?;
 
+        if !fmt.is_json() {
+            fmt.print_info("(from daemon)");
+        }
+
         if fmt.is_json() {
             println!("{}", serde_json::to_string_pretty(&snapshot.value).unwrap());
         } else {
-            // 直接打印 JSON，因为是完整配置
             println!("{}", serde_json::to_string_pretty(&snapshot.value).unwrap());
         }
         return Ok(());
@@ -43,6 +47,10 @@ fn handle_config_show(fmt: &Formatter) -> Result<()> {
     use lianwall_core::config::{read, ConfigReadInput};
 
     let output = read(ConfigReadInput { path: None })?;
+
+    if !fmt.is_json() {
+        fmt.print_info("(from file)");
+    }
 
     if fmt.is_json() {
         println!("{}", serde_json::to_string_pretty(&output.config).unwrap());
@@ -68,7 +76,7 @@ fn handle_config_get(fmt: &Formatter, key: &str) -> Result<()> {
                 serde_json::json!({ "key": key, "value": snapshot.value })
             );
         } else {
-            println!("{}", snapshot.value);
+            println!("{} = {}", key, snapshot.value);
         }
         return Ok(());
     }
@@ -85,7 +93,7 @@ fn handle_config_get(fmt: &Formatter, key: &str) -> Result<()> {
     if fmt.is_json() {
         println!("{}", serde_json::json!({ "key": key, "value": value }));
     } else {
-        println!("{}", value);
+        println!("{} = {}", key, value);
     }
 
     Ok(())
@@ -96,11 +104,27 @@ fn handle_config_set(fmt: &Formatter, key: &str, value: &str) -> Result<()> {
     if is_daemon_running() {
         let mut client = connect()?;
 
+        // 先获取旧值
+        let old_snapshot = client.config(Some(key.to_string()))?;
+        let old_value = old_snapshot.value;
+
         // 尝试解析为 JSON 值
         let json_value: serde_json::Value = parse_config_value(value);
 
-        client.set_config(key.to_string(), json_value)?;
-        fmt.print_success(&format!("Set {} = {}", key, value));
+        client.set_config(key.to_string(), json_value.clone())?;
+
+        if fmt.is_json() {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "key": key,
+                    "old_value": old_value,
+                    "new_value": json_value
+                })
+            );
+        } else {
+            fmt.print_success(&format!("{}: {} → {}", key, old_value, json_value));
+        }
         return Ok(());
     }
 
@@ -110,6 +134,10 @@ fn handle_config_set(fmt: &Formatter, key: &str, value: &str) -> Result<()> {
     let output = read(ConfigReadInput { path: None })?;
     let mut config = output.config;
 
+    // 获取旧值
+    let old_value = get_config_value(&config, key)
+        .ok_or_else(|| HandlerError::Other(format!("Unknown config key: {}", key)))?;
+
     set_config_value(&mut config, key, value).map_err(HandlerError::Other)?;
 
     update(ConfigUpdateInput {
@@ -117,14 +145,39 @@ fn handle_config_set(fmt: &Formatter, key: &str, value: &str) -> Result<()> {
         config: config.clone(),
     })?;
 
-    fmt.print_success(&format!("Set {} = {}", key, value));
-    fmt.print_info("Note: Daemon is not running, changes saved to file only");
+    if fmt.is_json() {
+        println!(
+            "{}",
+            serde_json::json!({
+                "key": key,
+                "old_value": old_value,
+                "new_value": value
+            })
+        );
+    } else {
+        fmt.print_success(&format!("{}: {} → {}", key, old_value, value));
+        fmt.print_info("Note: Daemon is not running, changes saved to file only");
+    }
 
     Ok(())
 }
 
 fn handle_config_reset(fmt: &Formatter) -> Result<()> {
-    use lianwall_core::config::{create, delete, ConfigCreateInput, ConfigDeleteInput};
+    use lianwall_core::config::{create, delete, read, ConfigCreateInput, ConfigDeleteInput, ConfigReadInput};
+
+    // 交互确认
+    if !fmt.is_json() {
+        print!("Reset config to default? [y/N] ");
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+
+        if !input.trim().eq_ignore_ascii_case("y") {
+            fmt.print_info("Cancelled");
+            return Ok(());
+        }
+    }
 
     // 删除现有配置
     let _ = delete(ConfigDeleteInput { path: None });
@@ -136,6 +189,20 @@ fn handle_config_reset(fmt: &Formatter) -> Result<()> {
 
     if is_daemon_running() {
         fmt.print_info("Run 'lianwall reload' to apply changes to running daemon");
+    }
+
+    // 显示新配置
+    if !fmt.is_json() {
+        println!();
+    }
+
+    let output = read(ConfigReadInput { path: None })?;
+    if fmt.is_json() {
+        println!("{}", serde_json::to_string_pretty(&output.config).unwrap());
+    } else {
+        let toml_str = toml::to_string_pretty(&output.config)
+            .map_err(|e| HandlerError::Other(format!("Failed to serialize config: {}", e)))?;
+        println!("{}", toml_str);
     }
 
     Ok(())
