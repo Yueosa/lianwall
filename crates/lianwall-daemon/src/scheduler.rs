@@ -194,9 +194,13 @@ async fn should_switch(state: &SharedState, _event_bus: &EventBus) -> bool {
 /// 负责：
 /// 1. 定期查询 VRAM 状态
 /// 2. 调用 check() 做降级/升级决策（包含冷却逻辑）
-/// 3. 根据决策执行模式切换
+/// 3. 根据决策执行模式切换 + 壁纸切换
 /// 4. 更新状态快照供查询使用
-pub async fn gpu_monitor(state: Arc<SharedState>, event_bus: EventBus) {
+pub async fn gpu_monitor(
+    state: Arc<SharedState>,
+    event_bus: EventBus,
+    cmd_tx: mpsc::Sender<CommandMsg>,
+) {
     tracing::info!("GPU monitor started");
     
     let mut shutdown_rx = state.shutdown_receiver();
@@ -246,6 +250,13 @@ pub async fn gpu_monitor(state: Arc<SharedState>, event_bus: EventBus) {
                                 from: WallMode::Video,
                                 to: WallMode::Image,
                             });
+                            
+                            // 发送 Next 命令切换到新模式的壁纸
+                            let (response_tx, _) = tokio::sync::oneshot::channel();
+                            let _ = cmd_tx.send(CommandMsg {
+                                request: lianwall_core::socket::Request::Next,
+                                response_tx,
+                            }).await;
                         }
                     }
                     lianwall_core::gpu::VramAction::Upgrade => {
@@ -258,6 +269,13 @@ pub async fn gpu_monitor(state: Arc<SharedState>, event_bus: EventBus) {
                                 from: WallMode::Image,
                                 to: WallMode::Video,
                             });
+                            
+                            // 发送 Next 命令切换到新模式的壁纸
+                            let (response_tx, _) = tokio::sync::oneshot::channel();
+                            let _ = cmd_tx.send(CommandMsg {
+                                request: lianwall_core::socket::Request::Next,
+                                response_tx,
+                            }).await;
                         }
                     }
                     lianwall_core::gpu::VramAction::Keep => {

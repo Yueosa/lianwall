@@ -145,8 +145,9 @@ async fn main() -> anyhow::Result<()> {
     let gpu_handle = if config.vram.enabled {
         let state_clone = Arc::clone(&state);
         let event_bus_clone = event_bus.clone();
+        let cmd_tx_clone = cmd_queue.sender();
         Some(tokio::spawn(async move {
-            scheduler::gpu_monitor(state_clone, event_bus_clone).await;
+            scheduler::gpu_monitor(state_clone, event_bus_clone, cmd_tx_clone).await;
         }))
     } else {
         None
