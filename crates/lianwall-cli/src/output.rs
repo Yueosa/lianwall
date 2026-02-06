@@ -46,6 +46,22 @@ pub mod messages {
     
     // ==================== common ====================
     pub const CANCELLED: &str = "Cancelled";
+    
+    // ==================== error messages ====================
+    // These correspond to ErrorCode enum from lianwall_core::socket::ErrorCode
+    pub const ERR_NOT_FOUND: &str = "Not found";
+    pub const ERR_INVALID_STATE: &str = "Invalid state";
+    pub const ERR_INVALID_REQUEST: &str = "Invalid request";
+    pub const ERR_ENGINE_ERROR: &str = "Engine error";
+    pub const ERR_CONFIG_ERROR: &str = "Config error";
+    pub const ERR_INTERNAL_ERROR: &str = "Internal error";
+    pub const ERR_EMPTY_SPACE: &str = "No wallpapers available";
+    pub const ERR_NO_HISTORY: &str = "History is empty, cannot go back";
+    pub const ERR_PERMISSION_DENIED: &str = "Permission denied";
+    pub const ERR_TIMEOUT: &str = "Operation timed out";
+    pub const ERR_ALREADY_SUBSCRIBED: &str = "Already subscribed";
+    pub const ERR_NOT_SUBSCRIBED: &str = "Not subscribed";
+    pub const ERR_UNKNOWN: &str = "Unknown error";
 }
 
 // ============================================================================
@@ -368,6 +384,34 @@ pub fn format_wallpaper_flags(locked: bool, in_cooldown: bool, is_current: bool)
         String::new()
     } else {
         format!("[{}]", flags.join(""))
+    }
+}
+
+/// 将 ErrorCode 格式化为用户友好的消息
+///
+/// 返回格式: "Friendly message: detail"
+/// 如果 detail 为空，则只返回 friendly message
+pub fn format_error_code(code: &lianwall_core::socket::ErrorCode, detail: &str) -> String {
+    use lianwall_core::socket::ErrorCode;
+    let prefix = match code {
+        ErrorCode::NotFound => messages::ERR_NOT_FOUND,
+        ErrorCode::InvalidRequest => messages::ERR_INVALID_REQUEST,
+        ErrorCode::EngineError => messages::ERR_ENGINE_ERROR,
+        ErrorCode::ConfigError => messages::ERR_CONFIG_ERROR,
+        ErrorCode::InternalError => messages::ERR_INTERNAL_ERROR,
+        ErrorCode::EmptySpace => messages::ERR_EMPTY_SPACE,
+        ErrorCode::NoHistory => messages::ERR_NO_HISTORY,
+        ErrorCode::PermissionDenied => messages::ERR_PERMISSION_DENIED,
+        ErrorCode::Timeout => messages::ERR_TIMEOUT,
+        ErrorCode::AlreadySubscribed => messages::ERR_ALREADY_SUBSCRIBED,
+        ErrorCode::NotSubscribed => messages::ERR_NOT_SUBSCRIBED,
+        ErrorCode::Unknown => messages::ERR_UNKNOWN,
+    };
+    
+    if detail.is_empty() {
+        prefix.to_string()
+    } else {
+        format!("{}: {}", prefix, detail)
     }
 }
 

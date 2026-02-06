@@ -49,10 +49,17 @@ impl std::fmt::Display for HandlerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::DaemonNotRunning => {
-                write!(f, "Daemon is not running. Start it with: lianwall start")
+                write!(f, "{}", crate::output::messages::DAEMON_NOT_RUNNING)
             }
-            Self::Client(e) => write!(f, "{}", e),
-            Self::Config(e) => write!(f, "Config error: {}", e),
+            Self::Client(e) => {
+                // Use friendly error message for DaemonError
+                if let ClientError::DaemonError { code, message } = e {
+                    write!(f, "{}", crate::output::format_error_code(code, message))
+                } else {
+                    write!(f, "{}", e)
+                }
+            }
+            Self::Config(e) => write!(f, "{}: {}", crate::output::messages::ERR_CONFIG_ERROR, e),
             Self::Other(s) => write!(f, "{}", s),
         }
     }
