@@ -15,6 +15,7 @@ use std::sync::Arc;
 use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger};
 use lianwall_core::config::WallMode;
 use lianwall_core::algorithm::select_next;
+use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
 use crate::state::SharedState;
@@ -276,6 +277,22 @@ async fn modify_lock_state(
     
     if !found_in_video && !found_in_image {
         return Response::error(ErrorCode::NotFound, format!("Wallpaper not found in any space: {:?}", path));
+    }
+    
+    // 立即保存锁定状态到持久化文件
+    {
+        let video_space = state.video_space.read().await;
+        let image_space = state.image_space.read().await;
+        
+        let weights = WeightsFile {
+            version: 1,
+            video: export_to_persisted(&video_space),
+            image: export_to_persisted(&image_space),
+        };
+        
+        if let Err(e) = save_weights(&weights) {
+            tracing::warn!("Failed to save lock state: {}", e);
+        }
     }
     
     // 发布空间更新事件
