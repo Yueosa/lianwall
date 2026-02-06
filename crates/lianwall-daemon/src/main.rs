@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 
 use lianwall_daemon::{command, event::EventBus, scheduler, server, state::SharedState};
-use lianwall_core::wallpaper::{scan_directory_async, build_space};
+use lianwall_core::wallpaper::{scan_directory_async, rebuild_space, load_weights};
 use lianwall_core::config::ConfigReadInput;
 
 #[tokio::main]
@@ -102,17 +102,47 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("Found {} time points", time_points.len());
     state.set_time_points(time_points).await;
 
-    // 构建向量空间
+    // 加载持久化数据
+    let weights = match load_weights() {
+        Ok(w) => {
+            tracing::info!("Loaded weights from cache");
+            Some(w)
+        }
+        Err(e) => {
+            tracing::warn!("Failed to load weights: {}, starting fresh", e);
+            None
+        }
+    };
+
+    // 构建向量空间（恢复历史状态）
     {
         let mut video_space = state.video_space.write().await;
-        *video_space = build_space(video_paths, 0);
-        tracing::info!("Found {} video wallpapers", video_space.items.len());
+        *video_space = rebuild_space(
+            video_paths,
+            None,
+            weights.as_ref().map(|w| &w.video),
+            0,
+        );
+        tracing::info!(
+            "Found {} video wallpapers, current_index: {:?}",
+            video_space.items.len(),
+            video_space.current_index
+        );
     }
 
     {
         let mut image_space = state.image_space.write().await;
-        *image_space = build_space(image_paths, 0);
-        tracing::info!("Found {} image wallpapers", image_space.items.len());
+        *image_space = rebuild_space(
+            image_paths,
+            None,
+            weights.as_ref().map(|w| &w.image),
+            0,
+        );
+        tracing::info!(
+            "Found {} image wallpapers, current_index: {:?}",
+            image_space.items.len(),
+            image_space.current_index
+        );
     }
 
     // 启动各个 Task
@@ -155,6 +185,50 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!("All tasks started, daemon is ready");
 
+    // 应用初始壁纸
+    {
+        let mode = *state.engine.mode.read().await;
+        let has_current = match mode {
+            lianwall_core::config::WallMode::Video => {
+                state.video_space.read().await.current_index.is_some()
+            }
+            lianwall_core::config::WallMode::Image => {
+                state.image_space.read().await.current_index.is_some()
+            }
+        };
+        
+        if has_current {
+            // 恢复上次的壁纸：发送 SetWallpaper 命令
+            let path = match mode {
+                lianwall_core::config::WallMode::Video => {
+                    let space = state.video_space.read().await;
+                    space.current_index.and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
+                }
+                lianwall_core::config::WallMode::Image => {
+                    let space = state.image_space.read().await;
+                    space.current_index.and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
+                }
+            };
+            
+            if let Some(path) = path {
+                tracing::info!("Restoring last wallpaper: {:?}", path);
+                let (response_tx, _) = tokio::sync::oneshot::channel();
+                let _ = cmd_queue.sender().send(command::CommandMsg {
+                    request: lianwall_core::socket::Request::SetWallpaper { path },
+                    response_tx,
+                }).await;
+            }
+        } else {
+            // 没有上次记录，抽一张新的
+            tracing::info!("No previous wallpaper, selecting new one");
+            let (response_tx, _) = tokio::sync::oneshot::channel();
+            let _ = cmd_queue.sender().send(command::CommandMsg {
+                request: lianwall_core::socket::Request::Next,
+                response_tx,
+            }).await;
+        }
+    }
+
     // 等待关闭信号
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
@@ -174,6 +248,26 @@ async fn main() -> anyhow::Result<()> {
 
     // 优雅关闭
     tracing::info!("Shutting down...");
+
+    // 保存状态到持久化文件
+    {
+        use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
+        
+        let video_space = state.video_space.read().await;
+        let image_space = state.image_space.read().await;
+        
+        let weights = WeightsFile {
+            version: 1,
+            video: export_to_persisted(&video_space),
+            image: export_to_persisted(&image_space),
+        };
+        
+        if let Err(e) = save_weights(&weights) {
+            tracing::warn!("Failed to save weights: {}", e);
+        } else {
+            tracing::info!("Saved weights to cache");
+        }
+    }
 
     // 触发关闭（通知所有 task）
     state.trigger_shutdown();

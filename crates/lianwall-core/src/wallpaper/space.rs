@@ -93,6 +93,11 @@ pub fn rebuild_space(
                 item.last_played = old_record.last_played;
             }
         }
+        
+        // 恢复当前壁纸索引
+        if let Some(ref current_path) = p.current_path {
+            space.current_index = space.items.iter().position(|item| &item.path == current_path);
+        }
     }
 
     space
@@ -100,8 +105,14 @@ pub fn rebuild_space(
 
 /// 从 WallpaperSpace 导出为持久化格式
 pub fn export_to_persisted(space: &WallpaperSpace) -> ModeData {
+    // 获取当前壁纸路径
+    let current_path = space.current_index
+        .and_then(|idx| space.items.get(idx))
+        .map(|item| item.path.clone());
+    
     ModeData {
         pointer: space.pointer,
+        current_path,
         items: space
             .items
             .iter()

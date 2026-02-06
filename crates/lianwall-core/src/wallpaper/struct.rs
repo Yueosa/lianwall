@@ -77,6 +77,9 @@ impl Default for WeightsFile {
 pub struct ModeData {
     /// 指针角度
     pub pointer: f64,
+    /// 当前壁纸路径（用于启动时恢复）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_path: Option<PathBuf>,
     /// 壁纸记录列表
     pub items: Vec<PersistedRecord>,
 }
