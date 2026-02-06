@@ -419,11 +419,8 @@ async fn get_time_info(state: &Arc<SharedState>) -> Response {
         .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute))
         .collect();
     
-    // 计算下一个时间点
-    let next_time_point = time_points
-        .iter()
-        .find(|tp| **tp > now)
-        .or_else(|| time_points.first()) // 如果当前已是最后一个点，循环到第一个
+    // 计算下一个时间点（复用 core 库函数）
+    let next_time_point = lianwall_core::wallpaper::next_key_point(&now, &time_points)
         .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
     
     let video_schedule = build_mode_schedule(&video_space, &time_points_vec, &next_time_point, video_scanned);
