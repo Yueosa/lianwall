@@ -15,8 +15,11 @@
 //!
 //! 3. **错误处理**:
 //!    - 未知请求返回 `InvalidRequest` 错误
-//!    - JSON 自动忽略未知字段
-
+//!    - JSON 自动忽略未知字段//!
+//! ## TODO 待改进
+//!
+//! - [ ] `Unsubscribe` 添加可选 `events` 参数支持部分取消订阅
+//! - [ ] `GetStatus` 中的 `next_time_point` 和 `time_points_count` 与 `GetTimeInfo` 功能重复，考虑移除
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
