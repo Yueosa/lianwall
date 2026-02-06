@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 
 use lianwall_daemon::{command, event::EventBus, scheduler, server, state::SharedState};
-use lianwall_core::wallpaper::{scan_directory_async, rebuild_space, load_weights};
+use lianwall_core::wallpaper::{scan_directory_async, rebuild_space, load_weights, filter_active};
 use lianwall_core::config::ConfigReadInput;
 
 #[tokio::main]
@@ -82,7 +82,6 @@ async fn main() -> anyhow::Result<()> {
             vec![]
         }
     };
-    let video_paths: Vec<std::path::PathBuf> = video_wallpapers.iter().map(|w| w.path.clone()).collect();
     
     // 扫描图片壁纸  
     let image_result = scan_directory_async(config.paths.image_dir.clone(), false).await;
@@ -93,14 +92,26 @@ async fn main() -> anyhow::Result<()> {
             vec![]
         }
     };
-    let image_paths: Vec<std::path::PathBuf> = image_wallpapers.iter().map(|w| w.path.clone()).collect();
 
-    // 收集时间点
-    let mut all_wallpapers = video_wallpapers;
-    all_wallpapers.extend(image_wallpapers);
-    let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers);
+    // 收集时间点（在过滤前收集，保留所有时间点信息）
+    let mut all_wallpapers_for_time = video_wallpapers.clone();
+    all_wallpapers_for_time.extend(image_wallpapers.clone());
+    let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers_for_time);
     tracing::info!("Found {} time points", time_points.len());
     state.set_time_points(time_points).await;
+
+    // 根据当前时间过滤活跃壁纸
+    let active_videos = filter_active(&video_wallpapers);
+    let active_images = filter_active(&image_wallpapers);
+    
+    let video_paths: Vec<std::path::PathBuf> = active_videos.iter().map(|w| w.path.clone()).collect();
+    let image_paths: Vec<std::path::PathBuf> = active_images.iter().map(|w| w.path.clone()).collect();
+    
+    tracing::info!(
+        "Time filter: {}/{} videos active, {}/{} images active",
+        active_videos.len(), video_wallpapers.len(),
+        active_images.len(), image_wallpapers.len()
+    );
 
     // 加载持久化数据
     let weights = match load_weights() {
