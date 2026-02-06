@@ -233,50 +233,65 @@ enum LockAction {
 }
 
 /// 修改壁纸锁定状态的统一处理函数
+///
+/// 同时搜索 video_space 和 image_space，允许跨模式锁定
+/// 如果壁纸不在任何空间中，返回 NotFound 错误
 async fn modify_lock_state(
     state: &Arc<SharedState>,
     event_bus: &EventBus,
     path: PathBuf,
     action: LockAction,
 ) -> Response {
-    let mode = *state.engine.mode.read().await;
+    let current_mode = *state.engine.mode.read().await;
     
-    // 根据模式获取对应的空间并修改锁定状态
-    let found = match mode {
-        WallMode::Video => {
-            let mut space = state.video_space.write().await;
-            if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                match action {
-                    LockAction::Lock => item.locked = true,
-                    LockAction::Unlock => item.locked = false,
-                    LockAction::Toggle => item.locked = !item.locked,
-                }
-                true
-            } else {
-                false
-            }
-        }
-        WallMode::Image => {
-            let mut space = state.image_space.write().await;
-            if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
-                match action {
-                    LockAction::Lock => item.locked = true,
-                    LockAction::Unlock => item.locked = false,
-                    LockAction::Toggle => item.locked = !item.locked,
-                }
-                true
-            } else {
-                false
-            }
-        }
-    };
+    // 同时在两个空间中搜索并修改锁定状态
+    let mut found_in_video = false;
+    let mut found_in_image = false;
     
-    if !found {
-        return Response::error(ErrorCode::NotFound, format!("Wallpaper not found: {:?}", path));
+    // 搜索 video_space
+    {
+        let mut space = state.video_space.write().await;
+        if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
+            match action {
+                LockAction::Lock => item.locked = true,
+                LockAction::Unlock => item.locked = false,
+                LockAction::Toggle => item.locked = !item.locked,
+            }
+            found_in_video = true;
+        }
+    }
+    
+    // 搜索 image_space
+    {
+        let mut space = state.image_space.write().await;
+        if let Some(item) = space.items.iter_mut().find(|w| w.path == path) {
+            match action {
+                LockAction::Lock => item.locked = true,
+                LockAction::Unlock => item.locked = false,
+                LockAction::Toggle => item.locked = !item.locked,
+            }
+            found_in_image = true;
+        }
+    }
+    
+    if !found_in_video && !found_in_image {
+        return Response::error(ErrorCode::NotFound, format!("Wallpaper not found in any space: {:?}", path));
     }
     
     // 发布空间更新事件
-    publish_space_updated_event(state, event_bus, mode, SpaceUpdateReason::LockChange).await;
+    // 如果找到的空间与当前模式一致，发布当前模式的事件
+    // 否则发布找到壁纸的空间的事件
+    let event_mode = if found_in_video && current_mode == WallMode::Video {
+        WallMode::Video
+    } else if found_in_image && current_mode == WallMode::Image {
+        WallMode::Image
+    } else if found_in_video {
+        WallMode::Video
+    } else {
+        WallMode::Image
+    };
+    
+    publish_space_updated_event(state, event_bus, event_mode, SpaceUpdateReason::LockChange).await;
     
     Response::ok()
 }
