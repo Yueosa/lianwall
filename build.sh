@@ -3,14 +3,14 @@
 # 做了这些事
 # 1. 从 Cargo.toml 读取版本号
 # 2. cargo build --release 编译两个包
-# 3. 复制产物到 build/5.0.0/ 目录
+# 3. 复制产物到 build/5.1.1/ 目录
 # 4. 生成 sha256 校验和
 # ===========================================================
 # 产出文件：
-# build/5.0.0/
-# ├── lianwall_5.0.0_linux_x86_64      # CLI
-# ├── lianwalld_5.0.0_linux_x86_64     # Daemon  
-# └── checksums_5.0.0.txt              # 校验和
+# build/5.1.1/
+# ├── lianwall_5.1.1_linux_x86_64      # CLI
+# ├── lianwalld_5.1.1_linux_x86_64     # Daemon  
+# └── checksums_5.1.1.txt              # 校验和
 # ===========================================================
 
 set -e
@@ -33,16 +33,14 @@ error()   { echo -e "${RED}❌ $*${NC}"; }
 # =========================
 # 📦 版本信息
 # =========================
-# 从 workspace Cargo.toml 读取版本（daemon 版本）
-DAEMON_VERSION=$(grep -A5 '\[workspace.package\]' Cargo.toml | grep '^version' | head -1 | sed -E 's/version = "(.*)"/\1/')
+# 从 workspace Cargo.toml 读取版本（所有包共享同一版本）
+VERSION=$(grep '^version' Cargo.toml | grep -v '^\[' | head -1 | sed -E 's/version = "(.*)"/\1/')
 
-# 如果失败，从 daemon 的 Cargo.toml 读取
-if [[ -z "$DAEMON_VERSION" ]]; then
-    DAEMON_VERSION=$(grep '^version' crates/lianwall-daemon/Cargo.toml | head -1 | sed -E 's/version = "(.*)"/\1/')
+# 验证版本号是否成功读取
+if [[ -z "$VERSION" ]]; then
+    error "Failed to read version from Cargo.toml"
+    exit 1
 fi
-
-# CLI 和 daemon 使用相同版本（5.0.0）
-VERSION="${DAEMON_VERSION:-5.0.0}"
 
 info "Building LianWall v${VERSION}"
 echo ""
