@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+use super::time_range::TimeRange;
+
 /// 单个壁纸记录（运行时）
 #[derive(Debug, Clone)]
 pub struct WallpaperRecord {
@@ -15,6 +17,8 @@ pub struct WallpaperRecord {
     pub locked: bool,
     /// 上次播放的 Unix 时间戳
     pub last_played: Option<u64>,
+    /// 时间约束列表（空表示无时间限制，全天可用）
+    pub time_constraints: Vec<TimeRange>,
 }
 
 /// 向量空间（运行时）

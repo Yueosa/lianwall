@@ -138,8 +138,13 @@ mod tests {
     use crate::wallpaper::build_space;
     use std::path::PathBuf;
 
-    fn make_test_paths(n: usize) -> Vec<PathBuf> {
-        (0..n).map(|i| PathBuf::from(format!("/test/{}.jpg", i))).collect()
+    use crate::wallpaper::ScannedWallpaper;
+
+    fn make_test_wallpapers(n: usize) -> Vec<ScannedWallpaper> {
+        (0..n).map(|i| ScannedWallpaper {
+            path: PathBuf::from(format!("/test/{}.jpg", i)),
+            time_constraints: vec![],
+        }).collect()
     }
 
     #[test]
@@ -150,7 +155,7 @@ mod tests {
 
     #[test]
     fn test_select_single() {
-        let mut space = build_space(make_test_paths(1), 42);
+        let mut space = build_space(make_test_wallpapers(1), 42);
         
         let result = select_next(&mut space);
         assert!(result.is_some());
@@ -159,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_select_updates_pointer() {
-        let mut space = build_space(make_test_paths(5), 42);
+        let mut space = build_space(make_test_wallpapers(5), 42);
         let old_pointer = space.pointer;
         
         select_next(&mut space);
@@ -170,7 +175,7 @@ mod tests {
 
     #[test]
     fn test_cooldown_prevents_repeat() {
-        let mut space = build_space(make_test_paths(10), 42);
+        let mut space = build_space(make_test_wallpapers(10), 42);
         
         let mut selected: Vec<usize> = Vec::new();
         for _ in 0..20 {
@@ -189,7 +194,7 @@ mod tests {
 
     #[test]
     fn test_locked_skipped() {
-        let mut space = build_space(make_test_paths(3), 42);
+        let mut space = build_space(make_test_wallpapers(3), 42);
         
         // 锁定所有但一个
         space.items[0].locked = true;
@@ -202,7 +207,7 @@ mod tests {
 
     #[test]
     fn test_all_locked_returns_none() {
-        let mut space = build_space(make_test_paths(3), 42);
+        let mut space = build_space(make_test_wallpapers(3), 42);
         
         for item in &mut space.items {
             item.locked = true;

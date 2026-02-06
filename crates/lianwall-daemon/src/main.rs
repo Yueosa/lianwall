@@ -104,13 +104,14 @@ async fn main() -> anyhow::Result<()> {
     let active_videos = filter_active(&video_wallpapers);
     let active_images = filter_active(&image_wallpapers);
     
-    let video_paths: Vec<std::path::PathBuf> = active_videos.iter().map(|w| w.path.clone()).collect();
-    let image_paths: Vec<std::path::PathBuf> = active_images.iter().map(|w| w.path.clone()).collect();
+    // 克隆活跃壁纸用于构建空间（保留时间约束信息）
+    let active_videos_owned: Vec<_> = active_videos.into_iter().cloned().collect();
+    let active_images_owned: Vec<_> = active_images.into_iter().cloned().collect();
     
     tracing::info!(
         "Time filter: {}/{} videos active, {}/{} images active",
-        active_videos.len(), video_wallpapers.len(),
-        active_images.len(), image_wallpapers.len()
+        active_videos_owned.len(), video_wallpapers.len(),
+        active_images_owned.len(), image_wallpapers.len()
     );
 
     // 加载持久化数据
@@ -129,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let mut video_space = state.video_space.write().await;
         *video_space = rebuild_space(
-            video_paths,
+            active_videos_owned,
             None,
             weights.as_ref().map(|w| &w.video),
             0,
@@ -144,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
     {
         let mut image_space = state.image_space.write().await;
         *image_space = rebuild_space(
-            image_paths,
+            active_images_owned,
             None,
             weights.as_ref().map(|w| &w.image),
             0,

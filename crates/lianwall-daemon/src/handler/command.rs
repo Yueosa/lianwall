@@ -673,10 +673,10 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
         
         // 更新视频空间（保留历史状态）
         {
-            let video_paths: Vec<_> = active_videos.iter().map(|w| w.path.clone()).collect();
+            let active_videos_owned: Vec<_> = active_videos.into_iter().cloned().collect();
             let mut video_space = state.video_space.write().await;
             *video_space = lianwall_core::wallpaper::rebuild_space(
-                video_paths,
+                active_videos_owned,
                 Some(&video_space),
                 None,
                 0,
@@ -685,10 +685,10 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
         
         // 更新图片空间（保留历史状态）
         {
-            let image_paths: Vec<_> = active_images.iter().map(|w| w.path.clone()).collect();
+            let active_images_owned: Vec<_> = active_images.into_iter().cloned().collect();
             let mut image_space = state.image_space.write().await;
             *image_space = lianwall_core::wallpaper::rebuild_space(
-                image_paths,
+                active_images_owned,
                 Some(&image_space),
                 None,
                 0,

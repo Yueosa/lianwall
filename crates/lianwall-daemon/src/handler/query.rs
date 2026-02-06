@@ -6,9 +6,11 @@ use std::sync::Arc;
 
 use lianwall_core::socket::{
     Request, Response, StatusInfo, ConfigSnapshot, ConfigKeyInfo, ConfigConstraints,
-    SpaceSnapshot, WallpaperPoint, TimeScheduleInfo, ModeSchedule, ErrorCode, PROTOCOL_VERSION,
+    SpaceSnapshot, WallpaperPoint, TimeScheduleInfo, ModeSchedule, WallpaperTimeSegment,
+    TimeRangeInfo, ErrorCode, PROTOCOL_VERSION,
 };
 use lianwall_core::config::WallMode;
+use lianwall_core::wallpaper::{TimePoint, WallpaperSpace};
 
 use crate::state::SharedState;
 
@@ -396,29 +398,77 @@ async fn get_space(state: &Arc<SharedState>, mode: Option<WallMode>) -> Response
 async fn get_time_info(state: &Arc<SharedState>) -> Response {
     let video_space = state.get_video_space().await;
     let image_space = state.get_image_space().await;
+    let time_points = state.get_time_points().await;
     
     let current_time = chrono::Local::now().format("%H:%M").to_string();
+    let now = TimePoint::now();
     
-    // 创建空的调度信息
-    let video_schedule = ModeSchedule {
-        scanned_count: video_space.items.len(),
-        active_count: video_space.items.iter().filter(|w| !w.locked).count(),
-        time_points: vec![],
-        next_time_point: None,
-        wallpaper_segments: vec![],
-    };
+    // 构建时间点列表（排序后的字符串）
+    let time_points_vec: Vec<String> = time_points
+        .iter()
+        .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute))
+        .collect();
     
-    let image_schedule = ModeSchedule {
-        scanned_count: image_space.items.len(),
-        active_count: image_space.items.iter().filter(|w| !w.locked).count(),
-        time_points: vec![],
-        next_time_point: None,
-        wallpaper_segments: vec![],
-    };
+    // 计算下一个时间点
+    let next_time_point = time_points
+        .iter()
+        .find(|tp| **tp > now)
+        .or_else(|| time_points.first()) // 如果当前已是最后一个点，循环到第一个
+        .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
+    
+    let video_schedule = build_mode_schedule(&video_space, &time_points_vec, &next_time_point);
+    let image_schedule = build_mode_schedule(&image_space, &time_points_vec, &next_time_point);
     
     Response::TimeInfo(TimeScheduleInfo {
         current_time,
         video_schedule,
         image_schedule,
     })
+}
+
+/// 为单个模式构建调度信息
+fn build_mode_schedule(
+    space: &WallpaperSpace,
+    time_points: &[String],
+    next_time_point: &Option<String>,
+) -> ModeSchedule {
+    let wallpaper_segments: Vec<WallpaperTimeSegment> = space
+        .items
+        .iter()
+        .map(|item| {
+            let filename = item.path.file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            
+            let all_day = item.time_constraints.is_empty();
+            
+            let active_ranges: Vec<TimeRangeInfo> = if all_day {
+                vec![] // 全天可用时不返回具体范围
+            } else {
+                item.time_constraints
+                    .iter()
+                    .map(|range| TimeRangeInfo {
+                        start: format!("{:02}:{:02}", range.start.hour, range.start.minute),
+                        end: format!("{:02}:{:02}", range.end.hour, range.end.minute),
+                        crosses_midnight: range.crosses_midnight(),
+                    })
+                    .collect()
+            };
+            
+            WallpaperTimeSegment {
+                filename,
+                path: item.path.clone(),
+                active_ranges,
+                all_day,
+            }
+        })
+        .collect();
+    
+    ModeSchedule {
+        scanned_count: space.items.len(),
+        active_count: space.items.iter().filter(|w| !w.locked).count(),
+        time_points: time_points.to_vec(),
+        next_time_point: next_time_point.clone(),
+        wallpaper_segments,
+    }
 }

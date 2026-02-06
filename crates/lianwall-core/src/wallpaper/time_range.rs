@@ -71,6 +71,11 @@ impl TimeRange {
         }
     }
 
+    /// 是否跨天（如 23:00-06:00）
+    pub fn crosses_midnight(&self) -> bool {
+        self.start.to_minutes() > self.end.to_minutes()
+    }
+
     /// 获取关键时间点（开始和结束）
     pub fn key_points(&self) -> [TimePoint; 2] {
         [self.start, self.end]

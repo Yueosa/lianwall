@@ -4,19 +4,19 @@ use rand::prelude::*;
 use rand::distributions::Uniform;
 use std::collections::VecDeque;
 use std::f64::consts::TAU;
-use std::path::PathBuf;
 
 use super::r#struct::{ModeData, PersistedRecord, WallpaperRecord, WallpaperSpace};
+use super::scanner::ScannedWallpaper;
 
 /// 构建新的向量空间
 ///
 /// 将壁纸随机打乱后均匀分布到单位圆上
 ///
 /// # Arguments
-/// * `paths` - 壁纸路径列表
+/// * `wallpapers` - 扫描到的壁纸列表（带时间约束）
 /// * `seed` - 随机种子（0 表示使用系统熵）
-pub fn build_space(paths: Vec<PathBuf>, seed: u64) -> WallpaperSpace {
-    if paths.is_empty() {
+pub fn build_space(wallpapers: Vec<ScannedWallpaper>, seed: u64) -> WallpaperSpace {
+    if wallpapers.is_empty() {
         return WallpaperSpace {
             items: vec![],
             pointer: 0.0,
@@ -34,19 +34,20 @@ pub fn build_space(paths: Vec<PathBuf>, seed: u64) -> WallpaperSpace {
     };
 
     // Fisher-Yates 洗牌
-    let mut paths = paths;
-    paths.shuffle(&mut rng);
+    let mut wallpapers = wallpapers;
+    wallpapers.shuffle(&mut rng);
 
     // 均匀分布到圆周
-    let n = paths.len();
-    let items: Vec<WallpaperRecord> = paths
+    let n = wallpapers.len();
+    let items: Vec<WallpaperRecord> = wallpapers
         .into_iter()
         .enumerate()
-        .map(|(i, path)| WallpaperRecord {
-            path,
+        .map(|(i, w)| WallpaperRecord {
+            path: w.path,
             angle: TAU * (i as f64) / (n as f64),
             locked: false,
             last_played: None,
+            time_constraints: w.time_constraints,
         })
         .collect();
 
@@ -66,17 +67,17 @@ pub fn build_space(paths: Vec<PathBuf>, seed: u64) -> WallpaperSpace {
 /// 重建向量空间（保留历史状态）
 ///
 /// # Arguments
-/// * `paths` - 新的壁纸路径列表
+/// * `wallpapers` - 新的扫描壁纸列表（带时间约束）
 /// * `old_space` - 旧的运行时空间（可选）
 /// * `persisted` - 持久化数据（可选）
 /// * `seed` - 随机种子
 pub fn rebuild_space(
-    paths: Vec<PathBuf>,
+    wallpapers: Vec<ScannedWallpaper>,
     old_space: Option<&WallpaperSpace>,
     persisted: Option<&ModeData>,
     seed: u64,
 ) -> WallpaperSpace {
-    let mut space = build_space(paths, seed);
+    let mut space = build_space(wallpapers, seed);
 
     // 继承指针位置（优先使用运行时状态）
     if let Some(old) = old_space {
@@ -128,6 +129,16 @@ pub fn export_to_persisted(space: &WallpaperSpace) -> ModeData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn make_wallpapers(count: usize) -> Vec<ScannedWallpaper> {
+        (0..count)
+            .map(|i| ScannedWallpaper {
+                path: PathBuf::from(format!("/test/{}.jpg", i)),
+                time_constraints: vec![],
+            })
+            .collect()
+    }
 
     #[test]
     fn test_build_space_empty() {
@@ -137,10 +148,11 @@ mod tests {
 
     #[test]
     fn test_build_space_deterministic() {
-        let paths: Vec<PathBuf> = (0..5).map(|i| PathBuf::from(format!("/test/{}.jpg", i))).collect();
+        let wallpapers1 = make_wallpapers(5);
+        let wallpapers2 = make_wallpapers(5);
 
-        let space1 = build_space(paths.clone(), 12345);
-        let space2 = build_space(paths, 12345);
+        let space1 = build_space(wallpapers1, 12345);
+        let space2 = build_space(wallpapers2, 12345);
 
         // 相同种子应产生相同结果
         assert_eq!(space1.items.len(), space2.items.len());
@@ -153,8 +165,8 @@ mod tests {
 
     #[test]
     fn test_angles_distributed() {
-        let paths: Vec<PathBuf> = (0..10).map(|i| PathBuf::from(format!("/test/{}.jpg", i))).collect();
-        let space = build_space(paths, 42);
+        let wallpapers = make_wallpapers(10);
+        let space = build_space(wallpapers, 42);
 
         // 检查角度均匀分布
         for (i, item) in space.items.iter().enumerate() {
