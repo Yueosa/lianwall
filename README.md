@@ -5,7 +5,7 @@
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
 [![Version](https://img.shields.io/badge/version-5.1.1-blue.svg)](https://github.com/Yueosa/lianwall/releases)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
 **适用于所有支持 Wayland 的类 Unix 系统**（Linux / BSD 等）
@@ -431,7 +431,9 @@ rocm-smi
 
 ## 📜 License
 
-MIT
+LianWall License — 详见 [LICENSE](LICENSE) 文件
+
+自由使用、修改、分发，但未经作者同意不得用于商业盈利。
 
 ---
 
