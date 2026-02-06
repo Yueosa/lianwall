@@ -2,19 +2,36 @@
 //!
 //! - `lock` - 锁定壁纸（从轮换中排除）
 //! - `unlock` - 解锁壁纸
+//! - `toggle-lock` - 切换锁定状态
 
 use std::path::PathBuf;
 
+use lianwall_core::socket::ErrorCode;
+
+use crate::client::ClientError;
 use crate::output::Formatter;
 
-use super::{connect, normalize_path, Result};
+use super::{connect, normalize_path, HandlerError, Result};
+
+/// 将 ClientError 转换为更友好的 lock 相关错误
+fn map_lock_error(e: ClientError, path: &PathBuf) -> HandlerError {
+    match &e {
+        ClientError::DaemonError { code: ErrorCode::NotFound, .. } => {
+            HandlerError::Other(format!(
+                "Wallpaper not found in any space: {}",
+                path.display()
+            ))
+        }
+        _ => HandlerError::Client(e),
+    }
+}
 
 /// 处理 lock 命令
 pub fn handle_lock(fmt: &Formatter, path: PathBuf) -> Result<()> {
     let path = normalize_path(path);
 
     let mut client = connect()?;
-    client.lock(path.clone())?;
+    client.lock(path.clone()).map_err(|e| map_lock_error(e, &path))?;
 
     let filename = path
         .file_name()
@@ -29,7 +46,7 @@ pub fn handle_unlock(fmt: &Formatter, path: PathBuf) -> Result<()> {
     let path = normalize_path(path);
 
     let mut client = connect()?;
-    client.unlock(path.clone())?;
+    client.unlock(path.clone()).map_err(|e| map_lock_error(e, &path))?;
 
     let filename = path
         .file_name()
@@ -44,7 +61,7 @@ pub fn handle_toggle_lock(fmt: &Formatter, path: PathBuf) -> Result<()> {
     let path = normalize_path(path);
 
     let mut client = connect()?;
-    client.toggle_lock(path.clone())?;
+    client.toggle_lock(path.clone()).map_err(|e| map_lock_error(e, &path))?;
 
     let filename = path
         .file_name()
