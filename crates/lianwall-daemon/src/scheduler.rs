@@ -46,10 +46,12 @@ pub async fn run(
     tracing::info!("Scheduler started");
     
     let mut shutdown_rx = state.shutdown_receiver();
+    let mut event_rx = event_bus.subscribe();
     
-    // 初始间隔（从配置读取）
+    // 初始间隔（从配置读取，根据当前模式选择）
     let config = state.get_config().await;
-    let mut current_interval = Duration::from_secs(config.image_engine.interval as u64);
+    let mode = *state.engine.mode.read().await;
+    let mut current_interval = get_interval_for_mode(&config, mode);
     let mut timer = interval(current_interval);
     
     // 记录下次切换时间
@@ -80,8 +82,46 @@ pub async fn run(
                 event_bus.publish(Event::SchedulerTick);
             }
             
-            // 配置变更时更新间隔
-            // TODO: 监听配置变更事件
+            // 监听事件
+            result = event_rx.recv() => {
+                match result {
+                    Ok(Event::ConfigReloaded) => {
+                        // 配置重载，更新间隔
+                        let config = state.get_config().await;
+                        let mode = *state.engine.mode.read().await;
+                        let new_interval = get_interval_for_mode(&config, mode);
+                        
+                        if new_interval != current_interval {
+                            current_interval = new_interval;
+                            timer = interval(current_interval);
+                            _next_switch = Instant::now() + current_interval;
+                            tracing::info!("Scheduler interval updated to {:?} (config reloaded)", current_interval);
+                        }
+                    }
+                    Ok(Event::ModeChanged { to, .. }) => {
+                        // 模式切换，Video/Image 有不同的 interval
+                        let config = state.get_config().await;
+                        let new_interval = get_interval_for_mode(&config, to);
+                        
+                        if new_interval != current_interval {
+                            current_interval = new_interval;
+                            timer = interval(current_interval);
+                            _next_switch = Instant::now() + current_interval;
+                            tracing::info!("Scheduler interval updated to {:?} (mode changed to {:?})", current_interval, to);
+                        }
+                    }
+                    Ok(_) => {
+                        // 忽略其他事件
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Scheduler missed {} events", n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Event bus closed, scheduler stopping");
+                        break;
+                    }
+                }
+            }
             
             // 收到关闭信号
             _ = shutdown_rx.recv() => {
@@ -89,20 +129,18 @@ pub async fn run(
                 break;
             }
         }
-        
-        // 检查配置是否变更
-        let new_config = state.get_config().await;
-        let new_interval = Duration::from_secs(new_config.image_engine.interval as u64);
-        
-        if new_interval != current_interval {
-            current_interval = new_interval;
-            timer = interval(current_interval);
-            _next_switch = Instant::now() + current_interval;
-            tracing::info!("Scheduler interval updated to {} seconds", new_config.image_engine.interval);
-        }
     }
     
     tracing::info!("Scheduler stopped");
+}
+
+/// 根据模式获取切换间隔
+fn get_interval_for_mode(config: &lianwall_core::config::Config, mode: WallMode) -> Duration {
+    let secs = match mode {
+        WallMode::Video => config.video_engine.interval,
+        WallMode::Image => config.image_engine.interval,
+    };
+    Duration::from_secs(secs as u64)
 }
 
 /// 检查是否应该切换壁纸
