@@ -6,7 +6,6 @@
 //! - `config reset` - 重置配置为默认值（需确认）
 
 use std::io::{self, Write};
-use std::path::PathBuf;
 
 use lianwall_core::config::WallMode;
 
@@ -265,10 +264,13 @@ fn get_config_value(config: &lianwall_core::config::Config, key: &str) -> Option
         // video_engine
         ["video_engine", "interval"] => Some(config.video_engine.interval.to_string()),
         ["video_engine", "display"] => Some(config.video_engine.display.clone()),
+        ["video_engine", "mpvpaper_args"] => Some(format!("{:?}", config.video_engine.mpvpaper_args)),
+        ["video_engine", "mpv_args"] => Some(format!("{:?}", config.video_engine.mpv_args)),
 
         // image_engine
         ["image_engine", "interval"] => Some(config.image_engine.interval.to_string()),
         ["image_engine", "outputs"] => Some(config.image_engine.outputs.clone()),
+        ["image_engine", "swww_args"] => Some(format!("{:?}", config.image_engine.swww_args)),
 
         // vram
         ["vram", "enabled"] => Some(config.vram.enabled.to_string()),
@@ -284,6 +286,20 @@ fn get_config_value(config: &lianwall_core::config::Config, key: &str) -> Option
 
         _ => None,
     }
+}
+
+/// 解析逗号分隔的字符串或 JSON 数组为 Vec<String>
+fn parse_string_array(value: &str) -> Vec<String> {
+    // 先尝试 JSON 数组
+    if let Ok(arr) = serde_json::from_str::<Vec<String>>(value) {
+        return arr;
+    }
+    // 空值
+    if value.is_empty() || value == "[]" {
+        return Vec::new();
+    }
+    // 逗号分隔
+    value.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect()
 }
 
 /// 设置 Config 结构的指定键
@@ -304,30 +320,43 @@ fn set_config_value(
             };
         }
         ["paths", "video_dir"] => {
-            config.paths.video_dir = PathBuf::from(value);
+            config.paths.video_dir = lianwall_core::config::expand_path(value);
         }
         ["paths", "image_dir"] => {
-            config.paths.image_dir = PathBuf::from(value);
+            config.paths.image_dir = lianwall_core::config::expand_path(value);
         }
 
         // video_engine
         ["video_engine", "interval"] => {
-            config.video_engine.interval = value
-                .parse()
-                .map_err(|_| format!("Invalid interval: {}", value))?;
+            let v: u64 = value.parse().map_err(|_| format!("Invalid interval: {}", value))?;
+            if v == 0 {
+                return Err("Interval must be greater than 0".to_string());
+            }
+            config.video_engine.interval = v;
         }
         ["video_engine", "display"] => {
             config.video_engine.display = value.to_string();
         }
+        ["video_engine", "mpvpaper_args"] => {
+            config.video_engine.mpvpaper_args = parse_string_array(value);
+        }
+        ["video_engine", "mpv_args"] => {
+            config.video_engine.mpv_args = parse_string_array(value);
+        }
 
         // image_engine
         ["image_engine", "interval"] => {
-            config.image_engine.interval = value
-                .parse()
-                .map_err(|_| format!("Invalid interval: {}", value))?;
+            let v: u64 = value.parse().map_err(|_| format!("Invalid interval: {}", value))?;
+            if v == 0 {
+                return Err("Interval must be greater than 0".to_string());
+            }
+            config.image_engine.interval = v;
         }
         ["image_engine", "outputs"] => {
             config.image_engine.outputs = value.to_string();
+        }
+        ["image_engine", "swww_args"] => {
+            config.image_engine.swww_args = parse_string_array(value);
         }
 
         // vram
@@ -337,19 +366,25 @@ fn set_config_value(
                 .map_err(|_| format!("Invalid boolean: {}", value))?;
         }
         ["vram", "threshold_percent"] => {
-            config.vram.threshold_percent = value
-                .parse()
-                .map_err(|_| format!("Invalid percent: {}", value))?;
+            let v: f32 = value.parse().map_err(|_| format!("Invalid percent: {}", value))?;
+            if !(0.0..=100.0).contains(&v) {
+                return Err(format!("Percent must be between 0 and 100, got {}", v));
+            }
+            config.vram.threshold_percent = v;
         }
         ["vram", "recovery_percent"] => {
-            config.vram.recovery_percent = value
-                .parse()
-                .map_err(|_| format!("Invalid percent: {}", value))?;
+            let v: f32 = value.parse().map_err(|_| format!("Invalid percent: {}", value))?;
+            if !(0.0..=100.0).contains(&v) {
+                return Err(format!("Percent must be between 0 and 100, got {}", v));
+            }
+            config.vram.recovery_percent = v;
         }
         ["vram", "check_interval"] => {
-            config.vram.check_interval = value
-                .parse()
-                .map_err(|_| format!("Invalid interval: {}", value))?;
+            let v: u64 = value.parse().map_err(|_| format!("Invalid interval: {}", value))?;
+            if v == 0 {
+                return Err("Check interval must be greater than 0".to_string());
+            }
+            config.vram.check_interval = v;
         }
         ["vram", "cooldown_seconds"] => {
             config.vram.cooldown_seconds = value
@@ -359,10 +394,10 @@ fn set_config_value(
 
         // daemon
         ["daemon", "socket_path"] => {
-            config.daemon.socket_path = PathBuf::from(value);
+            config.daemon.socket_path = lianwall_core::config::expand_path(value);
         }
         ["daemon", "pid_path"] => {
-            config.daemon.pid_path = PathBuf::from(value);
+            config.daemon.pid_path = lianwall_core::config::expand_path(value);
         }
         ["daemon", "log_level"] => {
             config.daemon.log_level = value.to_string();
