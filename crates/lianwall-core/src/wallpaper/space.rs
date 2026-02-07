@@ -21,7 +21,6 @@ pub fn build_space(wallpapers: Vec<ScannedWallpaper>, seed: u64) -> WallpaperSpa
             items: vec![],
             pointer: 0.0,
             cooldown_queue: VecDeque::new(),
-            history: Vec::new(),
             current_index: None,
         };
     }
@@ -59,7 +58,6 @@ pub fn build_space(wallpapers: Vec<ScannedWallpaper>, seed: u64) -> WallpaperSpa
         items,
         pointer,
         cooldown_queue: VecDeque::new(),
-        history: Vec::new(),
         current_index: None,
     }
 }

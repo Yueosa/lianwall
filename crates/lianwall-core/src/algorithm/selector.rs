@@ -8,18 +8,16 @@ use crate::wallpaper::WallpaperSpace;
 use super::r#struct::SelectOutput;
 use super::golden::{angular_distance, calc_cooldown, GOLDEN_ANGLE};
 
-/// 历史记录最大长度
-const MAX_HISTORY_SIZE: usize = 100;
-
 /// 选择下一张壁纸
 ///
 /// 算法流程：
-/// 1. 将当前壁纸（如果有）压入历史栈
-/// 2. 计算动态冷却值
-/// 3. 找到距离指针最近的可用壁纸（排除锁定和冷却中的）
-/// 4. 更新冷却队列
-/// 5. 更新 last_played
-/// 6. 旋转指针（黄金角）
+/// 1. 计算动态冷却值
+/// 2. 找到距离指针最近的可用壁纸（排除锁定和冷却中的）
+/// 3. 更新冷却队列
+/// 4. 更新 last_played
+/// 5. 旋转指针（黄金角）
+///
+/// 注意：历史记录管理已移至 daemon 层的 PlaybackHistory
 ///
 /// # Returns
 /// - `Some(SelectOutput)` - 选中结果
@@ -33,15 +31,6 @@ pub fn select_next(space: &mut WallpaperSpace) -> Option<SelectOutput> {
 
     // 找到距离指针最近的可用壁纸
     let selected_idx = find_nearest_available(space, cooldown)?;
-
-    // 将当前壁纸压入历史栈（用于 prev）
-    if let Some(current) = space.current_index {
-        space.history.push(current);
-        // 限制历史栈大小
-        if space.history.len() > MAX_HISTORY_SIZE {
-            space.history.remove(0);
-        }
-    }
 
     // 更新当前壁纸索引
     space.current_index = Some(selected_idx);
@@ -65,42 +54,6 @@ pub fn select_next(space: &mut WallpaperSpace) -> Option<SelectOutput> {
 
     Some(SelectOutput {
         index: selected_idx,
-        new_pointer,
-    })
-}
-
-/// 返回上一张壁纸
-///
-/// 从历史栈中弹出上一张壁纸，忽略锁定状态（强制播放）
-///
-/// # Returns
-/// - `Some(SelectOutput)` - 上一张壁纸
-/// - `None` - 没有历史记录
-pub fn select_previous(space: &mut WallpaperSpace) -> Option<SelectOutput> {
-    // 从历史栈弹出
-    let prev_idx = space.history.pop()?;
-
-    // 检查索引是否有效
-    if prev_idx >= space.items.len() {
-        return None;
-    }
-
-    // 更新当前壁纸索引
-    space.current_index = Some(prev_idx);
-
-    // 更新 last_played
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs();
-    space.items[prev_idx].last_played = Some(now);
-
-    // 指针反向旋转（回退）
-    let new_pointer = (space.pointer - GOLDEN_ANGLE).rem_euclid(TAU);
-    space.pointer = new_pointer;
-
-    Some(SelectOutput {
-        index: prev_idx,
         new_pointer,
     })
 }

@@ -60,26 +60,46 @@ pub async fn handle_command(
     }
 }
 
-/// 历史栈最大长度
-const MAX_HISTORY_SIZE: usize = 100;
-
-/// 切换到下一张壁纸
+/// 切换到下一张壁纸（浏览器式前进）
 ///
-/// 使用黄金角算法选择下一张壁纸，并将当前壁纸压入历史栈
+/// 行为：
+/// - 光标在末尾：通过算法选出新壁纸，追加到历史，光标指向末尾
+/// - 光标不在末尾：光标前进一步，播放光标指向的壁纸
 async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
     let mode = *state.engine.mode.read().await;
     
-    // 将当前壁纸压入 daemon 层历史栈（用于 Prev）
-    let current_path = state.engine.current.read().await.clone();
-    if let Some(ref path) = current_path {
-        let mut history = state.wallpaper_history.write().await;
-        history.push_back(path.clone());
-        // 限制历史栈大小
-        while history.len() > MAX_HISTORY_SIZE {
-            history.pop_front();
+    // 检查历史光标位置
+    let is_at_end = state.playback_history.read().await.is_at_end();
+    
+    if !is_at_end {
+        // 光标不在末尾：前进一步，播放历史记录
+        let path = {
+            let mut history = state.playback_history.write().await;
+            match history.forward() {
+                Some(p) => p,
+                None => return Response::error(ErrorCode::NoHistory, "Cannot forward in history"),
+            }
+        };
+        
+        // 检测壁纸类型决定模式
+        let detected_mode = detect_mode(&path);
+        
+        // 应用壁纸
+        if let Err(e) = apply_wallpaper(state, &path, detected_mode).await {
+            return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
         }
+        
+        // 更新模式和当前壁纸
+        *state.engine.mode.write().await = detected_mode;
+        *state.engine.current.write().await = Some(path.clone());
+        
+        // 发布事件
+        event_bus.publish(Event::WallpaperChanged { path, mode: detected_mode, trigger });
+        
+        return Response::ok();
     }
     
+    // 光标在末尾：通过算法选出新壁纸
     let path = match mode {
         WallMode::Video => {
             let mut space = state.video_space.write().await;
@@ -97,6 +117,9 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: Wa
         }
     };
     
+    // 追加到播放历史
+    state.playback_history.write().await.push(path.clone());
+    
     // 应用壁纸
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
         return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
@@ -111,45 +134,49 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: Wa
     Response::ok()
 }
 
-/// 切换到上一张壁纸
+/// 切换到上一张壁纸（浏览器式后退）
 ///
-/// 从 daemon 层历史栈中弹出上一张壁纸路径，直接播放
-/// 注意：Prev 不依赖向量空间，可以播放不在当前空间中的壁纸
+/// 光标后退一步，播放光标指向的壁纸
 async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
-    // 从 daemon 层历史栈弹出
+    // 从播放历史后退
     let path = {
-        let mut history = state.wallpaper_history.write().await;
-        match history.pop_back() {
+        let mut history = state.playback_history.write().await;
+        match history.backward() {
             Some(p) => p,
             None => return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history"),
         }
     };
     
     // 检测壁纸类型决定模式
+    let detected_mode = detect_mode(&path);
+    
+    // 应用壁纸（如果文件不存在，apply_wallpaper 会返回错误）
+    if let Err(e) = apply_wallpaper(state, &path, detected_mode).await {
+        return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+    }
+    
+    // 更新模式和当前壁纸
+    *state.engine.mode.write().await = detected_mode;
+    *state.engine.current.write().await = Some(path.clone());
+    
+    // 发布事件
+    event_bus.publish(Event::WallpaperChanged { path, mode: detected_mode, trigger });
+    
+    Response::ok()
+}
+
+/// 从文件扩展名检测壁纸模式
+fn detect_mode(path: &PathBuf) -> WallMode {
     let ext = path.extension()
         .and_then(|e| e.to_str())
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
     
-    let mode = if matches!(ext.as_str(), "mp4" | "webm" | "mkv" | "avi" | "mov" | "gif") {
+    if matches!(ext.as_str(), "mp4" | "webm" | "mkv" | "avi" | "mov" | "gif") {
         WallMode::Video
     } else {
         WallMode::Image
-    };
-    
-    // 应用壁纸（如果文件不存在，apply_wallpaper 会返回错误）
-    if let Err(e) = apply_wallpaper(state, &path, mode).await {
-        return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
     }
-    
-    // 更新模式和当前壁纸
-    *state.engine.mode.write().await = mode;
-    *state.engine.current.write().await = Some(path.clone());
-    
-    // 发布事件
-    event_bus.publish(Event::WallpaperChanged { path, mode, trigger });
-    
-    Response::ok()
 }
 
 /// 设置指定壁纸
@@ -160,21 +187,15 @@ async fn handle_set_wallpaper(
     trigger: WallpaperTrigger,
 ) -> Response {
     // 检测壁纸类型
-    let ext = path.extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-    
-    let mode = if matches!(ext.as_str(), "mp4" | "webm" | "mkv" | "avi" | "mov" | "gif") {
-        WallMode::Video
-    } else {
-        WallMode::Image
-    };
+    let mode = detect_mode(&path);
     
     // 应用壁纸
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
         return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
     }
+    
+    // 追加到播放历史（非导航触发，截断光标之后的前进历史）
+    state.playback_history.write().await.push(path.clone());
     
     // 更新模式和当前壁纸
     *state.engine.mode.write().await = mode;
@@ -246,6 +267,10 @@ async fn handle_set_mode(
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
         return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
     }
+    
+    // 追加到播放历史（模式切换属于非导航触发）
+    state.playback_history.write().await.push(path.clone());
+    
     *state.engine.current.write().await = Some(path.clone());
     
     // 发布模式变更 + 壁纸切换事件

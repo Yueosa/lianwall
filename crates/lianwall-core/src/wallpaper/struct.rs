@@ -30,8 +30,6 @@ pub struct WallpaperSpace {
     pub pointer: f64,
     /// 冷却队列（存储最近选中的壁纸索引）
     pub cooldown_queue: VecDeque<usize>,
-    /// 播放历史栈（用于 prev 命令）
-    pub history: Vec<usize>,
     /// 当前壁纸索引
     pub current_index: Option<usize>,
 }

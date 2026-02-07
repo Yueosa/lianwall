@@ -13,7 +13,7 @@
 //! 未来期望: 根据实际性能测试结果，可能采用 dashmap 等并发容器
 //! 原因: 需要实际数据支撑优化方向
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -41,6 +41,102 @@ impl GpuSnapshot {
             degraded: false,
             vram_info: None,
             backend: GpuBackend::None,
+        }
+    }
+}
+
+/// 浏览器式播放历史
+///
+/// 类似浏览器的前进/后退模型：
+/// - `entries`: 历史记录列表（有序）
+/// - `cursor`: 当前位置索引，指向 entries 中的某一项
+///
+/// ## 行为规则
+/// - **Next（光标在末尾）**: 通过算法选出新壁纸，追加到 entries，cursor 指向末尾
+/// - **Next（光标不在末尾）**: cursor 前进一步，播放 entries[cursor]
+/// - **Prev**: cursor 后退一步，播放 entries[cursor]
+/// - **非导航触发（定时/模式切换等）**: 截断 cursor 之后的所有记录，追加新壁纸，cursor 指向末尾
+/// - **最大容量 100 条**: 超出时从前端移除最旧的记录
+pub struct PlaybackHistory {
+    /// 历史记录列表
+    entries: Vec<PathBuf>,
+    /// 当前光标位置（指向 entries 的索引）
+    /// None 表示历史为空
+    cursor: Option<usize>,
+}
+
+/// 历史最大容量
+const MAX_HISTORY_SIZE: usize = 100;
+
+impl PlaybackHistory {
+    /// 创建空的播放历史
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+            cursor: None,
+        }
+    }
+
+    /// 光标是否在末尾（或历史为空）
+    pub fn is_at_end(&self) -> bool {
+        match self.cursor {
+            None => true,
+            Some(c) => c + 1 >= self.entries.len(),
+        }
+    }
+
+    /// 追加新壁纸到历史末尾
+    ///
+    /// 如果光标不在末尾，先截断光标之后的记录（浏览器模型：从中间导航时新操作会清除前进历史）
+    pub fn push(&mut self, path: PathBuf) {
+        // 截断光标之后的记录
+        if let Some(c) = self.cursor {
+            self.entries.truncate(c + 1);
+        }
+
+        self.entries.push(path);
+        self.cursor = Some(self.entries.len() - 1);
+
+        // 限制容量
+        self.trim();
+    }
+
+    /// 前进（Next 时光标不在末尾）
+    ///
+    /// 返回前进后光标指向的壁纸路径
+    pub fn forward(&mut self) -> Option<PathBuf> {
+        let c = self.cursor?;
+        if c + 1 >= self.entries.len() {
+            return None; // 已在末尾
+        }
+        let new_cursor = c + 1;
+        self.cursor = Some(new_cursor);
+        Some(self.entries[new_cursor].clone())
+    }
+
+    /// 后退（Prev）
+    ///
+    /// 返回后退后光标指向的壁纸路径
+    pub fn backward(&mut self) -> Option<PathBuf> {
+        let c = self.cursor?;
+        if c == 0 {
+            return None; // 已在最前
+        }
+        let new_cursor = c - 1;
+        self.cursor = Some(new_cursor);
+        Some(self.entries[new_cursor].clone())
+    }
+
+    /// 限制容量，超出时从前端移除
+    fn trim(&mut self) {
+        while self.entries.len() > MAX_HISTORY_SIZE {
+            self.entries.remove(0);
+            // 调整光标
+            if let Some(ref mut c) = self.cursor {
+                if *c > 0 {
+                    *c -= 1;
+                }
+            }
         }
     }
 }
@@ -179,9 +275,8 @@ pub struct SharedState {
     /// 时间关键点缓存（用于时间调度）
     pub time_points: RwLock<BTreeSet<TimePoint>>,
     
-    /// 壁纸历史栈（存储路径，用于 Prev 操作）
-    /// 注意：这个历史栈独立于向量空间，Prev 可以播放不在当前空间中的壁纸
-    pub wallpaper_history: RwLock<VecDeque<PathBuf>>,
+    /// 浏览器式壁纸播放历史（支持前进/后退导航）
+    pub playback_history: RwLock<PlaybackHistory>,
     
     /// 下次壁纸切换的时间点（用于 status 查询倒计时）
     pub next_switch: RwLock<Instant>,
@@ -207,14 +302,12 @@ impl SharedState {
             items: Vec::new(),
             pointer: 0.0,
             cooldown_queue: std::collections::VecDeque::new(),
-            history: Vec::new(),
             current_index: None,
         };
         let image_space = WallpaperSpace {
             items: Vec::new(),
             pointer: 0.0,
             cooldown_queue: std::collections::VecDeque::new(),
-            history: Vec::new(),
             current_index: None,
         };
         
@@ -234,7 +327,7 @@ impl SharedState {
             gpu_state: RwLock::new(None),
             gpu_snapshot: RwLock::new(GpuSnapshot::empty()),
             time_points: RwLock::new(BTreeSet::new()),
-            wallpaper_history: RwLock::new(VecDeque::new()),
+            playback_history: RwLock::new(PlaybackHistory::new()),
             next_switch: RwLock::new(Instant::now() + std::time::Duration::from_secs(initial_interval)),
             scanned_counts: RwLock::new((0, 0)),
             start_time: Instant::now(),
