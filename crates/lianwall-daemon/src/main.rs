@@ -27,7 +27,7 @@ use tokio::signal::unix::{signal, SignalKind};
 
 use lianwall_daemon::{command, event::EventBus, scheduler, server, state::SharedState};
 use lianwall_core::wallpaper::{scan_directory_async, rebuild_space, load_weights, filter_active};
-use lianwall_core::config::ConfigReadInput;
+use lianwall_core::config::ConfigCreateInput;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -43,16 +43,20 @@ async fn main() -> anyhow::Result<()> {
         env!("CARGO_PKG_VERSION")
     );
 
-    // 加载配置
-    let config = match lianwall_core::config::read(ConfigReadInput {
+    // 加载配置（不存在则自动创建默认配置）
+    let config = match lianwall_core::config::create(ConfigCreateInput {
         path: None,
     }) {
         Ok(result) => {
-            tracing::info!("Config loaded from {:?}", result.path);
+            if result.created {
+                tracing::info!("Config not found, created default at {:?}", result.path);
+            } else {
+                tracing::info!("Config loaded from {:?}", result.path);
+            }
             result.config
         }
         Err(e) => {
-            tracing::error!("Failed to load config: {}, daemon cannot start without config", e);
+            tracing::error!("Failed to load/create config: {}", e);
             return Err(anyhow::anyhow!("Config load failed: {}", e));
         }
     };
