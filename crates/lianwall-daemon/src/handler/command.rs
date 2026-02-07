@@ -201,7 +201,7 @@ async fn handle_set_mode(
     // 更新模式
     *state.engine.mode.write().await = mode;
     
-    // 应用当前模式的壁纸
+    // 尝试恢复新模式空间中的当前壁纸；若无，则选一张新的
     let path = match mode {
         WallMode::Video => {
             let space = state.video_space.read().await;
@@ -213,15 +213,44 @@ async fn handle_set_mode(
         }
     };
     
-    if let Some(path) = path {
-        if let Err(e) = apply_wallpaper(state, &path, mode).await {
-            return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+    let path = match path {
+        Some(p) => p,
+        None => {
+            // current_index 为 None（首次进入该模式），通过 select_next 选一张
+            match mode {
+                WallMode::Video => {
+                    let mut space = state.video_space.write().await;
+                    match select_next(&mut space) {
+                        Some(output) => space.items[output.index].path.clone(),
+                        None => {
+                            // 空间为空，只发布模式变更事件
+                            event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
+                            return Response::ok();
+                        }
+                    }
+                }
+                WallMode::Image => {
+                    let mut space = state.image_space.write().await;
+                    match select_next(&mut space) {
+                        Some(output) => space.items[output.index].path.clone(),
+                        None => {
+                            event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
+                            return Response::ok();
+                        }
+                    }
+                }
+            }
         }
-        *state.engine.current.write().await = Some(path);
-    }
+    };
     
-    // 发布事件
+    if let Err(e) = apply_wallpaper(state, &path, mode).await {
+        return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+    }
+    *state.engine.current.write().await = Some(path.clone());
+    
+    // 发布模式变更 + 壁纸切换事件
     event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
+    event_bus.publish(Event::WallpaperChanged { path, mode, trigger: WallpaperTrigger::ModeSwitch });
     
     Response::ok()
 }
