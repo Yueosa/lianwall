@@ -106,6 +106,9 @@ pub fn select_previous(space: &mut WallpaperSpace) -> Option<SelectOutput> {
 }
 
 /// 找到距离指针最近的可用壁纸
+///
+/// 先尝试排除冷却中的壁纸；如果所有未锁定壁纸都在冷却中，
+/// 则回退到从冷却队列中选最早进入冷却的（即冷却最久的）
 fn find_nearest_available(space: &WallpaperSpace, cooldown: usize) -> Option<usize> {
     let mut best_idx: Option<usize> = None;
     let mut best_dist = f64::MAX;
@@ -126,6 +129,15 @@ fn find_nearest_available(space: &WallpaperSpace, cooldown: usize) -> Option<usi
         if dist < best_dist {
             best_dist = dist;
             best_idx = Some(i);
+        }
+    }
+
+    // 回退：所有未锁定壁纸都在冷却中，从冷却队列中选最早的（冷却最久的）未锁定壁纸
+    if best_idx.is_none() {
+        for &idx in &space.cooldown_queue {
+            if idx < space.items.len() && !space.items[idx].locked {
+                return Some(idx);
+            }
         }
     }
 
