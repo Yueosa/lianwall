@@ -59,11 +59,18 @@
 
 **根因**: `find_nearest_available` 的主循环同时排除了锁定和冷却中的壁纸。当可用壁纸数量 ≤ 冷却窗口大小时，所有候选都被排除，返回 `None`。
 
-**修复**: 在 `find_nearest_available` 末尾增加回退逻辑——当主循环无结果时，遍历冷却队列，选择最早进入冷却的（即冷却最久的）未锁定壁纸。冷却队列是 FIFO 顺序，队首元素是冷却时间最长的，优先复用。
+**修复**: 在 `find_nearest_available` 末尾增加回退逻辑——当主循环无结果时，遍历冷却队列，选择最早进入冷却的（即冷却最久的）未锁定壁纸，且排除当前正在播放的壁纸（避免 Next 选中同一张）。仅当只剩 1 张可用壁纸时，才允许选中当前壁纸。
 
 ```rust
-// 回退：所有未锁定壁纸都在冷却中，从冷却队列中选最早的（冷却最久的）未锁定壁纸
+// 回退：所有未锁定壁纸都在冷却中
 if best_idx.is_none() {
+    // 优先选择非当前壁纸（避免 Next 选中同一张）
+    for &idx in &space.cooldown_queue {
+        if idx < space.items.len() && !space.items[idx].locked && Some(idx) != space.current_index {
+            return Some(idx);
+        }
+    }
+    // 最终回退：只剩 1 张可用壁纸时允许选中当前壁纸
     for &idx in &space.cooldown_queue {
         if idx < space.items.len() && !space.items[idx].locked {
             return Some(idx);

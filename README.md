@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.1.1-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.1.2-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
@@ -17,7 +17,7 @@
 > **有记忆的智能壁纸轮换器** 🎯
 > - 使用 **黄金角算法** 均匀遍历所有壁纸，避免重复
 > - 刚播放过的壁纸自动进入"冷却队列"，短期内不会重复
-> - 支持 **prev** 命令回退到上一张壁纸（历史栈）
+> - 支持 **prev / next** 浏览器式前进/后退导航（播放历史）
 > - **时间段目录**：通过文件夹命名控制壁纸在特定时间出现
 > - **守护进程架构**：CLI 与 Daemon 分离，Unix Socket 通信
 > - 支持 **动态壁纸**（视频/mpvpaper）和 **静态壁纸**（图片/swww）
@@ -30,7 +30,7 @@
 
 ### 说明
 
-你会看到两个二进制文件 `lianwalld (lianwall-daemonm)` 和 `lianwall`
+你会看到两个二进制文件 `lianwalld (lianwall-daemon)` 和 `lianwall`
 
 * 其中 `lianwalld` 是引擎核心, 负责真正的壁纸播放, 轮换
 * 而 `lianwall` 是一个简单的命令行程序, 你可以通过他来控制 `lianwalld` 的各种行为, 例如:
@@ -195,7 +195,7 @@ bind = ALT, S, exec, lianwall switch    # 切换模式
 | 命令 | 说明 |
 |------|------|
 | `next` | 切换下一张壁纸 |
-| `prev` | 回退上一张壁纸（从历史栈弹出） |
+| `prev` | 回退上一张壁纸（浏览器式后退） |
 | `switch` | 切换模式（Video ↔ Image） |
 | `mode <video\|image>` | 设置指定模式 |
 | `set <PATH>` | 设置指定壁纸 |
@@ -243,7 +243,7 @@ LianWall 5.0 采用 **双文件 + 守护进程** 架构，CLI 和 Daemon 彻底�
                                 │ Unix Socket (/tmp/lianwall.sock)
 ┌───────────────────────────────▼─────────────────────────────────────┐
 │                          lianwalld (Daemon)                         │
-│    • 内存维护壁纸状态（冷却队列、历史栈）                              │
+│    • 内存维护壁纸状态（冷却队列、播放历史）                             │
 │    • 定时切换壁纸                                                   │
 │    • 监听时间点刷新                                                 │
 │    • GPU 显存监控                                                   │
@@ -317,12 +317,20 @@ wallpaper[3].angle = 52.524°   (mod 360°)
 - 人的短期记忆约 5-7 个项目
 - 冷却中的壁纸不会被选中
 
-### 历史栈（prev 支持）
+### 播放历史（浏览器式前进/后退）
 
-- 每次切换壁纸时将当前壁纸路径压入历史栈
-- `prev` 从历史栈弹出，**支持跨模式播放**
-- 历史栈存储在 daemon 层，与向量空间解耦
-- 历史栈最大 100 条
+类似浏览器的前进/后退导航模型：
+
+```
+[壁纸A] → [壁纸B] → [壁纸C] → [壁纸D]
+                                  ↑ cursor
+```
+
+- `next`：光标在末尾时通过算法选出新壁纸；不在末尾时前进一步，重放历史记录
+- `prev`：光标后退一步，重放历史记录，**支持跨模式播放**
+- 从历史中间位置触发新壁纸时，光标之后的前进历史会被截断（与浏览器行为一致）
+- 播放历史存储在 daemon 层，与向量空间解耦
+- 最大保留 100 条记录
 
 ---
 
