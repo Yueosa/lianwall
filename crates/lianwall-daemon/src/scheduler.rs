@@ -164,11 +164,12 @@ pub async fn run(
                         time_point_sleep = create_time_point_sleep(&state).await;
                     }
                     Ok(Event::WallpaperChanged { trigger, .. }) => {
-                        // 手动切换后重置调度器计时器，从此刻重新计时一个完整 interval
+                        // 手动切换 / 模式切换后重置调度器计时器，从此刻重新计时一个完整 interval
                         if matches!(trigger,
                             WallpaperTrigger::ManualNext |
                             WallpaperTrigger::ManualPrev |
-                            WallpaperTrigger::ManualSet
+                            WallpaperTrigger::ManualSet |
+                            WallpaperTrigger::ModeSwitch
                         ) {
                             timer = interval(current_interval);
                             timer.tick().await; // 消耗立即触发的首次 tick
