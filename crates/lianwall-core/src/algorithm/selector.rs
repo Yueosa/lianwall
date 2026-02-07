@@ -85,8 +85,15 @@ fn find_nearest_available(space: &WallpaperSpace, cooldown: usize) -> Option<usi
         }
     }
 
-    // 回退：所有未锁定壁纸都在冷却中，从冷却队列中选最早的（冷却最久的）未锁定壁纸
+    // 回退：所有未锁定壁纸都在冷却中
     if best_idx.is_none() {
+        // 优先选择非当前壁纸（避免 Next 选中同一张）
+        for &idx in &space.cooldown_queue {
+            if idx < space.items.len() && !space.items[idx].locked && Some(idx) != space.current_index {
+                return Some(idx);
+            }
+        }
+        // 最终回退：只剩 1 张可用壁纸时允许选中当前壁纸
         for &idx in &space.cooldown_queue {
             if idx < space.items.len() && !space.items[idx].locked {
                 return Some(idx);
