@@ -4,6 +4,7 @@
 
 | 版本 | 日期 | 主要变化 |
 |------|------|----------|
+| [5.1.3](changelogs/CHANGELOG-5.1.3.md) | 2026-02-07 | 冷却回退排除当前壁纸、daemon 自动创建默认配置 |
 | [5.1.2](changelogs/CHANGELOG-5.1.2.md) | 2026-02-07 | SetMode 事件缺失修复、冷却队列耗尽回退、浏览器式播放历史重构 |
 | [5.1.1](changelogs/CHANGELOG-5.1.1.md) | 2026-02-07 | 全面审计修复：状态数据、调度器计时器、reload 超时、config 命令等 11 项 bug 修复 |
 | [5.1.0](changelogs/CHANGELOG-5.1.0.md) | 2026-02-06 | TODO 审计修复、配置持久化、VRAM 集成、事件驱动调度 |
