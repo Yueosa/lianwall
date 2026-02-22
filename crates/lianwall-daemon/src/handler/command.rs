@@ -219,10 +219,7 @@ async fn handle_set_mode(
         return Response::ok(); // 模式未变
     }
     
-    // 更新模式
-    *state.engine.mode.write().await = mode;
-    
-    // 尝试恢复新模式空间中的当前壁纸；若无，则选一张新的
+    // 先选好壁纸路径，但不提交模式变更
     let path = match mode {
         WallMode::Video => {
             let space = state.video_space.read().await;
@@ -244,7 +241,8 @@ async fn handle_set_mode(
                     match select_next(&mut space) {
                         Some(output) => space.items[output.index].path.clone(),
                         None => {
-                            // 空间为空，只发布模式变更事件
+                            // 空间为空，仍然切换模式并发布事件
+                            *state.engine.mode.write().await = mode;
                             event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
                             return Response::ok();
                         }
@@ -255,6 +253,7 @@ async fn handle_set_mode(
                     match select_next(&mut space) {
                         Some(output) => space.items[output.index].path.clone(),
                         None => {
+                            *state.engine.mode.write().await = mode;
                             event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
                             return Response::ok();
                         }
@@ -264,9 +263,14 @@ async fn handle_set_mode(
         }
     };
     
+    // 先应用壁纸，成功后才提交模式变更
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
+        // apply 失败 → 不提交模式，保持 old_mode
         return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
     }
+    
+    // 应用成功，提交模式变更
+    *state.engine.mode.write().await = mode;
     
     // 追加到播放历史（模式切换属于非导航触发）
     state.playback_history.write().await.push(path.clone());
