@@ -4,6 +4,7 @@
 
 | 版本 | 日期 | 主要变化 |
 |------|------|----------|
+| [5.1.4](changelogs/CHANGELOG-5.1.4.md) | 2026-02-23 | SetMode 引擎失败时模式回滚，防止级联错误 |
 | [5.1.3](changelogs/CHANGELOG-5.1.3.md) | 2026-02-07 | 冷却回退排除当前壁纸、daemon 自动创建默认配置 |
 | [5.1.2](changelogs/CHANGELOG-5.1.2.md) | 2026-02-07 | SetMode 事件缺失修复、冷却队列耗尽回退、浏览器式播放历史重构 |
 | [5.1.1](changelogs/CHANGELOG-5.1.1.md) | 2026-02-07 | 全面审计修复：状态数据、调度器计时器、reload 超时、config 命令等 11 项 bug 修复 |
