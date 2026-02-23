@@ -14,10 +14,12 @@ pub const GOLDEN_ANGLE: f64 = 2.399963229728653;
 /// 计算动态冷却值
 ///
 /// 根据壁纸总数计算合适的冷却窗口大小。
-/// 目标是防止用户能预测下一张壁纸。
+/// 冷却中的壁纸不会被选中，防止短期内重复。
 ///
-/// - 人的短期记忆约 5-7 个项目
-/// - 冷却值 = min(N/2, 7)，至少 1
+/// 策略：
+/// - 小列表（N ≤ 20）：min(N/2, 7)，与旧版行为一致
+/// - 大列表（N > 20）：约 N/3，保证 33% 冷却覆盖率
+/// - 上限 N/2（保证算法始终有足够候选空间）
 ///
 /// # Examples
 /// ```
@@ -25,13 +27,17 @@ pub const GOLDEN_ANGLE: f64 = 2.399963229728653;
 /// assert_eq!(calc_cooldown(3), 1);
 /// assert_eq!(calc_cooldown(10), 5);
 /// assert_eq!(calc_cooldown(20), 7);
-/// assert_eq!(calc_cooldown(100), 7);
+/// assert_eq!(calc_cooldown(100), 33);
 /// ```
 pub fn calc_cooldown(n: usize) -> usize {
     if n == 0 {
         return 0;
     }
-    1.max((n / 2).min(7))
+    // min(N/2, max(N/3, 7))：
+    //   N ≤ 14  → N/2（自然受限）
+    //   15..=21 → 7（平稳过渡）
+    //   N > 21  → N/3（随列表规模增长）
+    (n / 2).min((n / 3).max(7)).max(1)
 }
 
 /// 计算两个角度之间的最短距离
@@ -67,7 +73,11 @@ mod tests {
         assert_eq!(calc_cooldown(4), 2);
         assert_eq!(calc_cooldown(10), 5);
         assert_eq!(calc_cooldown(14), 7);
-        assert_eq!(calc_cooldown(100), 7);
+        assert_eq!(calc_cooldown(20), 7);   // 过渡区域
+        assert_eq!(calc_cooldown(30), 10);  // N/3 开始生效
+        assert_eq!(calc_cooldown(60), 20);
+        assert_eq!(calc_cooldown(100), 33); // 大列表：~33% 冷却
+        assert_eq!(calc_cooldown(200), 66);
     }
 
     #[test]
