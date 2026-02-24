@@ -873,12 +873,13 @@ async fn apply_wallpaper(
     
     let config = state.get_config().await;
     
+    // 记录切换前的引擎状态，用于判断是否跨引擎切换
+    let was_swww_running = state.engine.swww_daemon.is_running().await;
+    let was_mpvpaper_running = state.engine.mpvpaper.is_running().await;
+    
     match mode {
         WallMode::Video => {
-            // 停止 swww
-            state.engine.swww_daemon.kill().await;
-            
-            // 启动 mpvpaper
+            // 启动 mpvpaper（先启动新引擎）
             tracing::info!("Applying video wallpaper: {:?}", path);
             
             let mut cmd = tokio::process::Command::new("mpvpaper");
@@ -904,19 +905,23 @@ async fn apply_wallpaper(
             
             match cmd.spawn() {
                 Ok(child) => {
-                    // 先杀掉旧的 mpvpaper，再设置新的
+                    // set() 会先杀掉旧的 mpvpaper（同引擎切换），再设置新的
                     state.engine.mpvpaper.set(child).await;
                 }
                 Err(e) => {
                     anyhow::bail!("Failed to start mpvpaper: {}", e);
                 }
             }
+            
+            // 跨引擎切换：等待 mpvpaper 渲染首帧后再停止 swww，避免黑屏闪烁
+            if was_swww_running {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                state.engine.swww_daemon.kill().await;
+                tracing::debug!("Killed swww-daemon after mpvpaper stabilized");
+            }
         }
         WallMode::Image => {
-            // 停止 mpvpaper
-            state.engine.mpvpaper.kill().await;
-            
-            // 确保 swww-daemon 运行
+            // 确保 swww-daemon 运行（先启动新引擎）
             if !state.engine.swww_daemon.is_running().await {
                 tracing::info!("Starting swww-daemon...");
                 
@@ -967,6 +972,12 @@ async fn apply_wallpaper(
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 anyhow::bail!("swww img failed: {}", stderr.trim());
+            }
+            
+            // 跨引擎切换：swww img 成功后再停止 mpvpaper，避免黑屏闪烁
+            if was_mpvpaper_running {
+                state.engine.mpvpaper.kill().await;
+                tracing::debug!("Killed mpvpaper after swww image applied");
             }
         }
     }
