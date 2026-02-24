@@ -423,6 +423,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "tracing",
  "walkdir",
 ]
 
