@@ -173,12 +173,13 @@ fn print_space(fmt: &Formatter, space: &SpaceSnapshot) {
     }
 }
 
-/// 截断文件名以适应显示宽度
+/// 截断文件名以适应显示宽度（按字符边界安全截断）
 fn truncate_filename(name: &str, max_len: usize) -> String {
-    if name.len() <= max_len {
+    if name.chars().count() <= max_len {
         name.to_string()
     } else {
-        format!("{}...", &name[..max_len - 3])
+        let truncated: String = name.chars().take(max_len - 3).collect();
+        format!("{}...", truncated)
     }
 }
 
