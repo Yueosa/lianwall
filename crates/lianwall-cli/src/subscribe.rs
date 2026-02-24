@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-use lianwall_core::socket::{Event, EventType};
+use lianwall_core::socket::{Event, EventType, Response};
 
 use crate::client::{Client, ClientError};
 use crate::output::Formatter;
@@ -69,6 +69,27 @@ pub fn run_subscribe(
     // 发送订阅请求
     let session_id = client.subscribe(events, true)?;
     fmt.print_success(&format!("Subscribed (session: {})", session_id));
+
+    // 读取 immediate_sync 的初始状态
+    match client.receive_response() {
+        Ok(Response::Status(status)) => {
+            let mode_str = format!("{:?}", status.mode);
+            let current = status.current_filename.as_deref().unwrap_or("none");
+            fmt.print_info(&format!(
+                "Current: {} [{}] | {} wallpapers ({} available, {} locked)",
+                current, mode_str, status.total_wallpapers, status.available_count, status.locked_count
+            ));
+        }
+        Ok(Response::Event(event)) => {
+            // daemon 没发 sync 数据而是直接推事件了，正常打印
+            print_event(fmt, &event);
+        }
+        Ok(_) => {} // 其他同步响应，忽略
+        Err(e) => {
+            fmt.print_warning(&format!("Failed to read initial sync: {}", e));
+        }
+    }
+
     fmt.print_info("Waiting for events... (Ctrl+C to exit)");
     println!();
 

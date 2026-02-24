@@ -360,20 +360,40 @@ impl Client {
     /// 接收事件（阻塞）
     ///
     /// # 注意
-    /// 必须先调用 `subscribe` 建立订阅
+    /// 必须先调用 `subscribe` 建立订阅。
+    /// 如果收到同步响应（如 immediate_sync 的 Status），会自动跳过并继续等待。
     pub fn receive_event(&mut self) -> Result<Event, ClientError> {
-        // 读取响应（行分隔）
+        loop {
+            let mut line = String::new();
+            self.reader.read_line(&mut line)?;
+            
+            let resp: Response = serde_json::from_str(line.trim())
+                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
+
+            match resp {
+                Response::Event(event) => return Ok(event),
+                Response::Error { code, message } => return Err(ClientError::DaemonError { code, message }),
+                // immediate_sync 同步响应：跳过，继续等待真正的事件
+                Response::Status(_) | Response::Space(_) | Response::Config(_) | Response::TimeInfo(_) => {
+                    continue;
+                }
+                other => return Err(unexpected_response(&other)),
+            }
+        }
+    }
+
+    /// 接收原始响应（阻塞）
+    ///
+    /// 与 `receive_event` 不同，返回完整的 Response，不会跳过同步响应。
+    /// 用于需要处理 immediate_sync 数据的场景。
+    pub fn receive_response(&mut self) -> Result<Response, ClientError> {
         let mut line = String::new();
         self.reader.read_line(&mut line)?;
         
         let resp: Response = serde_json::from_str(line.trim())
             .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
-
-        match resp {
-            Response::Event(event) => Ok(event),
-            Response::Error { code, message } => Err(ClientError::DaemonError { code, message }),
-            other => Err(unexpected_response(&other)),
-        }
+        
+        Ok(resp)
     }
 
     /// 设置读取超时
