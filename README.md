@@ -10,7 +10,11 @@
 
 **适用于所有支持 Wayland 的类 Unix 系统**（Linux / BSD 等）
 
-**关于项目的大版本更新日志, 你可以查看 [CHANGELOG](./CHANGELOG.md)**
+| 文档 | 说明 |
+|------|------|
+| [CHANGELOG](./CHANGELOG.md) | 大版本更新日志 |
+| [DAEMON-API](./DAEMON-API.md) | Unix Socket 协议参考（供 GUI / 第三方集成使用） |
+| [CLI-JSON](./CLI-JSON.md) | CLI `--json` 输出格式参考（供脚本和自动化使用） |
 
 </div>
 
