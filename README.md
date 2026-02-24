@@ -222,6 +222,13 @@ bind = ALT, S, exec, lianwall switch    # 切换模式
 | `config set <KEY> <VALUE>` | 设置配置项 |
 | `config reset` | 重置为默认配置 |
 
+### Hook 管理
+
+| 命令 | 说明 |
+|------|------|
+| `hook list` | 列出所有 hook 配置 |
+| `hook reload` | 热更新重载 `~/.config/lianwall/hooks.toml`（无需重启 daemon） |
+
 ---
 
 ## 🏗️ 架构设计
