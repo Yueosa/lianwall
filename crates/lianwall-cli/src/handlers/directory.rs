@@ -6,12 +6,56 @@
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
+use lianwall_core::config::WallMode;
 use lianwall_core::socket::{Event, EventType};
 
 use crate::client::ClientError;
 use crate::output::{messages, Formatter};
 
 use super::{connect, Result};
+
+/// 单个模式的空间信息
+struct ModeSpaceInfo {
+    total: usize,
+    available: usize,
+    locked: usize,
+}
+
+/// 两个模式的空间信息收集器
+struct SpaceCollector {
+    video: Option<ModeSpaceInfo>,
+    image: Option<ModeSpaceInfo>,
+}
+
+impl SpaceCollector {
+    fn new() -> Self {
+        Self { video: None, image: None }
+    }
+
+    /// 记录一个 SpaceUpdated 事件，返回是否两个模式都已收集
+    fn record(&mut self, mode: &WallMode, total: usize, available: usize, locked: usize) -> bool {
+        let info = ModeSpaceInfo { total, available, locked };
+        match mode {
+            WallMode::Video => self.video = Some(info),
+            WallMode::Image => self.image = Some(info),
+        }
+        self.video.is_some() && self.image.is_some()
+    }
+
+    /// 汇总获取 (total, available, locked)
+    fn totals(&self) -> (usize, usize, usize) {
+        let v = self.video.as_ref().map(|i| (i.total, i.available, i.locked)).unwrap_or_default();
+        let i = self.image.as_ref().map(|i| (i.total, i.available, i.locked)).unwrap_or_default();
+        (v.0 + i.0, v.1 + i.1, v.2 + i.2)
+    }
+
+    /// 格式化详细输出（视频 X / 图片 Y）
+    fn detail_string(&self, fmt: &Formatter) -> String {
+        let v = self.video.as_ref().map(|i| i.total).unwrap_or(0);
+        let i = self.image.as_ref().map(|i| i.total).unwrap_or(0);
+        format!("{} {} / {} {}", fmt.icon_video(), v, fmt.icon_image(), i)
+    }
+}
 
 /// 等待事件的超时时间（秒）
 const WAIT_TIMEOUT_SECS: u64 = 30;
@@ -40,22 +84,23 @@ pub fn handle_reload(fmt: &Formatter) -> Result<()> {
         io::stderr().flush().unwrap();
     }
 
-    // 等待 ConfigChanged 和 SpaceUpdated 两个事件
+    // 等待 ConfigChanged 和两个 SpaceUpdated 事件（Video + Image）
     let mut config_changed = false;
-    let mut space_updated_info: Option<(usize, usize, usize)> = None; // (total, available, locked)
+    let mut collector = SpaceCollector::new();
+    let mut space_done = false;
 
     let result = wait_for_events(&mut client, fmt, |event| {
         match event {
             Event::ConfigChanged { .. } => {
                 config_changed = true;
             }
-            Event::SpaceUpdated { summary, .. } => {
-                space_updated_info = Some((summary.total, summary.available, summary.locked));
+            Event::SpaceUpdated { mode, summary, .. } => {
+                space_done = collector.record(mode, summary.total, summary.available, summary.locked);
             }
             _ => {}
         }
-        // 两个事件都收到才算完成
-        config_changed && space_updated_info.is_some()
+        // ConfigChanged + 两个模式的 SpaceUpdated 全部收到才算完成
+        config_changed && space_done
     });
 
     // 清除 "Reloading..."
@@ -65,25 +110,32 @@ pub fn handle_reload(fmt: &Formatter) -> Result<()> {
 
     match result {
         Ok(()) => {
-            if let Some((total, available, locked)) = space_updated_info {
-                if fmt.is_json() {
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "status": "ok",
-                            "total": total,
-                            "available": available,
-                            "locked": locked
-                        })
-                    );
-                } else {
-                    fmt.print_success(&format!(
-                        "Reloaded: {} wallpapers ({} available, {} locked)",
-                        total, available, locked
-                    ));
-                }
+            let (total, available, locked) = collector.totals();
+            if fmt.is_json() {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "ok",
+                        "total": total,
+                        "available": available,
+                        "locked": locked,
+                        "video": collector.video.as_ref().map(|v| serde_json::json!({
+                            "total": v.total,
+                            "available": v.available,
+                            "locked": v.locked
+                        })),
+                        "image": collector.image.as_ref().map(|v| serde_json::json!({
+                            "total": v.total,
+                            "available": v.available,
+                            "locked": v.locked
+                        }))
+                    })
+                );
             } else {
-                fmt.print_success("Reloaded config");
+                fmt.print_success(&format!(
+                    "Reloaded: {} wallpapers ({} available, {} locked) [{}]",
+                    total, available, locked, collector.detail_string(fmt)
+                ));
             }
         }
         Err(_) => {
@@ -119,13 +171,12 @@ pub fn handle_rescan(fmt: &Formatter) -> Result<()> {
         io::stderr().flush().unwrap();
     }
 
-    // 等待 SpaceUpdated 事件
-    let mut space_info: Option<(usize, usize, usize)> = None;
+    // 等待两个 SpaceUpdated 事件（Video + Image）
+    let mut collector = SpaceCollector::new();
 
     let result = wait_for_events(&mut client, fmt, |event| {
-        if let Event::SpaceUpdated { summary, .. } = event {
-            space_info = Some((summary.total, summary.available, summary.locked));
-            return true;
+        if let Event::SpaceUpdated { mode, summary, .. } = event {
+            return collector.record(mode, summary.total, summary.available, summary.locked);
         }
         false
     });
@@ -137,23 +188,32 @@ pub fn handle_rescan(fmt: &Formatter) -> Result<()> {
 
     match result {
         Ok(()) => {
-            if let Some((total, available, locked)) = space_info {
-                if fmt.is_json() {
-                    println!(
-                        "{}",
-                        serde_json::json!({
-                            "status": "ok",
-                            "total": total,
-                            "available": available,
-                            "locked": locked
-                        })
-                    );
-                } else {
-                    fmt.print_success(&format!(
-                        "Rescanned: {} wallpapers ({} available, {} locked)",
-                        total, available, locked
-                    ));
-                }
+            let (total, available, locked) = collector.totals();
+            if fmt.is_json() {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "ok",
+                        "total": total,
+                        "available": available,
+                        "locked": locked,
+                        "video": collector.video.as_ref().map(|v| serde_json::json!({
+                            "total": v.total,
+                            "available": v.available,
+                            "locked": v.locked
+                        })),
+                        "image": collector.image.as_ref().map(|v| serde_json::json!({
+                            "total": v.total,
+                            "available": v.available,
+                            "locked": v.locked
+                        }))
+                    })
+                );
+            } else {
+                fmt.print_success(&format!(
+                    "Rescanned: {} wallpapers ({} available, {} locked) [{}]",
+                    total, available, locked, collector.detail_string(fmt)
+                ));
             }
         }
         Err(_) => {
