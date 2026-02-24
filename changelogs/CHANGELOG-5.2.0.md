@@ -34,10 +34,10 @@
 # 顶层配置
 max_concurrent = 8   # 最大并发执行的 hook 数量（修改需重启 daemon）
 
-[[hooks]]
+[[hook]]
 name    = "notify"
 on      = "wallpaper_changed"
-command = "notify-send '壁纸已切换' '$LIANWALL_CURRENT_FILENAME'"
+command = "notify-send '壁纸已切换' \"$LIANWALL_FILENAME\""
 enabled = true
 ```
 
@@ -45,33 +45,29 @@ enabled = true
 
 | 事件名 | 触发时机 |
 |--------|----------|
-| `wallpaper_changed` | 壁纸切换（next / prev / set） |
+| `wallpaper_changed` | 壁纸切换完成（定时 / 手动 next / prev / set 等） |
 | `mode_changed` | 模式切换（Video ↔ Image） |
-| `locked` | 壁纸被锁定 |
-| `unlocked` | 壁纸被解锁 |
-| `startup` | daemon 启动 |
-| `shutdown` | daemon 关闭 |
+| `space_updated` | 壁纸空间更新（扫描完成 / 锁定变化 / 时间点刷新） |
+| `config_changed` | 配置项更新 |
+| `vram_changed` | 显存状态变化（降级 / 恢复） |
+| `time_point_reached` | 时间点到达 |
+| `error` | daemon 内部错误 |
+| `daemon_shutdown` | daemon 即将关闭 |
 
-**环境变量**（注入到每个 Hook 进程）：
+> **注意**：暂不支持 `daemon_startup` 事件。如需感知 daemon 启动，可用 `on = "wallpaper_changed"` + `trigger = ["daemon_start"]` 代替（daemon 启动后设置首张壁纸时触发）。
 
-| 变量 | 说明 |
-|------|------|
-| `LIANWALL_EVENT` | 触发事件名 |
-| `LIANWALL_MODE` | 当前模式（`Video` / `Image`） |
-| `LIANWALL_CURRENT` | 当前壁纸完整路径 |
-| `LIANWALL_CURRENT_FILENAME` | 当前壁纸文件名 |
-| `LIANWALL_TRIGGER` | 触发原因（`next` / `prev` / `set` / `manual` 等） |
-| `LIANWALL_PREV` | 上一张壁纸路径（wallpaper_changed 事件） |
-| `LIANWALL_PREV_FILENAME` | 上一张壁纸文件名 |
+所有事件的完整环境变量列表见 [HOOKS.md](../HOOKS.md)。`LIANWALL_EVENT` 是所有事件共有的环境变量，其余变量按事件类型各不相同。
+
+`wallpaper_changed` 注入的主要变量：`$LIANWALL_PATH`（完整路径）、`$LIANWALL_FILENAME`（文件名）、`$LIANWALL_MODE`（`video`/`image`）、`$LIANWALL_TRIGGER`（触发原因）。
 
 **可选过滤字段**（不填则不限制）：
 
 ```toml
 # 只在 Video 模式下触发
-mode = "Video"
+mode = "video"
 
 # 只在手动 next/prev 时触发，排除自动轮换
-trigger = ["next", "prev"]
+trigger = ["manual_next", "manual_prev"]
 
 # 超时时间（秒，超时后强制终止）
 timeout = 10
@@ -103,9 +99,9 @@ lianwall hook reload
   2 hooks (1 enabled, 1 disabled)
 
   ● [1] notify on wallpaper_changed
-    cmd: notify-send '壁纸已切换' '$LIANWALL_CURRENT_FILENAME'
+    cmd: notify-send '壁纸已切换' "$LIANWALL_FILENAME"
   ○ [2] log on wallpaper_changed
-    cmd: echo "$(date) $LIANWALL_CURRENT_FILENAME" >> ~/wallpaper.log
+    cmd: echo "$(date) $LIANWALL_FILENAME" >> ~/wallpaper.log
     mode: Video
 ```
 
@@ -215,7 +211,11 @@ max_concurrent = 8   # 默认值 8
 
 新增 [CLI-JSON.md](../CLI-JSON.md)，完整记录 CLI `--json` 模式下所有命令的输出结构、字段含义及脚本使用示例。
 
-### 7. 更新 DAEMON-API.md
+### 7. 新增 HOOKS.md
+
+新增 [HOOKS.md](../HOOKS.md)，独立于 hooks.toml 内联注释之外，完整记录所有事件的环境变量、trigger 过滤可用値、完整配置示例和调试技巧。
+
+### 8. 更新 DAEMON-API.md
 
 - 新增 `ReloadHooks`（请求 #16）、`ListHooks`（请求 #17）协议文档
 - 新增 `HookList` 响应类型及 `HookInfo` 字段说明
@@ -246,5 +246,6 @@ max_concurrent = 8   # 默认值 8
 | `crates/lianwall-cli/src/commands.rs` | 新增 HookAction 子命令 |
 | `crates/lianwall-cli/src/client.rs` | 新增 list_hooks() / reload_hooks() 方法 |
 | `CLI-JSON.md` | 新增：CLI JSON 输出完整参考文档 |
+| `HOOKS.md` | 新增：Hook 系统完整说明文档 |
 | `DAEMON-API.md` | 更新：Hook 协议文档、超时说明 |
 | `README.md` | 新增：文档索引表格、Hook 管理功能说明 |
