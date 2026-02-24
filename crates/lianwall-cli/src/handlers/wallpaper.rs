@@ -22,6 +22,17 @@ pub fn handle_next(fmt: &Formatter) -> Result<()> {
 
     // 查询新壁纸
     let status = client.status()?;
+    if fmt.is_json() {
+        let current_str = status.current.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let filename_str = status.current.as_ref().and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()));
+        println!("{}", serde_json::json!({
+            "success": true,
+            "current": current_str,
+            "current_filename": filename_str,
+            "mode": format!("{:?}", status.mode)
+        }));
+        return Ok(());
+    }
     if let Some(ref path) = status.current {
         let filename = path
             .file_name()
@@ -41,6 +52,17 @@ pub fn handle_prev(fmt: &Formatter) -> Result<()> {
 
     // 查询新壁纸
     let status = client.status()?;
+    if fmt.is_json() {
+        let current_str = status.current.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let filename_str = status.current.as_ref().and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()));
+        println!("{}", serde_json::json!({
+            "success": true,
+            "current": current_str,
+            "current_filename": filename_str,
+            "mode": format!("{:?}", status.mode)
+        }));
+        return Ok(());
+    }
     if let Some(ref path) = status.current {
         let filename = path
             .file_name()
@@ -69,11 +91,21 @@ pub fn handle_switch(fmt: &Formatter) -> Result<()> {
 
     // 查询新壁纸
     let status = client.status()?;
+    if fmt.is_json() {
+        let current_str = status.current.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let filename_str = status.current.as_ref().and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()));
+        println!("{}", serde_json::json!({
+            "success": true,
+            "mode": format!("{:?}", new_mode),
+            "current": current_str,
+            "current_filename": filename_str
+        }));
+        return Ok(());
+    }
     let icon = match new_mode {
         WallMode::Video => fmt.icon_video(),
         WallMode::Image => fmt.icon_image(),
     };
-
     if let Some(ref path) = status.current {
         let filename = path
             .file_name()
@@ -106,6 +138,19 @@ pub fn handle_set(fmt: &Formatter, path: PathBuf) -> Result<()> {
     let mut client = connect()?;
     client.set_wallpaper(path.clone())?;
 
+    if fmt.is_json() {
+        let status = client.status()?;
+        let path_str = path.to_string_lossy().into_owned();
+        let filename_str = path.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| path_str.clone());
+        println!("{}", serde_json::json!({
+            "success": true,
+            "path": path_str,
+            "current_filename": filename_str,
+            "mode": format!("{:?}", status.mode)
+        }));
+        return Ok(());
+    }
+
     let filename = path
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
@@ -122,11 +167,21 @@ pub fn handle_mode(fmt: &Formatter, mode: ModeArg) -> Result<()> {
 
     // 查询新壁纸
     let status = client.status()?;
+    if fmt.is_json() {
+        let current_str = status.current.as_ref().map(|p| p.to_string_lossy().into_owned());
+        let filename_str = status.current.as_ref().and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()));
+        println!("{}", serde_json::json!({
+            "success": true,
+            "mode": format!("{:?}", wall_mode),
+            "current": current_str,
+            "current_filename": filename_str
+        }));
+        return Ok(());
+    }
     let icon = match wall_mode {
         WallMode::Video => fmt.icon_video(),
         WallMode::Image => fmt.icon_image(),
     };
-
     if let Some(ref path) = status.current {
         let filename = path
             .file_name()
