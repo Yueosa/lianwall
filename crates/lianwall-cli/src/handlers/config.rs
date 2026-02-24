@@ -127,6 +127,7 @@ fn handle_config_set(fmt: &Formatter, key: &str, value: &str) -> Result<()> {
             println!(
                 "{}",
                 serde_json::json!({
+                    "success": true,
                     "key": key,
                     "old_value": old_value,
                     "new_value": json_value
@@ -159,6 +160,7 @@ fn handle_config_set(fmt: &Formatter, key: &str, value: &str) -> Result<()> {
         println!(
             "{}",
             serde_json::json!({
+                "success": true,
                 "key": key,
                 "old_value": old_value,
                 "new_value": value
@@ -195,21 +197,18 @@ fn handle_config_reset(fmt: &Formatter) -> Result<()> {
     // 创建默认配置
     create(ConfigCreateInput { path: None })?;
 
-    fmt.print_success("Config reset to default");
-
-    if is_daemon_running() {
-        fmt.print_info("Run 'lianwall reload' to apply changes to running daemon");
-    }
-
-    // 显示新配置
-    if !fmt.is_json() {
-        println!();
-    }
-
     let output = read(ConfigReadInput { path: None })?;
     if fmt.is_json() {
-        println!("{}", serde_json::to_string_pretty(&output.config).unwrap());
+        println!("{}", serde_json::json!({
+            "success": true,
+            "config": output.config
+        }));
     } else {
+        fmt.print_success("Config reset to default");
+        if is_daemon_running() {
+            fmt.print_info("Run 'lianwall reload' to apply changes to running daemon");
+        }
+        println!();
         let toml_str = toml::to_string_pretty(&output.config)
             .map_err(|e| HandlerError::Other(format!("Failed to serialize config: {}", e)))?;
         println!("{}", toml_str);
