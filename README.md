@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.1.2-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.2.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
