@@ -858,6 +858,18 @@ async fn handle_shutdown(state: &Arc<SharedState>, event_bus: &EventBus) -> Resp
     Response::ok()
 }
 
+/// 跨引擎切换延迟（ms）
+///
+/// 新引擎启动后等待此时间再杀旧引擎，确保新引擎渲染出首帧。
+/// - Image→Video: mpvpaper 需要初始化 mpv + 解码首帧 + wlr-layer-shell 渲染
+/// - Video→Image: swww img 返回即已生效，但加短延迟确保合成器刷新
+const CROSS_ENGINE_DELAY_MS: u64 = 800;
+
+/// 同引擎切换延迟（ms）
+///
+/// Video→Video 时，新 mpvpaper 启动后等待此时间再杀旧 mpvpaper。
+const SAME_ENGINE_VIDEO_DELAY_MS: u64 = 600;
+
 /// 应用壁纸
 ///
 /// 注意：此函数会检查文件存在性，如果文件不存在会返回错误
@@ -905,8 +917,23 @@ async fn apply_wallpaper(
             
             match cmd.spawn() {
                 Ok(child) => {
-                    // set() 会先杀掉旧的 mpvpaper（同引擎切换），再设置新的
-                    state.engine.mpvpaper.set(child).await;
+                    if was_mpvpaper_running {
+                        // 同引擎切换 (Video→Video):
+                        // 先等新 mpvpaper 渲染首帧，再杀旧的
+                        let old_child = state.engine.mpvpaper.take().await;
+                        state.engine.mpvpaper.set_without_kill(child).await;
+                        
+                        tokio::time::sleep(std::time::Duration::from_millis(SAME_ENGINE_VIDEO_DELAY_MS)).await;
+                        
+                        if let Some(mut old) = old_child {
+                            let _ = old.kill().await;
+                            let _ = old.wait().await;
+                            tracing::debug!("Killed old mpvpaper after new one stabilized");
+                        }
+                    } else {
+                        // 无旧 mpvpaper 或跨引擎切换，直接设置
+                        state.engine.mpvpaper.set_without_kill(child).await;
+                    }
                 }
                 Err(e) => {
                     anyhow::bail!("Failed to start mpvpaper: {}", e);
@@ -915,7 +942,7 @@ async fn apply_wallpaper(
             
             // 跨引擎切换：等待 mpvpaper 渲染首帧后再停止 swww，避免黑屏闪烁
             if was_swww_running {
-                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(CROSS_ENGINE_DELAY_MS)).await;
                 state.engine.swww_daemon.kill().await;
                 tracing::debug!("Killed swww-daemon after mpvpaper stabilized");
             }
@@ -974,10 +1001,11 @@ async fn apply_wallpaper(
                 anyhow::bail!("swww img failed: {}", stderr.trim());
             }
             
-            // 跨引擎切换：swww img 成功后再停止 mpvpaper，避免黑屏闪烁
+            // 跨引擎切换：swww img 成功后延迟停止 mpvpaper，确保合成器完成帧切换
             if was_mpvpaper_running {
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 state.engine.mpvpaper.kill().await;
-                tracing::debug!("Killed mpvpaper after swww image applied");
+                tracing::debug!("Killed mpvpaper after swww image applied and stabilized");
             }
         }
     }

@@ -165,7 +165,7 @@ impl ManagedProcess {
         }
     }
 
-    /// 设置进程
+    /// 设置进程（如果已有旧进程，先 kill 旧进程）
     pub async fn set(&self, child: tokio::process::Child) {
         let mut guard = self.child.lock().await;
         // 如果已有进程，先 kill
@@ -175,6 +175,24 @@ impl ManagedProcess {
         }
         *guard = Some(child);
         tracing::debug!("{} process started", self.name);
+    }
+
+    /// 设置进程（不杀旧进程，由调用方自行管理旧进程生命周期）
+    ///
+    /// 用于需要延迟杀死旧进程的场景（如 Video→Video 切换时
+    /// 先启动新 mpvpaper，等渲染首帧后再杀旧的）。
+    pub async fn set_without_kill(&self, child: tokio::process::Child) {
+        let mut guard = self.child.lock().await;
+        *guard = Some(child);
+        tracing::debug!("{} process started (no-kill mode)", self.name);
+    }
+
+    /// 取出进程（不杀死，转移所有权给调用方）
+    ///
+    /// 取出后内部状态变为 None（无进程）。
+    pub async fn take(&self) -> Option<tokio::process::Child> {
+        let mut guard = self.child.lock().await;
+        guard.take()
     }
 
     /// 终止进程
