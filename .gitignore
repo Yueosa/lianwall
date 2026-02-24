@@ -10,3 +10,5 @@
 !CHANGELOG.md
 !changelogs/**
 !DAEMON-API.md
+!CLI-JSON.md
+!HOOKS.md
