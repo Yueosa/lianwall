@@ -33,10 +33,20 @@ pub fn handle_lock(fmt: &Formatter, path: PathBuf) -> Result<()> {
     let mut client = connect()?;
     client.lock(path.clone()).map_err(|e| map_lock_error(e, &path))?;
 
+    let path_str = path.to_string_lossy().into_owned();
     let filename = path
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string());
+        .unwrap_or_else(|| path_str.clone());
+    if fmt.is_json() {
+        println!("{}", serde_json::json!({
+            "success": true,
+            "path": path_str,
+            "filename": filename,
+            "locked": true
+        }));
+        return Ok(());
+    }
     fmt.print_success(&format!("{} Locked: {}", fmt.icon_lock(), filename));
     Ok(())
 }
@@ -48,10 +58,20 @@ pub fn handle_unlock(fmt: &Formatter, path: PathBuf) -> Result<()> {
     let mut client = connect()?;
     client.unlock(path.clone()).map_err(|e| map_lock_error(e, &path))?;
 
+    let path_str = path.to_string_lossy().into_owned();
     let filename = path
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string());
+        .unwrap_or_else(|| path_str.clone());
+    if fmt.is_json() {
+        println!("{}", serde_json::json!({
+            "success": true,
+            "path": path_str,
+            "filename": filename,
+            "locked": false
+        }));
+        return Ok(());
+    }
     fmt.print_success(&format!("{} Unlocked: {}", fmt.icon_unlock(), filename));
     Ok(())
 }
@@ -63,10 +83,19 @@ pub fn handle_toggle_lock(fmt: &Formatter, path: PathBuf) -> Result<()> {
     let mut client = connect()?;
     client.toggle_lock(path.clone()).map_err(|e| map_lock_error(e, &path))?;
 
+    let path_str = path.to_string_lossy().into_owned();
     let filename = path
         .file_name()
         .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.to_string_lossy().to_string());
+        .unwrap_or_else(|| path_str.clone());
+    if fmt.is_json() {
+        println!("{}", serde_json::json!({
+            "success": true,
+            "path": path_str,
+            "filename": filename
+        }));
+        return Ok(());
+    }
     fmt.print_success(&format!("Toggled lock: {}", filename));
     Ok(())
 }
