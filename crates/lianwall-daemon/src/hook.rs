@@ -17,9 +17,6 @@ use lianwall_core::hook::{self, HookEntry, HookEvent};
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
 
-/// 最大并发 hook 数
-const MAX_CONCURRENT_HOOKS: usize = 8;
-
 /// Hook 管理器句柄（用于热更新）
 #[derive(Clone)]
 pub struct HookHandle {
@@ -28,6 +25,9 @@ pub struct HookHandle {
 
 impl HookHandle {
     /// 热更新 hook 配置
+    ///
+    /// 注意: `max_concurrent` 的变动需要重启 daemon 才生效，
+    /// 这里只更新 hook 规则列表。
     pub async fn reload(&self) -> Result<usize, String> {
         let config = hook::reload_hooks()?;
         let count = config.hook.len();
@@ -49,10 +49,12 @@ impl HookHandle {
 pub fn spawn(event_bus: &EventBus) -> HookHandle {
     let config = hook::load_or_create_hooks();
     let enabled = config.hook.iter().filter(|h| h.enabled).count();
+    let max_concurrent = config.max_concurrent.max(1);
     tracing::info!(
-        "Hook system initialized: {} hooks ({} enabled)",
+        "Hook system initialized: {} hooks ({} enabled), max_concurrent={}",
         config.hook.len(),
-        enabled
+        enabled,
+        max_concurrent
     );
 
     let hooks = Arc::new(RwLock::new(config.hook));
@@ -61,7 +63,7 @@ pub fn spawn(event_bus: &EventBus) -> HookHandle {
     };
 
     let mut rx = event_bus.subscribe();
-    let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_HOOKS));
+    let semaphore = Arc::new(Semaphore::new(max_concurrent));
 
     tokio::spawn(async move {
         loop {

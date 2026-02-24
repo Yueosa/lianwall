@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 /// hooks.toml 顶层结构
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HookConfig {
+    /// 最大并发 hook 数（默认 8）
+    #[serde(default = "default_max_concurrent")]
+    pub max_concurrent: usize,
     /// hook 规则列表
     #[serde(default)]
     pub hook: Vec<HookEntry>,
@@ -12,8 +15,15 @@ pub struct HookConfig {
 
 impl Default for HookConfig {
     fn default() -> Self {
-        Self { hook: vec![] }
+        Self {
+            max_concurrent: default_max_concurrent(),
+            hook: vec![],
+        }
     }
+}
+
+fn default_max_concurrent() -> usize {
+    8
 }
 
 /// 单条 hook 规则
@@ -125,6 +135,17 @@ pub const DEFAULT_HOOKS_TOML: &str = r#"# ======================================
 #   trigger  (array,  可选)  触发原因过滤，仅对 wallpaper_changed 有效
 #   timeout  (int,    可选)  超时秒数，默认 10，超时后进程会被杀死
 #   enabled  (bool,   可选)  是否启用，默认 true
+#
+# ============================================================================
+# 顶层配置字段说明
+# ============================================================================
+#
+#   max_concurrent  (int, 可选)  最大同时运行的 hook 数，默认 8
+#                               超出时后续 hook 排队等待，不会丢失
+#                               若你的 hook 都是快速命令（notify-send 等），8 完全够用
+#                               若有多个长耗时 hook（如 pywal），可适当调大
+#
+# 示例: max_concurrent = 4
 #
 # ============================================================================
 # 事件列表 (on)
