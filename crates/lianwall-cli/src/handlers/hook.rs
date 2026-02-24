@@ -88,6 +88,10 @@ fn handle_hook_reload(fmt: &Formatter) -> Result<()> {
     client.reload_hooks().map_err(|e| {
         HandlerError::Other(format!("Failed to reload hooks: {}", e))
     })?;
-    fmt.print_success("Hooks reloaded");
+    if fmt.is_json() {
+        println!("{}", serde_json::json!({"success": true}));
+    } else {
+        fmt.print_success("Hooks reloaded");
+    }
     Ok(())
 }
