@@ -179,6 +179,33 @@ async fn process_request(
             Some(handler::handle_query(state, request).await)
         }
         
+        // ListHooks: 直接读取 HookHandle
+        Request::ListHooks => {
+            let guard = state.hook_handle.read().await;
+            match guard.as_ref() {
+                Some(handle) => {
+                    let entries = handle.list().await;
+                    let hooks: Vec<lianwall_core::socket::HookInfo> = entries
+                        .iter()
+                        .map(|e| lianwall_core::socket::HookInfo {
+                            name: e.display_name(),
+                            on: e.on.to_string(),
+                            command: e.command.clone(),
+                            mode: e.mode.clone(),
+                            trigger: e.trigger.clone(),
+                            timeout: e.timeout,
+                            enabled: e.enabled,
+                        })
+                        .collect();
+                    Some(Response::HookList(hooks))
+                }
+                None => Some(Response::error(
+                    ErrorCode::InternalError,
+                    "Hook system not initialized",
+                )),
+            }
+        }
+        
         // Subscribe: 管理订阅状态
         Request::Subscribe { events, immediate_sync } => {
             // 展开 All 为所有具体事件类型
@@ -244,6 +271,8 @@ fn get_request_timeout(request: &Request) -> Duration {
         Request::SetMode { .. } => Duration::from_secs(10),
         Request::Lock { .. } | Request::Unlock { .. } | Request::ToggleLock { .. } => Duration::from_secs(2),
         Request::SetConfig { .. } | Request::ReloadConfig => Duration::from_secs(5),
+        Request::ReloadHooks => Duration::from_secs(5),
+        Request::ListHooks => Duration::from_secs(2),
         Request::Rescan => Duration::from_secs(60), // 大目录可能很慢
         Request::Shutdown => Duration::from_secs(10),
         

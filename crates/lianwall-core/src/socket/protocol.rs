@@ -117,6 +117,12 @@ pub enum Request {
     /// 重新加载配置文件
     ReloadConfig,
 
+    /// 重新加载 hooks.toml
+    ReloadHooks,
+
+    /// 列出当前 hook 配置
+    ListHooks,
+
     /// 关闭守护进程
     Shutdown,
 
@@ -155,6 +161,8 @@ impl Request {
             Request::SetConfig { .. } => "SetConfig",
             Request::Rescan => "Rescan",
             Request::ReloadConfig => "ReloadConfig",
+            Request::ReloadHooks => "ReloadHooks",
+            Request::ListHooks => "ListHooks",
             Request::Shutdown => "Shutdown",
             // Subscribe
             Request::Subscribe { .. } => "Subscribe",
@@ -171,6 +179,7 @@ impl Request {
                 | Request::GetSpace { .. }
                 | Request::GetTimeInfo
                 | Request::GetConfig { .. }
+                | Request::ListHooks
         )
     }
 
@@ -188,6 +197,7 @@ impl Request {
                 | Request::SetConfig { .. }
                 | Request::Rescan
                 | Request::ReloadConfig
+                | Request::ReloadHooks
                 | Request::Shutdown
         )
     }
@@ -236,6 +246,9 @@ pub enum Response {
 
     /// 配置数据
     Config(ConfigSnapshot),
+
+    /// Hook 列表
+    HookList(Vec<HookInfo>),
 
     // ==================== 订阅响应 ====================
     /// 订阅成功
@@ -808,6 +821,27 @@ pub struct ConfigConstraints {
     pub pattern: Option<String>,
 }
 
+/// Hook 信息（ListHooks 响应）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookInfo {
+    /// 标识名
+    pub name: String,
+    /// 触发事件
+    pub on: String,
+    /// Shell 命令
+    pub command: String,
+    /// 模式过滤
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    /// 触发原因过滤
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<Vec<String>>,
+    /// 超时秒数
+    pub timeout: u64,
+    /// 是否启用
+    pub enabled: bool,
+}
+
 // ============================================================================
 // 测试
 // ============================================================================
@@ -910,10 +944,12 @@ mod tests {
     fn test_request_classification() {
         assert!(Request::Ping.is_query());
         assert!(Request::GetStatus.is_query());
+        assert!(Request::ListHooks.is_query());
         assert!(!Request::Next { trigger_hint: None }.is_query());
 
         assert!(Request::Next { trigger_hint: None }.is_command());
         assert!(Request::SetMode { mode: WallMode::Video }.is_command());
+        assert!(Request::ReloadHooks.is_command());
         assert!(!Request::Ping.is_command());
 
         assert!(Request::Subscribe { events: vec![], immediate_sync: false }.is_subscription());

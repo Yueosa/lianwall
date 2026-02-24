@@ -23,6 +23,8 @@ use lianwall_core::config::{Config, WallMode};
 use lianwall_core::gpu::{VramState, VramInfo, GpuBackend};
 use lianwall_core::wallpaper::{WallpaperSpace, TimePoint};
 
+use crate::hook::HookHandle;
+
 /// GPU 状态快照（包含 VramInfo 用于查询）
 #[derive(Debug, Clone)]
 pub struct GpuSnapshot {
@@ -303,6 +305,9 @@ pub struct SharedState {
     /// (video_scanned, image_scanned)
     pub scanned_counts: RwLock<(usize, usize)>,
     
+    /// Hook 管理器句柄（hook 系统初始化后设置）
+    pub hook_handle: RwLock<Option<HookHandle>>,
+    
     /// 启动时间
     start_time: Instant,
     
@@ -348,6 +353,7 @@ impl SharedState {
             playback_history: RwLock::new(PlaybackHistory::new()),
             next_switch: RwLock::new(Instant::now() + std::time::Duration::from_secs(initial_interval)),
             scanned_counts: RwLock::new((0, 0)),
+            hook_handle: RwLock::new(None),
             start_time: Instant::now(),
             shutdown_tx,
         });

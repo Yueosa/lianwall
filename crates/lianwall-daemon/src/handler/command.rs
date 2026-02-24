@@ -53,6 +53,8 @@ pub async fn handle_command(
         
         Request::Rescan => handle_rescan(state, event_bus).await,
         
+        Request::ReloadHooks => handle_reload_hooks(state).await,
+        
         Request::Shutdown => handle_shutdown(state, event_bus).await,
         
         // Query 请求不应该到这里
@@ -697,6 +699,21 @@ async fn handle_reload_config(state: &Arc<SharedState>, event_bus: &EventBus) ->
             Response::ok()
         }
         Err(e) => Response::error(ErrorCode::ConfigError, format!("Failed to reload config: {}", e)),
+    }
+}
+
+/// 重新加载 hooks.toml
+async fn handle_reload_hooks(state: &Arc<SharedState>) -> Response {
+    let guard = state.hook_handle.read().await;
+    match guard.as_ref() {
+        Some(handle) => match handle.reload().await {
+            Ok(enabled) => {
+                tracing::info!("Hooks reloaded: {} enabled", enabled);
+                Response::ok()
+            }
+            Err(e) => Response::error(ErrorCode::ConfigError, format!("Failed to reload hooks: {}", e)),
+        },
+        None => Response::error(ErrorCode::InternalError, "Hook system not initialized"),
     }
 }
 

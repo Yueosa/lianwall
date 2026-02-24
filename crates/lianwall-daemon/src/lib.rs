@@ -6,6 +6,7 @@ pub mod command;
 pub mod connection;
 pub mod event;
 pub mod handler;
+pub mod hook;
 pub mod scheduler;
 pub mod server;
 pub mod state;

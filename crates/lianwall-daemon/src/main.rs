@@ -25,7 +25,7 @@
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 
-use lianwall_daemon::{command, event::EventBus, scheduler, server, state::SharedState};
+use lianwall_daemon::{command, event::EventBus, scheduler, server, state::SharedState, hook};
 use lianwall_core::wallpaper::{scan_directory_async, rebuild_space, load_weights, filter_active};
 use lianwall_core::config::ConfigCreateInput;
 
@@ -73,6 +73,10 @@ async fn main() -> anyhow::Result<()> {
     let (cmd_queue, cmd_rx) = command::CommandQueue::new(256);
     let cmd_tx = cmd_queue.sender();
     tracing::info!("CommandQueue created");
+
+    // 启动 Hook 管理器
+    let hook_handle = hook::spawn(&event_bus);
+    *state.hook_handle.write().await = Some(hook_handle);
 
     // 初始扫描壁纸
     tracing::info!("Scanning wallpapers...");

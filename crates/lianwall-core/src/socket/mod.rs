@@ -68,4 +68,5 @@ pub use protocol::{
     StatusInfo, SpaceSnapshot, WallpaperPoint, SpaceSummary,
     TimeScheduleInfo, ModeSchedule, WallpaperTimeSegment, TimeRangeInfo,
     ConfigSnapshot, ConfigKeyInfo, ConfigConstraints,
+    HookInfo,
 };
