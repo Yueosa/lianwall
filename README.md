@@ -15,6 +15,7 @@
 | [CHANGELOG](./CHANGELOG.md) | 大版本更新日志 |
 | [DAEMON-API](./DAEMON-API.md) | Unix Socket 协议参考（供 GUI / 第三方集成使用） |
 | [CLI-JSON](./CLI-JSON.md) | CLI `--json` 输出格式参考（供脚本和自动化使用） |
+| [HOOKS](./HOOKS.md) | Hook 系统详细说明（事件列表、环境变量、示例） |
 
 </div>
 
