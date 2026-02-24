@@ -17,7 +17,11 @@ use super::{connect, is_daemon_running, HandlerError, Result};
 pub fn handle_start(fmt: &Formatter, foreground: bool) -> Result<()> {
     // 检查是否已在运行
     if is_daemon_running() {
-        fmt.print_warning("Daemon is already running");
+        if fmt.is_json() {
+            println!("{}", serde_json::json!({"success": true, "already_running": true}));
+        } else {
+            fmt.print_warning("Daemon is already running");
+        }
         return Ok(());
     }
 
@@ -46,7 +50,12 @@ pub fn handle_start(fmt: &Formatter, foreground: bool) -> Result<()> {
         for _ in 0..10 {
             thread::sleep(Duration::from_millis(200));
             if is_daemon_running() {
-                fmt.print_success(&format!("Daemon started (PID: {})", child.id()));
+                let pid = child.id();
+                if fmt.is_json() {
+                    println!("{}", serde_json::json!({"success": true, "pid": pid}));
+                } else {
+                    fmt.print_success(&format!("Daemon started (PID: {})", pid));
+                }
                 return Ok(());
             }
         }
@@ -102,13 +111,21 @@ fn exec_daemon(_daemon_exe: &PathBuf) -> std::io::Error {
 /// 处理 stop 命令
 pub fn handle_stop(fmt: &Formatter) -> Result<()> {
     if !is_daemon_running() {
-        fmt.print_warning("Daemon is not running");
+        if fmt.is_json() {
+            println!("{}", serde_json::json!({"success": true, "already_stopped": true}));
+        } else {
+            fmt.print_warning("Daemon is not running");
+        }
         return Ok(());
     }
 
     let mut client = connect()?;
     client.shutdown()?;
-    fmt.print_success("Daemon stopped");
+    if fmt.is_json() {
+        println!("{}", serde_json::json!({"success": true}));
+    } else {
+        fmt.print_success("Daemon stopped");
+    }
     Ok(())
 }
 
@@ -116,7 +133,9 @@ pub fn handle_stop(fmt: &Formatter) -> Result<()> {
 pub fn handle_restart(fmt: &Formatter) -> Result<()> {
     // 停止（如果在运行）
     if is_daemon_running() {
-        fmt.print_info("Stopping daemon...");
+        if !fmt.is_json() {
+            fmt.print_info("Stopping daemon...");
+        }
         let mut client = connect()?;
         client.shutdown()?;
 
@@ -130,6 +149,8 @@ pub fn handle_restart(fmt: &Formatter) -> Result<()> {
     }
 
     // 启动
-    fmt.print_info("Starting daemon...");
+    if !fmt.is_json() {
+        fmt.print_info("Starting daemon...");
+    }
     handle_start(fmt, false)
 }
