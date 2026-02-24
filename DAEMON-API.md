@@ -512,7 +512,67 @@
 
 ---
 
-#### 16. Shutdown
+#### 16. ReloadHooks
+
+热更新重新加载 `~/.config/lianwall/hooks.toml`，无需重启 daemon。
+
+**请求**
+```json
+{"cmd": "ReloadHooks"}
+```
+
+**响应**
+```json
+{"type": "Ok"}
+```
+
+**可能的错误**
+- `config_error`: hooks.toml 不存在或解析失败
+
+---
+
+#### 17. ListHooks
+
+列出当前加载的 hook 配置（Query 类型，可并发处理）。
+
+**请求**
+```json
+{"cmd": "ListHooks"}
+```
+
+**响应**
+```json
+{
+  "type": "HookList",
+  "payload": [
+    {
+      "name": "notify-wallpaper",
+      "on": "wallpaper_changed",
+      "command": "notify-send 'LianWall' \"$LIANWALL_FILENAME\"",
+      "mode": "image",
+      "trigger": ["scheduled", "manual_next"],
+      "timeout": 10,
+      "enabled": true
+    }
+  ]
+}
+```
+
+**HookInfo 字段说明**
+
+| 字段 | 类型 | 描述 |
+|------|------|------|
+| `name` | `string` | 标识名（未配置时自动生成为 `hook(event_type)`） |
+| `on` | `string` | 触发事件类型 |
+| `command` | `string` | Shell 命令 |
+| `mode` | `string?` | 模式过滤（`"video"` / `"image"`），`null` 表示不过滤 |
+| `trigger` | `string[]?` | 触发原因过滤，`null` 表示不过滤 |
+| `timeout` | `number` | 超时秒数（默认 10） |
+| `enabled` | `boolean` | 是否启用 |
+
+---
+
+#### 18. Shutdown
 
 关闭 daemon。
 
@@ -530,7 +590,7 @@
 
 ### Subscribe 请求
 
-#### 17. Subscribe
+#### 19. Subscribe
 
 订阅事件。
 
@@ -579,7 +639,7 @@
 
 ---
 
-#### 18. Unsubscribe
+#### 20. Unsubscribe
 
 取消订阅。
 
@@ -615,6 +675,7 @@
 | `Space` | GetSpace 响应 |
 | `TimeInfo` | GetTimeInfo 响应 |
 | `Config` | GetConfig 响应 |
+| `HookList` | ListHooks 响应 |
 
 ### 订阅响应
 
@@ -921,6 +982,8 @@
 | Command (SetMode) | 10s |
 | Command (Lock, Unlock, ToggleLock) | 2s |
 | Command (SetConfig, ReloadConfig) | 5s |
+| Command (ReloadHooks) | 5s |
+| Query (ListHooks) | 2s |
 | Command (Rescan) | 60s |
 | Command (Shutdown) | 10s |
 | Subscribe | 5s |
