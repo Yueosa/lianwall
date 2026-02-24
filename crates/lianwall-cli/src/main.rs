@@ -55,6 +55,8 @@ fn main() {
         Command::Rescan => handlers::handle_rescan(&fmt),
         // 配置
         Command::Config { action } => handlers::handle_config(&fmt, action),
+        // Hook
+        Command::Hook { action } => handlers::handle_hook(&fmt, action),
         // 订阅（调试）
         Command::Subscribe { events } => {
             let socket_path = get_socket_path();

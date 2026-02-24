@@ -49,7 +49,7 @@ use std::time::Duration;
 use lianwall_core::config::WallMode;
 use lianwall_core::socket::{
     ConfigSnapshot, ErrorCode, Event, EventType, Request, Response, SpaceSnapshot,
-    StatusInfo, TimeScheduleInfo,
+    StatusInfo, TimeScheduleInfo, HookInfo,
 };
 
 /// 客户端错误
@@ -320,6 +320,20 @@ impl Client {
     pub fn reload_config(&mut self) -> Result<(), ClientError> {
         self.request(Request::ReloadConfig)?;
         Ok(())
+    }
+
+    /// 重新加载 hooks.toml
+    pub fn reload_hooks(&mut self) -> Result<(), ClientError> {
+        self.request(Request::ReloadHooks)?;
+        Ok(())
+    }
+
+    /// 列出当前 hook 配置
+    pub fn list_hooks(&mut self) -> Result<Vec<HookInfo>, ClientError> {
+        match self.request(Request::ListHooks)? {
+            Response::HookList(hooks) => Ok(hooks),
+            resp => Err(ClientError::UnexpectedResponse(format!("{:?}", resp))),
+        }
     }
 
     /// 关闭守护进程

@@ -118,6 +118,12 @@ pub enum Command {
         action: ConfigAction,
     },
 
+    /// Hook management
+    Hook {
+        #[command(subcommand)]
+        action: HookAction,
+    },
+
     /// Subscribe to daemon events (for debugging)
     ///
     /// Available event types: wallpaper, status, config, space, vram, time, error, all
@@ -149,6 +155,15 @@ pub enum ConfigAction {
 
     /// Reset config to default
     Reset,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum HookAction {
+    /// List configured hooks
+    List,
+
+    /// Reload hooks.toml (hot reload without restarting daemon)
+    Reload,
 }
 
 /// 模式参数（用于 `lianwall mode` 命令）

@@ -12,6 +12,7 @@
 
 mod config;
 mod directory;
+mod hook;
 mod lifecycle;
 mod lock;
 mod query;
@@ -20,6 +21,7 @@ mod wallpaper;
 // Re-export all public handlers
 pub use config::handle_config;
 pub use directory::{handle_reload, handle_rescan};
+pub use hook::handle_hook;
 pub use lifecycle::{handle_restart, handle_start, handle_stop};
 pub use lock::{handle_lock, handle_toggle_lock, handle_unlock};
 pub use query::{handle_space, handle_status, handle_time};
