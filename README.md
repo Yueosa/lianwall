@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.2.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.3.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
@@ -27,7 +27,7 @@
 > - **守护进程架构**：CLI 与 Daemon 分离，Unix Socket 通信
 > - 支持 **动态壁纸**（视频/mpvpaper）和 **静态壁纸**（图片/swww）
 > - 模式切换时自动播放新壁纸，无需手动 next
-> - 显存监控：游戏高占用时自动降级为静态壁纸
+  - 显存监控：游戏高占用时自动降级为静态壁纸，支持 NVIDIA / AMD / 自定义脚本（Intel 等）
 
 ---
 
@@ -55,6 +55,7 @@
 | [swww](https://github.com/LGFae/swww) | 静态壁纸引擎 | `paru -S swww` | ✓ |
 | nvidia-smi | NVIDIA 显存检测 | 随驱动安装 | ✗ |
 | rocm-smi | AMD 显存检测 | `pacman -S rocm-smi-lib` | ✗ |
+| 自定义脚本 | Intel 等其他 GPU 显存检测 | 用户自行编写 | ✗ |
 
 ### 编译
 
@@ -234,6 +235,15 @@ bind = ALT, S, exec, lianwall switch    # 切换模式
 | `hook list` | 列出所有 hook 配置 |
 | `hook reload` | 热更新重载 `~/.config/lianwall/hooks.toml`（无需重启 daemon） |
 
+### 显存控制
+
+| 命令 | 说明 |
+|------|------|
+| `vram downgrade` | 强制切换到 Image 模式（绕过自动检测） |
+| `vram upgrade` | 强制切换回 Video 模式（绕过自动检测） |
+| `vram reset` | 清除手动覆盖，恢复自动检测 |
+| `vram status` | 查看显存用量及覆盖状态 |
+
 ---
 
 ## 🏗️ 架构设计
@@ -387,6 +397,8 @@ swww_args = [                            # 透传给 swww img 的参数
 # === 显存监控 ===
 [vram]
 enabled = true                           # 是否启用
+backend = "auto"                         # "auto"（自动检测）或 "custom"（自定义命令）
+# custom_command = ""                    # backend=custom 时执行，stdout 需含 used_mb=N 和 total_mb=N
 threshold_percent = 25.0                 # 降级阈值（显存剩余 < 25%）
 recovery_percent = 40.0                  # 恢复阈值（显存剩余 > 40%）
 check_interval = 2                       # 检测间隔（秒）
@@ -441,6 +453,12 @@ nvidia-smi
 
 # AMD 用户
 rocm-smi
+
+# Intel / 其他 GPU 用户
+# 使用自定义脚本，配置 backend = "custom" 和 custom_command
+# 脚本 stdout 需输出：
+#   used_mb=<N>
+#   total_mb=<N>
 
 # 如果命令不存在或不支持，在配置中禁用
 # [vram]
