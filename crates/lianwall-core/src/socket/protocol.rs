@@ -126,6 +126,13 @@ pub enum Request {
     /// 关闭守护进程
     Shutdown,
 
+    // ==================== VRAM 手动覆盖 ====================
+    /// 手动覆盖 VRAM 状态（用于自定义脚本，绕过自动检测）
+    VramOverride {
+        /// 覆盖动作
+        action: VramOverrideAction,
+    },
+
     // ==================== Subscribe (订阅管理) ====================
     /// 订阅事件
     Subscribe {
@@ -164,6 +171,7 @@ impl Request {
             Request::ReloadHooks => "ReloadHooks",
             Request::ListHooks => "ListHooks",
             Request::Shutdown => "Shutdown",
+            Request::VramOverride { .. } => "VramOverride",
             // Subscribe
             Request::Subscribe { .. } => "Subscribe",
             Request::Unsubscribe => "Unsubscribe",
@@ -199,6 +207,7 @@ impl Request {
                 | Request::ReloadConfig
                 | Request::ReloadHooks
                 | Request::Shutdown
+                | Request::VramOverride { .. }
         )
     }
 
@@ -292,6 +301,22 @@ impl Response {
             _ => None,
         }
     }
+}
+
+// ============================================================================
+// VRAM 覆盖动作
+// ============================================================================
+
+/// 手动覆盖 VRAM 状态的动作类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VramOverrideAction {
+    /// 强制降级到 Image 模式
+    Downgrade,
+    /// 强制恢复到 Video 模式
+    Upgrade,
+    /// 清除覆盖状态，恢复自动检测
+    Reset,
 }
 
 // ============================================================================
@@ -625,6 +650,10 @@ pub struct StatusInfo {
 
     /// 是否处于显存降级状态
     pub vram_degraded: bool,
+
+    /// 手动覆盖状态（Some(true)=强制降级到Image, Some(false)=强制升级到Video, None=自动）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vram_override: Option<bool>,
 
     /// 守护进程运行时间（秒）
     pub uptime_secs: u64,

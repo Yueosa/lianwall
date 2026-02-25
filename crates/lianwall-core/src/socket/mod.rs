@@ -63,7 +63,7 @@ pub use protocol::{
     // 事件
     Event, EventType,
     // 辅助枚举
-    WallpaperTrigger, StatusChange, SpaceUpdateReason, VramAction,
+    WallpaperTrigger, StatusChange, SpaceUpdateReason, VramAction, VramOverrideAction,
     // 数据结构
     StatusInfo, SpaceSnapshot, WallpaperPoint, SpaceSummary,
     TimeScheduleInfo, ModeSchedule, WallpaperTimeSegment, TimeRangeInfo,
