@@ -49,7 +49,7 @@ use std::time::Duration;
 use lianwall_core::config::WallMode;
 use lianwall_core::socket::{
     ConfigSnapshot, ErrorCode, Event, EventType, Request, Response, SpaceSnapshot,
-    StatusInfo, TimeScheduleInfo, HookInfo,
+    StatusInfo, TimeScheduleInfo, HookInfo, VramOverrideAction,
 };
 
 /// 客户端错误
@@ -339,6 +339,14 @@ impl Client {
     /// 关闭守护进程
     pub fn shutdown(&mut self) -> Result<(), ClientError> {
         self.request(Request::Shutdown)?;
+        Ok(())
+    }
+
+    /// 手动覆盖 VRAM 状态
+    ///
+    /// 可用于自定义脚本强制降级/升级或清除覆盖
+    pub fn vram_override(&mut self, action: VramOverrideAction) -> Result<(), ClientError> {
+        self.request(Request::VramOverride { action })?;
         Ok(())
     }
 

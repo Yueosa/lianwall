@@ -124,6 +124,15 @@ pub enum Command {
         action: HookAction,
     },
 
+    /// VRAM monitoring control
+    ///
+    /// Manually control VRAM degradation state.
+    /// Useful for custom scripts on non-NVIDIA/AMD GPUs.
+    Vram {
+        #[command(subcommand)]
+        action: VramAction,
+    },
+
     /// Subscribe to daemon events (for debugging)
     ///
     /// Available event types: wallpaper, status, config, space, vram, time, error, all
@@ -155,6 +164,21 @@ pub enum ConfigAction {
 
     /// Reset config to default
     Reset,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum VramAction {
+    /// Force downgrade to image mode (simulate low VRAM)
+    Downgrade,
+
+    /// Force upgrade to video mode (simulate recovered VRAM)
+    Upgrade,
+
+    /// Clear manual override, resume automatic VRAM detection
+    Reset,
+
+    /// Show VRAM status
+    Status,
 }
 
 #[derive(Subcommand, Debug)]
