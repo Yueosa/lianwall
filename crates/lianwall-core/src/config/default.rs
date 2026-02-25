@@ -91,11 +91,28 @@ swww_args = [
 
 # === 显存监控 ===
 # 监控 GPU 显存使用，在显存不足时自动降级为静态壁纸
-# 支持的 GPU: NVIDIA (nvidia-smi), AMD (rocm-smi)
+# 支持的 GPU: NVIDIA (nvidia-smi), AMD (rocm-smi), 以及用户自定义命令
 [vram]
 # 是否启用显存监控
 # 禁用后将不会自动降级/恢复
 enabled = true
+
+# 后端选择: "auto" 或 "custom"
+# - auto:   自动检测 nvidia-smi / rocm-smi（NVIDIA / AMD 用户使用此选项）
+# - custom: 使用下方 custom_command 指定的命令（Intel 等其他 GPU 用户使用此选项）
+backend = "auto"
+
+# 自定义查询命令（backend = "custom" 时生效）
+# 命令的 stdout 必须包含以下两行（顺序不限）：
+#   used_mb=<整数MiB>
+#   total_mb=<整数MiB>
+#
+# Intel 示例（需安装 intel_gpu_top）：
+#   custom_command = "~/.config/lianwall/intel_vram.sh"
+#
+# NVIDIA 等效示例（可用于测试自定义路径）：
+#   custom_command = "nvidia-smi --query-gpu=memory.used,memory.total --format=csv,noheader,nounits | awk -F', ' '{print \"used_mb=\"$1\"\\ntotal_mb=\"$2}'"
+# custom_command = ""
 
 # 降级阈值：显存剩余低于此百分比时，切换到静态壁纸
 # 范围: 5.0 - 50.0（%）

@@ -14,15 +14,29 @@
 //! - 用户可能只是临时卸载了驱动或在 SSH 环境中
 //! - 下次启动时会重新检测后端
 
-use crate::config::VramConfig;
+use crate::config::{VramBackend, VramConfig};
 
 use super::error::GpuError;
 use super::r#struct::{GpuBackend, VramAction, VramState};
 use super::{detect_backend_sync, query_vram_sync};
 
-/// 初始化监控状态
+/// 初始化监控状态（自动检测后端）
 pub fn init() -> VramState {
     let backend = detect_backend_sync();
+    VramState::new(backend)
+}
+
+/// 初始化监控状态（根据配置选择后端）
+///
+/// - `VramBackend::Auto`：自动检测 nvidia-smi / rocm-smi
+/// - `VramBackend::Custom`：使用 `config.custom_command`
+pub fn init_with_config(config: &VramConfig) -> VramState {
+    let backend = match config.backend {
+        VramBackend::Auto => detect_backend_sync(),
+        VramBackend::Custom => GpuBackend::Custom {
+            command: config.custom_command.clone(),
+        },
+    };
     VramState::new(backend)
 }
 
@@ -42,7 +56,7 @@ pub fn check(state: &mut VramState, config: &VramConfig) -> Result<VramAction, G
     }
 
     // 查询显存
-    let info = query_vram_sync(state.backend)?;
+    let info = query_vram_sync(state.backend.clone())?;
 
     // 决策
     let action = if info.free_percent < config.threshold_percent {
@@ -90,6 +104,8 @@ mod tests {
             recovery_percent: recovery,
             check_interval: 2,
             cooldown_seconds: cooldown,
+            backend: VramBackend::Auto,
+            custom_command: String::new(),
         }
     }
 

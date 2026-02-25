@@ -59,6 +59,17 @@ pub struct ImageEngineConfig {
     pub swww_args: Vec<String>,
 }
 
+/// 显存监控后端选择
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VramBackend {
+    /// 自动检测（nvidia-smi / rocm-smi）
+    #[default]
+    Auto,
+    /// 用户自定义命令
+    Custom,
+}
+
 /// 显存监控配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VramConfig {
@@ -73,6 +84,13 @@ pub struct VramConfig {
     /// 降级冷却时间（秒），范围 10-600，降级后在此时间内不会恢复
     #[serde(default = "default_cooldown")]
     pub cooldown_seconds: u64,
+    /// 后端选择：auto（自动检测）或 custom（自定义命令）
+    #[serde(default)]
+    pub backend: VramBackend,
+    /// 自定义查询命令（backend = "custom" 时使用）
+    /// stdout 必须包含 used_mb=N 和 total_mb=N 两行
+    #[serde(default)]
+    pub custom_command: String,
 }
 
 fn default_cooldown() -> u64 {

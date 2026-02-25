@@ -3,12 +3,14 @@
 use std::time::Instant;
 
 /// GPU 后端类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GpuBackend {
     /// nvidia-smi 命令（NVIDIA 显卡）
     NvidiaSmi,
     /// rocm-smi 命令（AMD 显卡）
     RocmSmi,
+    /// 用户自定义命令（Intel 等其他 GPU）
+    Custom { command: String },
     /// 无可用后端
     None,
 }

@@ -161,11 +161,68 @@ fn parse_rocm_smi_output(output: &str) -> Result<VramInfo, GpuError> {
 
 // ==================== 公开 API ====================
 
+/// 解析自定义命令输出
+///
+/// 期望 stdout 包含（顺序不限，大小写不敏感）：
+/// ```text
+/// used_mb=1234
+/// total_mb=8192
+/// ```
+pub(super) fn parse_custom_output(output: &str) -> Result<VramInfo, GpuError> {
+    let mut used_mb: Option<u64> = None;
+    let mut total_mb: Option<u64> = None;
+
+    for line in output.lines() {
+        let line = line.trim().to_lowercase();
+        if let Some(val) = line.strip_prefix("used_mb=") {
+            used_mb = val.trim().parse().ok();
+        } else if let Some(val) = line.strip_prefix("total_mb=") {
+            total_mb = val.trim().parse().ok();
+        }
+    }
+
+    match (used_mb, total_mb) {
+        (Some(used), Some(total)) => Ok(VramInfo::new(total, used)),
+        _ => Err(GpuError::ParseFailed {
+            command: "custom".to_string(),
+            message: format!(
+                "Expected 'used_mb=N' and 'total_mb=N' in output, got: {}",
+                output.trim()
+            ),
+        }),
+    }
+}
+
+/// 异步执行自定义命令并解析显存信息
+async fn query_custom_async(command: &str) -> Result<VramInfo, GpuError> {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .output()
+        .await
+        .map_err(|e| GpuError::CommandFailed {
+            command: command.to_string(),
+            message: e.to_string(),
+        })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(GpuError::CommandFailed {
+            command: command.to_string(),
+            message: stderr.to_string(),
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_custom_output(&stdout)
+}
+
 /// 异步查询显存信息
 pub async fn query_vram(backend: GpuBackend) -> Result<VramInfo, GpuError> {
     match backend {
         GpuBackend::NvidiaSmi => query_nvidia_smi_async().await,
         GpuBackend::RocmSmi => query_rocm_smi_async().await,
+        GpuBackend::Custom { command } => query_custom_async(&command).await,
         GpuBackend::None => Err(GpuError::NoBackend),
     }
 }

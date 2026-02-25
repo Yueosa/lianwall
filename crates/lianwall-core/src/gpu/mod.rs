@@ -25,7 +25,7 @@ mod rocm_smi;
 mod r#struct;
 
 pub use error::GpuError;
-pub use monitor::{check, init};
+pub use monitor::{check, init, init_with_config};
 pub use r#struct::{GpuBackend, VramAction, VramInfo, VramState};
 
 // 异步 API（主要接口）
@@ -50,6 +50,25 @@ pub fn query_vram_sync(backend: GpuBackend) -> Result<VramInfo, GpuError> {
     match backend {
         GpuBackend::NvidiaSmi => nvidia_smi::query(),
         GpuBackend::RocmSmi => rocm_smi::query(),
+        GpuBackend::Custom { command } => {
+            let output = Command::new("sh")
+                .arg("-c")
+                .arg(&command)
+                .output()
+                .map_err(|e| GpuError::CommandFailed {
+                    command: command.clone(),
+                    message: e.to_string(),
+                })?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(GpuError::CommandFailed {
+                    command: command.clone(),
+                    message: stderr.to_string(),
+                });
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            async_ops::parse_custom_output(&stdout)
+        }
         GpuBackend::None => Err(GpuError::NoBackend),
     }
 }
