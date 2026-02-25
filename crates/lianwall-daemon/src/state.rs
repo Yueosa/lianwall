@@ -291,6 +291,10 @@ pub struct SharedState {
     
     /// GPU 快照（包含最新 VRAM 信息，用于查询）
     pub gpu_snapshot: RwLock<GpuSnapshot>,
+
+    /// VRAM 手动覆盖状态（Some(true)=强制降级到Image, Some(false)=强制升级到Video, None=自动）
+    /// daemon 重启后自动清除，不持久化
+    pub vram_override: RwLock<Option<bool>>,
     
     /// 时间关键点缓存（用于时间调度）
     pub time_points: RwLock<BTreeSet<TimePoint>>,
@@ -349,6 +353,7 @@ impl SharedState {
             engine: AsyncEngineState::new(initial_mode),
             gpu_state: RwLock::new(None),
             gpu_snapshot: RwLock::new(GpuSnapshot::empty()),
+            vram_override: RwLock::new(None),
             time_points: RwLock::new(BTreeSet::new()),
             playback_history: RwLock::new(PlaybackHistory::new()),
             next_switch: RwLock::new(Instant::now() + std::time::Duration::from_secs(initial_interval)),

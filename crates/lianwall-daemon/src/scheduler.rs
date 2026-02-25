@@ -301,16 +301,38 @@ pub async fn gpu_monitor(
     let check_interval = config.vram.check_interval;
     let mut timer = interval(Duration::from_secs(check_interval));
     
-    // 初始化 VramState（使用 lianwall_core::gpu::init）
+    // 初始化 VramState（根据配置选择后端）
     {
-        let vram_state = lianwall_core::gpu::init();
+        let vram_state = lianwall_core::gpu::init_with_config(&config.vram);
         tracing::info!("GPU backend detected: {:?}", vram_state.backend);
         *state.gpu_state.write().await = Some(vram_state);
     }
-    
+
+    // 验证自定义后端配置
+    if config.vram.backend == lianwall_core::config::VramBackend::Custom {
+        if config.vram.custom_command.trim().is_empty() {
+            tracing::error!("vram.custom_command is empty while backend=custom, disabling GPU monitor");
+            return;
+        }
+        let backend = lianwall_core::gpu::GpuBackend::Custom {
+            command: config.vram.custom_command.clone(),
+        };
+        match lianwall_core::gpu::query_vram(backend).await {
+            Ok(_) => tracing::info!("Custom VRAM command validated OK"),
+            Err(e) => {
+                tracing::error!("Custom VRAM command trial run failed: {}, disabling GPU monitor", e);
+                return;
+            }
+        }
+    }
+
     loop {
         tokio::select! {
             _ = timer.tick() => {
+                // 手动覆盖状态下，跳过自动检测
+                if state.vram_override.read().await.is_some() {
+                    continue;
+                }
                 let config = state.get_config().await;
                 
                 // 使用 check() 函数做降级/升级决策
@@ -379,21 +401,20 @@ pub async fn gpu_monitor(
                 }
                 
                 // 更新 GPU 快照（供查询使用）
-                if let Ok(vram_info) = lianwall_core::gpu::query_vram(
-                    lianwall_core::gpu::detect_backend().await
-                ).await {
+                let backend_for_query = {
+                    let gpu_state = state.gpu_state.read().await;
+                    gpu_state.as_ref().map(|s| s.backend.clone())
+                        .unwrap_or(lianwall_core::gpu::GpuBackend::None)
+                };
+                if let Ok(vram_info) = lianwall_core::gpu::query_vram(backend_for_query.clone()).await {
                     let degraded = {
                         let gpu_state = state.gpu_state.read().await;
                         gpu_state.as_ref().map(|s| s.degraded).unwrap_or(false)
                     };
-                    let backend = {
-                        let gpu_state = state.gpu_state.read().await;
-                        gpu_state.as_ref().map(|s| s.backend).unwrap_or(lianwall_core::gpu::GpuBackend::None)
-                    };
-                    
-                    state.update_gpu_snapshot(vram_info.clone(), degraded, backend).await;
-                    event_bus.publish(Event::GpuStateUpdated { 
-                        action, 
+
+                    state.update_gpu_snapshot(vram_info.clone(), degraded, backend_for_query).await;
+                    event_bus.publish(Event::GpuStateUpdated {
+                        action,
                         vram_info: Some(vram_info),
                     });
                 }

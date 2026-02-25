@@ -12,7 +12,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger};
+use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger, VramOverrideAction};
 use lianwall_core::config::WallMode;
 use lianwall_core::algorithm::select_next;
 use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
@@ -56,6 +56,8 @@ pub async fn handle_command(
         Request::ReloadHooks => handle_reload_hooks(state).await,
         
         Request::Shutdown => handle_shutdown(state, event_bus).await,
+        
+        Request::VramOverride { action } => handle_vram_override(state, event_bus, action).await,
         
         // Query 请求不应该到这里
         _ => Response::error(ErrorCode::InvalidRequest, "Not a command request"),
@@ -626,6 +628,24 @@ async fn handle_set_config(
                 return Response::error(ErrorCode::InvalidRequest, "Invalid cooldown_seconds value");
             }
         }
+        "vram.backend" => {
+            if let Some(v) = value.as_str() {
+                match v {
+                    "auto" => config.vram.backend = lianwall_core::config::VramBackend::Auto,
+                    "custom" => config.vram.backend = lianwall_core::config::VramBackend::Custom,
+                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid backend, expected: auto/custom"),
+                }
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid backend value, expected string");
+            }
+        }
+        "vram.custom_command" => {
+            if let Some(v) = value.as_str() {
+                config.vram.custom_command = v.to_string();
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid custom_command value, expected string");
+            }
+        }
         
         // ==================== daemon ====================
         "daemon.socket_path" => {
@@ -1028,4 +1048,82 @@ async fn apply_wallpaper(
     }
     
     Ok(())
+}
+
+/// 手动覆盖 VRAM 状态并立即生效
+async fn handle_vram_override(
+    state: &Arc<SharedState>,
+    event_bus: &EventBus,
+    action: VramOverrideAction,
+) -> Response {
+    match action {
+        VramOverrideAction::Downgrade => {
+            *state.vram_override.write().await = Some(true);
+            let old_mode = *state.engine.mode.read().await;
+            if old_mode != WallMode::Image {
+                *state.engine.mode.write().await = WallMode::Image;
+                event_bus.publish(Event::ModeChanged {
+                    from: old_mode,
+                    to: WallMode::Image,
+                });
+                // 选取图片模式壁纸并应用
+                let path = {
+                    let mut space = state.image_space.write().await;
+                    let current = space.current_index
+                        .and_then(|i| space.items.get(i).map(|w| w.path.clone()));
+                    current.or_else(|| {
+                        select_next(&mut space)
+                            .map(|output| space.items[output.index].path.clone())
+                    })
+                };
+                if let Some(p) = path {
+                    let _ = apply_wallpaper(state, &p, WallMode::Image).await;
+                    *state.engine.current.write().await = Some(p.clone());
+                    state.playback_history.write().await.push(p.clone());
+                    event_bus.publish(Event::WallpaperChanged {
+                        path: p,
+                        mode: WallMode::Image,
+                        trigger: WallpaperTrigger::VramDowngrade,
+                    });
+                }
+            }
+            tracing::warn!("VRAM manual override: forced downgrade to Image mode");
+        }
+        VramOverrideAction::Upgrade => {
+            *state.vram_override.write().await = Some(false);
+            let old_mode = *state.engine.mode.read().await;
+            if old_mode != WallMode::Video {
+                *state.engine.mode.write().await = WallMode::Video;
+                event_bus.publish(Event::ModeChanged {
+                    from: old_mode,
+                    to: WallMode::Video,
+                });
+                let path = {
+                    let mut space = state.video_space.write().await;
+                    let current = space.current_index
+                        .and_then(|i| space.items.get(i).map(|w| w.path.clone()));
+                    current.or_else(|| {
+                        select_next(&mut space)
+                            .map(|output| space.items[output.index].path.clone())
+                    })
+                };
+                if let Some(p) = path {
+                    let _ = apply_wallpaper(state, &p, WallMode::Video).await;
+                    *state.engine.current.write().await = Some(p.clone());
+                    state.playback_history.write().await.push(p.clone());
+                    event_bus.publish(Event::WallpaperChanged {
+                        path: p,
+                        mode: WallMode::Video,
+                        trigger: WallpaperTrigger::VramUpgrade,
+                    });
+                }
+            }
+            tracing::info!("VRAM manual override: forced upgrade to Video mode");
+        }
+        VramOverrideAction::Reset => {
+            *state.vram_override.write().await = None;
+            tracing::info!("VRAM manual override cleared, resuming auto detection");
+        }
+    }
+    Response::ok()
 }

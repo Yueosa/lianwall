@@ -76,6 +76,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         Some(info) => (info.used_mb, info.total_mb, gpu_snapshot.degraded),
         None => (0, 0, false),
     };
+    let vram_override = *state.vram_override.read().await;
     
     // 计算下一个时间点
     let now = lianwall_core::wallpaper::TimePoint::now();
@@ -98,6 +99,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         vram_used_mb,
         vram_total_mb,
         vram_degraded,
+        vram_override,
         uptime_secs: state.uptime_secs(),
         protocol_version: PROTOCOL_VERSION,
         next_time_point,
@@ -128,6 +130,8 @@ async fn get_config(state: &Arc<SharedState>, key: Option<String>) -> Response {
             "image_engine.swww_args" => serde_json::to_value(&config.image_engine.swww_args).ok(),
             // vram
             "vram.enabled" => serde_json::to_value(config.vram.enabled).ok(),
+            "vram.backend" => serde_json::to_value(&config.vram.backend).ok(),
+            "vram.custom_command" => serde_json::to_value(&config.vram.custom_command).ok(),
             "vram.threshold_percent" => serde_json::to_value(config.vram.threshold_percent).ok(),
             "vram.recovery_percent" => serde_json::to_value(config.vram.recovery_percent).ok(),
             "vram.check_interval" => serde_json::to_value(config.vram.check_interval).ok(),
@@ -278,6 +282,25 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
             value_type: "boolean".to_string(),
             description: "是否启用显存监控".to_string(),
             default: serde_json::json!(true),
+            constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "vram.backend".to_string(),
+            value_type: "enum".to_string(),
+            description: "显存监控后端：auto（自动检测）或 custom（自定义命令）".to_string(),
+            default: serde_json::json!("auto"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["auto".to_string(), "custom".to_string()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "vram.custom_command".to_string(),
+            value_type: "string".to_string(),
+            description: "自定义显存查询命令（backend=custom 时使用），stdout 需包含 used_mb=N 和 total_mb=N".to_string(),
+            default: serde_json::json!(""),
             constraints: None,
         },
         ConfigKeyInfo {
