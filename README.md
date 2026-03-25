@@ -25,7 +25,7 @@
 > - 支持 **prev / next** 浏览器式前进/后退导航（播放历史）
 > - **时间段目录**：通过文件夹命名控制壁纸在特定时间出现
 > - **守护进程架构**：CLI 与 Daemon 分离，Unix Socket 通信
-> - 支持 **动态壁纸**（视频/mpvpaper）和 **静态壁纸**（图片/swww）
+> - 支持 **动态壁纸**（视频/mpvpaper）和 **静态壁纸**（图片/awww）
 > - 模式切换时自动播放新壁纸，无需手动 next
   - 显存监控：游戏高占用时自动降级为静态壁纸，支持 NVIDIA / AMD / 自定义脚本（Intel 等）
 
@@ -52,7 +52,7 @@
 | 依赖 | 用途 | 安装 (Arch Linux) | 必需 |
 |------|------|------|------|
 | [mpvpaper](https://github.com/GhostNaN/mpvpaper) | 动态壁纸引擎 | `paru -S mpvpaper` | ✓ |
-| [swww](https://github.com/LGFae/swww) | 静态壁纸引擎 | `paru -S swww` | ✓ |
+| [awww](https://github.com/LGFae/swww) | 静态壁纸引擎 | `paru -S awww` | ✓ |
 | nvidia-smi | NVIDIA 显存检测 | 随驱动安装 | ✗ |
 | rocm-smi | AMD 显存检测 | `pacman -S rocm-smi-lib` | ✗ |
 | 自定义脚本 | Intel 等其他 GPU 显存检测 | 用户自行编写 | ✗ |
@@ -89,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/Yueosa/lianwall/main/install.sh | b
 paru -S lianwall-bin   # 自动安装 lianwalld-bin 依赖
 ```
 
-在 **AUR 安装** 将会自动安装所有依赖 `lianwalld` -> `swww` + `mpvpaper`
+在 **AUR 安装** 将会自动安装所有依赖 `lianwalld` -> `awww` + `mpvpaper`
 
 ---
 
@@ -163,7 +163,7 @@ lianwall mode image      # 切换到静态壁纸模式
 
 ### 空壁纸处理
 
-当某个时间段没有可用壁纸时，会清空当前壁纸显示（`swww clear` / 停止 `mpvpaper`）。
+当某个时间段没有可用壁纸时，会清空当前壁纸显示（`awww clear` / 停止 `mpvpaper`）。
 
 ### Hyprland 用户配置
 
@@ -275,7 +275,7 @@ LianWall 5.0 采用 **双文件 + 守护进程** 架构，CLI 和 Daemon 彻底�
           │                     │                     │
           ▼                     ▼                     ▼
      ┌─────────┐          ┌─────────┐        ┌────────────────┐
-     │mpvpaper │          │  swww   │        │ GPU Monitoring │
+     │mpvpaper │          │  awww   │        │ GPU Monitoring │
      │ (Video) │          │ (Image) │        │     (VRAM)     │
      └─────────┘          └─────────┘        └────────────────┘
 ```
@@ -288,7 +288,7 @@ lianwall/
 │   ├── lianwall-core/      # 核心库（共享）
 │   │   ├── algorithm/      # 黄金角选择算法
 │   │   ├── config/         # 配置读写
-│   │   ├── engine/         # mpvpaper / swww 引擎
+│   │   ├── engine/         # mpvpaper / awww 引擎
 │   │   ├── gpu/            # 显存监控
 │   │   ├── socket/         # Unix Socket 通信协议 (V2)
 │   │   └── wallpaper/      # 壁纸扫描、向量空间、时间段
@@ -382,11 +382,11 @@ mpv_args = [                             # 透传给 mpv 的参数
     "--panscan=1.0"
 ]
 
-# === 静态壁纸引擎 (swww) ===
+# === 静态壁纸引擎 (awww/swww) ===
 [image_engine]
 interval = 600                           # 自动切换间隔（秒）
 outputs = ""                             # 目标显示器（空 = 所有）
-swww_args = [                            # 透传给 swww img 的参数
+swww_args = [                            # 透传给 awww/swww img 的参数
     "--transition-type=fade",
     "--transition-duration=2.0",
     "--transition-fps=60",
@@ -435,13 +435,17 @@ pgrep -af "lianwalld"
 lianwall start -F
 ```
 
-### swww 壁纸不显示
+### 静态壁纸不显示
 
 ```bash
-# 检查 swww-daemon 是否正常
-swww query
+# 检查 awww-daemon 是否正常（awww 系统）
+awww query
 
-# 手动启动 swww-daemon
+# 手动启动 awww-daemon
+awww-daemon &
+
+# 或检查 swww-daemon（旧版系统）
+swww query
 swww-daemon &
 ```
 
