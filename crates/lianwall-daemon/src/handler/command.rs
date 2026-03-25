@@ -16,6 +16,7 @@ use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger, Vram
 use lianwall_core::config::WallMode;
 use lianwall_core::algorithm::select_next;
 use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
+use lianwall_core::engine::detect_image_bin;
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
 use crate::state::SharedState;
@@ -985,64 +986,69 @@ async fn apply_wallpaper(
             }
         }
         WallMode::Image => {
-            // 确保 swww-daemon 运行（先启动新引擎）
+            // 检测可用的图片引擎（awww 优先，降级到 swww）
+            let image_bin = detect_image_bin().await
+                .ok_or_else(|| anyhow::anyhow!("Neither awww nor swww found"))?;
+            let daemon_bin = format!("{}-daemon", image_bin);
+
+            // 确保 daemon 运行（先启动新引擎）
             if !state.engine.swww_daemon.is_running().await {
-                tracing::info!("Starting swww-daemon...");
-                
-                // 先杀死系统中可能存在的旧 swww-daemon
+                tracing::info!("Starting {}...", daemon_bin);
+
+                // 先杀死系统中可能存在的旧 daemon
                 let _ = tokio::process::Command::new("pkill")
                     .arg("-x")
-                    .arg("swww-daemon")
+                    .arg(&daemon_bin)
                     .status()
                     .await;
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                
-                // 启动新的 swww-daemon
-                let child = tokio::process::Command::new("swww-daemon")
+
+                // 启动新的 daemon
+                let child = tokio::process::Command::new(&daemon_bin)
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn()?;
-                
+
                 state.engine.swww_daemon.set(child).await;
-                
+
                 // 等待 daemon 初始化
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
             }
-            
+
             // 设置壁纸
             tracing::info!("Applying image wallpaper: {:?}", path);
-            
-            let mut cmd = tokio::process::Command::new("swww");
+
+            let mut cmd = tokio::process::Command::new(&image_bin);
             cmd.arg("img");
-            
+
             // 添加目标显示器
             if !config.image_engine.outputs.is_empty() {
                 cmd.arg("--outputs").arg(&config.image_engine.outputs);
             }
-            
-            // 添加 swww 参数
+
+            // 添加 swww/awww 参数
             for arg in &config.image_engine.swww_args {
                 cmd.arg(arg);
             }
-            
+
             // 图片路径
             cmd.arg(path);
-            
+
             // 捕获 stderr
             cmd.stderr(std::process::Stdio::piped());
-            
+
             let output = cmd.output().await?;
-            
+
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("swww img failed: {}", stderr.trim());
+                anyhow::bail!("{} img failed: {}", image_bin, stderr.trim());
             }
-            
-            // 跨引擎切换：swww img 成功后延迟停止 mpvpaper，确保合成器完成帧切换
+
+            // 跨引擎切换：img 成功后延迟停止 mpvpaper，确保合成器完成帧切换
             if was_mpvpaper_running {
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                 state.engine.mpvpaper.kill().await;
-                tracing::debug!("Killed mpvpaper after swww image applied and stabilized");
+                tracing::debug!("Killed mpvpaper after {} image applied and stabilized", image_bin);
             }
         }
     }

@@ -29,6 +29,7 @@ pub use r#struct::DetectOutput;
 // 异步 API（主要接口）
 pub use async_ops::{
     detect,
+    detect_image_bin,
     init,
     set_wallpaper,
     shutdown,
