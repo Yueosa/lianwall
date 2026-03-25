@@ -17,7 +17,7 @@
 # 2. 从 GitHub Release 下载两个二进制
 # 3. 安装到 ~/.local/bin/（默认）
 # 4. 提醒用户添加 PATH（如果需要）
-# 5. 检查依赖（swww, mpvpaper）
+# 5. 检查依赖（awww/swww, mpvpaper）
 #
 # 安装后的目录结构：
 # ~/.local/bin/
@@ -170,8 +170,8 @@ fi
 echo "Checking dependencies..."
 MISSING_DEPS=""
 
-if ! command -v swww &> /dev/null; then
-    MISSING_DEPS="${MISSING_DEPS} swww"
+if ! command -v awww &> /dev/null && ! command -v swww &> /dev/null; then
+    MISSING_DEPS="${MISSING_DEPS} awww (or swww)"
 fi
 
 if ! command -v mpvpaper &> /dev/null; then
@@ -180,7 +180,7 @@ fi
 
 if [[ -n "$MISSING_DEPS" ]]; then
     warn "Missing optional dependencies:${MISSING_DEPS}"
-    echo "  - swww: required for image wallpapers"
+    echo "  - awww (or swww): required for image wallpapers"
     echo "  - mpvpaper: required for video wallpapers"
     echo ""
 fi
