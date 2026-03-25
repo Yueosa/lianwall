@@ -5,6 +5,6 @@
 pub struct DetectOutput {
     /// mpvpaper 是否可用
     pub mpvpaper_available: bool,
-    /// swww 是否可用
+    /// 图片引擎是否可用（awww 或 swww 任一可用即为 true）
     pub swww_available: bool,
 }

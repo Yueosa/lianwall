@@ -28,7 +28,7 @@ use super::error::EngineError;
 
 /// 引擎状态
 ///
-/// 完全接管 swww-daemon 和 mpvpaper 的生命周期
+/// 完全接管 swww-daemon/awww-daemon 和 mpvpaper 的生命周期
 pub struct EngineState {
     /// 当前运行模式
     pub mode: WallMode,
@@ -36,8 +36,10 @@ pub struct EngineState {
     pub current: Option<PathBuf>,
     /// mpvpaper 进程句柄
     mpvpaper: Option<Child>,
-    /// swww-daemon 进程句柄（由我们完全管理）
+    /// image daemon 进程句柄（由我们完全管理，可能是 awww-daemon 或 swww-daemon）
     swww_daemon: Option<Child>,
+    /// 实际使用的图片引擎二进制名称（"awww" 或 "swww"）
+    pub image_bin: String,
 }
 
 impl EngineState {
@@ -48,6 +50,7 @@ impl EngineState {
             current: None,
             mpvpaper: None,
             swww_daemon: None,
+            image_bin: String::new(),
         }
     }
 
@@ -82,26 +85,49 @@ pub async fn is_mpvpaper_available() -> bool {
         .unwrap_or(false)
 }
 
-/// 检测 swww 是否可用
-pub async fn is_swww_available() -> bool {
-    Command::new("which")
-        .arg("swww")
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+/// 检测可用的图片引擎二进制名称
+///
+/// 优先使用 awww，降级到 swww，两者均不可用则返回 None
+pub async fn detect_image_bin() -> Option<String> {
+    for bin in &["awww", "swww"] {
+        let ok = Command::new("which")
+            .arg(bin)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(bin.to_string());
+        }
+    }
+    None
 }
 
-/// 检测系统中是否有 swww-daemon 在运行（不管是谁启动的）
+/// 检测 awww 或 swww 是否可用（任一即可）
+pub async fn is_swww_available() -> bool {
+    detect_image_bin().await.is_some()
+}
+
+/// 检测系统中是否有 image daemon 在运行（不管是谁启动的）
+///
+/// 优先尝试 awww query，再尝试 swww query
 async fn is_any_swww_daemon_running() -> bool {
-    Command::new("swww")
-        .arg("query")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await
-        .map(|s| s.success())
-        .unwrap_or(false)
+    for bin in &["awww", "swww"] {
+        let ok = Command::new(bin)
+            .arg("query")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            return true;
+        }
+    }
+    false
 }
 
 /// 异步检测引擎可用性
@@ -167,11 +193,11 @@ async fn stop_mpvpaper(child: &mut Option<Child>) {
     }
 }
 
-// ==================== swww 操作 ====================
+// ==================== swww/awww 操作 ====================
 
-/// 启动 swww-daemon
+/// 启动 image daemon（awww-daemon 或 swww-daemon）
 ///
-/// 如果系统中已有 swww-daemon 运行，先杀死它再启动我们自己的
+/// 如果系统中已有同类 daemon 运行，先杀死它再启动我们自己的
 async fn start_swww_daemon(state: &mut EngineState) -> Result<(), EngineError> {
     // 检查我们是否已经持有一个运行中的句柄
     if let Some(ref mut child) = state.swww_daemon {
@@ -180,30 +206,42 @@ async fn start_swww_daemon(state: &mut EngineState) -> Result<(), EngineError> {
         }
     }
 
-    // 如果系统中有其他 swww-daemon 在运行，先杀死它
-    // 这样我们可以完全接管生命周期
+    // 如果系统中有其他 daemon 在运行，先杀死它
     if is_any_swww_daemon_running().await {
-        // 用 pkill 杀死所有 swww-daemon
-        let _ = Command::new("pkill")
-            .arg("-x")
-            .arg("swww-daemon")
-            .status()
-            .await;
+        // 同时尝试杀死 awww-daemon 和 swww-daemon
+        for daemon in &["awww-daemon", "swww-daemon"] {
+            let _ = Command::new("pkill")
+                .arg("-x")
+                .arg(daemon)
+                .status()
+                .await;
+        }
         // 等待进程退出
         sleep(Duration::from_millis(100)).await;
     }
 
+    // 确定要使用的二进制名称（如果 image_bin 已由 init 填充则直接用，否则重新检测）
+    let bin = if !state.image_bin.is_empty() {
+        state.image_bin.clone()
+    } else {
+        detect_image_bin().await.ok_or_else(|| EngineError::NotFound {
+            engine: "awww or swww".to_string(),
+        })?
+    };
+    let daemon_bin = format!("{}-daemon", bin);
+
     // 启动新的 daemon
-    let child = Command::new("swww-daemon")
+    let child = Command::new(&daemon_bin)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| EngineError::SpawnFailed {
-            engine: "swww-daemon".to_string(),
+            engine: daemon_bin.clone(),
             source: e,
         })?;
 
     state.swww_daemon = Some(child);
+    state.image_bin = bin;
 
     // 等待 daemon 初始化
     sleep(Duration::from_millis(200)).await;
@@ -222,9 +260,9 @@ async fn ensure_swww_daemon(state: &mut EngineState) -> Result<(), EngineError> 
     start_swww_daemon(state).await
 }
 
-/// 异步设置 swww 壁纸
-async fn set_swww_image(path: &Path, config: &ImageEngineConfig) -> Result<(), EngineError> {
-    let mut cmd = Command::new("swww");
+/// 异步设置壁纸（awww 或 swww）
+async fn set_swww_image(bin: &str, path: &Path, config: &ImageEngineConfig) -> Result<(), EngineError> {
+    let mut cmd = Command::new(bin);
     cmd.arg("img");
 
     // 添加目标显示器
@@ -232,7 +270,7 @@ async fn set_swww_image(path: &Path, config: &ImageEngineConfig) -> Result<(), E
         cmd.arg("--outputs").arg(&config.outputs);
     }
 
-    // 添加 swww 参数
+    // 添加 swww_args 参数
     for arg in &config.swww_args {
         cmd.arg(arg);
     }
@@ -244,19 +282,19 @@ async fn set_swww_image(path: &Path, config: &ImageEngineConfig) -> Result<(), E
     cmd.stderr(std::process::Stdio::piped());
 
     let output = cmd.output().await.map_err(|e| EngineError::SpawnFailed {
-        engine: "swww".to_string(),
+        engine: bin.to_string(),
         source: e,
     })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let message = if stderr.is_empty() {
-            format!("swww img exited with code {:?}", output.status.code())
+            format!("{} img exited with code {:?}", bin, output.status.code())
         } else {
-            format!("swww img failed: {}", stderr.trim())
+            format!("{} img failed: {}", bin, stderr.trim())
         };
         return Err(EngineError::SetFailed {
-            engine: "swww".to_string(),
+            engine: bin.to_string(),
             message,
         });
     }
@@ -264,21 +302,35 @@ async fn set_swww_image(path: &Path, config: &ImageEngineConfig) -> Result<(), E
     Ok(())
 }
 
-/// 异步清除 swww 壁纸（不杀 daemon）
-async fn clear_swww() -> Result<(), EngineError> {
-    let _ = Command::new("swww")
-        .arg("clear")
-        .stderr(std::process::Stdio::null())
-        .output()
-        .await;
-
+/// 异步清除壁纸（不杀 daemon）
+///
+/// bin 为 "awww" 或 "swww"，为空时按优先级依次尝试
+async fn clear_swww(bin: &str) -> Result<(), EngineError> {
+    let bins: &[&str] = if bin.is_empty() {
+        &["awww", "swww"]
+    } else {
+        std::slice::from_ref(&bin)
+    };
+    for b in bins {
+        let ok = Command::new(b)
+            .arg("clear")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            break;
+        }
+    }
     Ok(())
 }
 
-/// 停止 swww-daemon
-async fn stop_swww_daemon(child: &mut Option<Child>) {
+/// 停止 image daemon
+async fn stop_swww_daemon(child: &mut Option<Child>, image_bin: &str) {
     // 先清除壁纸
-    let _ = clear_swww().await;
+    let _ = clear_swww(image_bin).await;
 
     if let Some(mut c) = child.take() {
         let _ = c.kill().await;
@@ -303,13 +355,18 @@ pub async fn init(config: &Config) -> Result<EngineState, EngineError> {
     }
     if !detect_result.swww_available && config.paths.mode == WallMode::Image {
         return Err(EngineError::NotFound {
-            engine: "swww".to_string(),
+            engine: "awww or swww".to_string(),
         });
     }
 
     let mut state = EngineState::new(config.paths.mode);
 
-    // 只有 Image 模式才立即启动 swww-daemon
+    // 检测并记录实际使用的图片引擎（Image 模式和 Video 模式都需要，以备后续切换）
+    if let Some(bin) = detect_image_bin().await {
+        state.image_bin = bin;
+    }
+
+    // 只有 Image 模式才立即启动 daemon
     // Video 模式延迟到第一次切换到 Image 时
     if config.paths.mode == WallMode::Image {
         start_swww_daemon(&mut state).await?;
@@ -336,7 +393,7 @@ pub async fn set_wallpaper(
         }
         WallMode::Image => {
             ensure_swww_daemon(state).await?;
-            set_swww_image(path, &config.image_engine).await?;
+            set_swww_image(&state.image_bin.clone(), path, &config.image_engine).await?;
         }
     }
 
@@ -380,9 +437,9 @@ pub async fn switch_mode_seamless(
             let new_child = start_mpvpaper(first_wallpaper, &config.video_engine).await?;
             state.mpvpaper = Some(new_child);
 
-            // 2. 清除 swww 壁纸（不杀 daemon，保留供下次使用）
-            clear_swww().await?;
-            
+            // 2. 清除壁纸（不杀 daemon，保留供下次使用）
+            clear_swww(&state.image_bin).await?;
+
             // 3. 后台杀死 mpvpaper（从 Video 切换过来时）
             if let Some(child) = old_mpvpaper {
                 stop_mpvpaper_background(child);
@@ -390,11 +447,11 @@ pub async fn switch_mode_seamless(
         }
         WallMode::Image => {
             // Video → Image
-            // 1. 确保 swww-daemon 运行
+            // 1. 确保 image daemon 运行
             ensure_swww_daemon(state).await?;
 
             // 2. 设置图片壁纸（立即覆盖 mpvpaper）
-            set_swww_image(first_wallpaper, &config.image_engine).await?;
+            set_swww_image(&state.image_bin.clone(), first_wallpaper, &config.image_engine).await?;
 
             // 3. 后台杀死 mpvpaper
             if let Some(child) = old_mpvpaper {
@@ -417,8 +474,8 @@ pub async fn shutdown(state: &mut EngineState) -> Result<(), EngineError> {
     // 停止 mpvpaper
     stop_mpvpaper(&mut state.mpvpaper).await;
 
-    // 停止 swww-daemon
-    stop_swww_daemon(&mut state.swww_daemon).await;
+    // 停止 image daemon
+    stop_swww_daemon(&mut state.swww_daemon, &state.image_bin.clone()).await;
 
     // 额外保险：杀死任何可能残留的进程
     let _ = Command::new("pkill")
@@ -440,7 +497,7 @@ pub async fn clear_wallpaper(
             stop_mpvpaper(&mut state.mpvpaper).await;
         }
         WallMode::Image => {
-            clear_swww().await?;
+            clear_swww(&state.image_bin).await?;
         }
     }
     state.current = None;
