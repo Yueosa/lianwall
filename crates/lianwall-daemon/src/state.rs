@@ -328,12 +328,14 @@ impl SharedState {
         let video_space = WallpaperSpace {
             items: Vec::new(),
             pointer: 0.0,
+            selector_nonce: 0,
             cooldown_queue: std::collections::VecDeque::new(),
             current_index: None,
         };
         let image_space = WallpaperSpace {
             items: Vec::new(),
             pointer: 0.0,
+            selector_nonce: 0,
             cooldown_queue: std::collections::VecDeque::new(),
             current_index: None,
         };

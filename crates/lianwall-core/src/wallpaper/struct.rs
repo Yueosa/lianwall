@@ -28,6 +28,8 @@ pub struct WallpaperSpace {
     pub items: Vec<WallpaperRecord>,
     /// 当前指针角度 [0, 2π)
     pub pointer: f64,
+    /// 选择器步进计数器，用于生成可复现的采样随机流
+    pub selector_nonce: u64,
     /// 冷却队列（存储最近选中的壁纸索引）
     pub cooldown_queue: VecDeque<usize>,
     /// 当前壁纸索引
@@ -79,6 +81,9 @@ impl Default for WeightsFile {
 pub struct ModeData {
     /// 指针角度
     pub pointer: f64,
+    /// 选择器步进计数器
+    #[serde(default)]
+    pub selector_nonce: u64,
     /// 当前壁纸路径（用于启动时恢复）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub current_path: Option<PathBuf>,

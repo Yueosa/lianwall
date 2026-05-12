@@ -9,6 +9,8 @@ pub struct Config {
     pub paths: PathsConfig,
     pub video_engine: VideoEngineConfig,
     pub image_engine: ImageEngineConfig,
+    #[serde(default)]
+    pub algorithm: AlgorithmConfig,
     pub vram: VramConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
@@ -47,7 +49,7 @@ pub struct VideoEngineConfig {
     pub mpv_args: Vec<String>,
 }
 
-/// 静态壁纸引擎配置 (swww)
+/// 静态壁纸引擎配置 (swww/awww)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageEngineConfig {
     /// 切换间隔（秒）
@@ -55,8 +57,41 @@ pub struct ImageEngineConfig {
     /// 目标显示器（空字符串 = 所有显示器，或逗号分隔如 "eDP-1,HDMI-A-1"）
     #[serde(default)]
     pub outputs: String,
-    /// 透传给 swww img 的参数
+    /// 透传给 swww/awww img 的参数
     pub swww_args: Vec<String>,
+}
+
+/// 壁纸选择算法类型
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AlgorithmStrategy {
+    /// 顺时针偏置 softmax 概率选择
+    #[default]
+    ClockwiseBiasedSoftmax,
+}
+
+/// 壁纸选择算法配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlgorithmConfig {
+    /// 选择策略
+    #[serde(default)]
+    pub strategy: AlgorithmStrategy,
+    /// 左侧候选惩罚强度
+    #[serde(default = "default_bias_lambda")]
+    pub bias_lambda: f64,
+    /// softmax 温度
+    #[serde(default = "default_temperature")]
+    pub temperature: f64,
+}
+
+impl Default for AlgorithmConfig {
+    fn default() -> Self {
+        Self {
+            strategy: AlgorithmStrategy::ClockwiseBiasedSoftmax,
+            bias_lambda: default_bias_lambda(),
+            temperature: default_temperature(),
+        }
+    }
 }
 
 /// 显存监控后端选择
@@ -95,6 +130,14 @@ pub struct VramConfig {
 
 fn default_cooldown() -> u64 {
     30
+}
+
+fn default_bias_lambda() -> f64 {
+    0.35
+}
+
+fn default_temperature() -> f64 {
+    0.28
 }
 
 /// 守护进程配置

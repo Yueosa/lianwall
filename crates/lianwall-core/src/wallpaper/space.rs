@@ -20,6 +20,7 @@ pub fn build_space(wallpapers: Vec<ScannedWallpaper>, seed: u64) -> WallpaperSpa
         return WallpaperSpace {
             items: vec![],
             pointer: 0.0,
+            selector_nonce: 0,
             cooldown_queue: VecDeque::new(),
             current_index: None,
         };
@@ -57,6 +58,7 @@ pub fn build_space(wallpapers: Vec<ScannedWallpaper>, seed: u64) -> WallpaperSpa
     WallpaperSpace {
         items,
         pointer,
+        selector_nonce: 0,
         cooldown_queue: VecDeque::new(),
         current_index: None,
     }
@@ -80,8 +82,10 @@ pub fn rebuild_space(
     // 继承指针位置（优先使用运行时状态）
     if let Some(old) = old_space {
         space.pointer = old.pointer;
+        space.selector_nonce = old.selector_nonce;
     } else if let Some(p) = persisted {
         space.pointer = p.pointer;
+        space.selector_nonce = p.selector_nonce;
     }
 
     // 继承锁定状态和播放历史
@@ -111,6 +115,7 @@ pub fn export_to_persisted(space: &WallpaperSpace) -> ModeData {
     
     ModeData {
         pointer: space.pointer,
+        selector_nonce: space.selector_nonce,
         current_path,
         items: space
             .items

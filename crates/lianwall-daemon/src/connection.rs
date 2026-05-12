@@ -356,7 +356,7 @@ fn event_to_response(event: &Event) -> Option<Response> {
             let engine = if *mpvpaper_running {
                 "mpvpaper"
             } else if *swww_running {
-                "swww"
+                "awww"
             } else {
                 "none"
             };

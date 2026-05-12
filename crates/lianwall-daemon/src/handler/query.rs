@@ -56,7 +56,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
     let engine_name = if engine.mpvpaper_running {
         "mpvpaper"
     } else if engine.swww_daemon_running {
-        "swww"
+        "awww"
     } else {
         "none"
     };
@@ -128,6 +128,10 @@ async fn get_config(state: &Arc<SharedState>, key: Option<String>) -> Response {
             "image_engine.interval" => serde_json::to_value(config.image_engine.interval).ok(),
             "image_engine.outputs" => serde_json::to_value(&config.image_engine.outputs).ok(),
             "image_engine.swww_args" => serde_json::to_value(&config.image_engine.swww_args).ok(),
+            // algorithm
+            "algorithm.strategy" => serde_json::to_value(&config.algorithm.strategy).ok(),
+            "algorithm.bias_lambda" => serde_json::to_value(config.algorithm.bias_lambda).ok(),
+            "algorithm.temperature" => serde_json::to_value(config.algorithm.temperature).ok(),
             // vram
             "vram.enabled" => serde_json::to_value(config.vram.enabled).ok(),
             "vram.backend" => serde_json::to_value(&config.vram.backend).ok(),
@@ -265,7 +269,7 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
         ConfigKeyInfo {
             key: "image_engine.swww_args".to_string(),
             value_type: "array".to_string(),
-            description: "透传给 swww img 的参数".to_string(),
+            description: "透传给 awww img 的参数（内部键名保持 swww_args）".to_string(),
             default: serde_json::json!([
                 "--transition-type=fade",
                 "--transition-duration=2.0",
@@ -274,6 +278,44 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
                 "--resize=crop"
             ]),
             constraints: None,
+        },
+
+        // ==================== algorithm ====================
+        ConfigKeyInfo {
+            key: "algorithm.strategy".to_string(),
+            value_type: "enum".to_string(),
+            description: "壁纸选择策略，当前为顺时针偏置 softmax 概率选择".to_string(),
+            default: serde_json::json!("clockwise_biased_softmax"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["clockwise_biased_softmax".to_string()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "algorithm.bias_lambda".to_string(),
+            value_type: "number".to_string(),
+            description: "左侧候选惩罚强度；越大越偏向顺时针方向".to_string(),
+            default: serde_json::json!(0.35),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(0.0)),
+                max: Some(serde_json::json!(4.0)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "algorithm.temperature".to_string(),
+            value_type: "number".to_string(),
+            description: "softmax 温度；越小越稳定，越大越随机".to_string(),
+            default: serde_json::json!(0.28),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(0.01)),
+                max: Some(serde_json::json!(5.0)),
+                enum_values: None,
+                pattern: None,
+            }),
         },
         
         // ==================== vram ====================

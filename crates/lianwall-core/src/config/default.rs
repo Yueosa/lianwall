@@ -57,9 +57,10 @@ mpv_args = [
     "--panscan=1.0"
 ]
 
-# === 静态壁纸引擎 (swww) ===
-# 官方文档: https://github.com/LGFae/swww
-# swww 是一个高效的 Wayland 壁纸设置工具，支持平滑过渡动画
+# === 静态壁纸引擎 (swww/awww) ===
+# 请注意, swww包已改名为 awww
+# 官方文档: https://github.com/LGFae/swww (awww)
+# swww (awww) 是一个高效的 Wayland 壁纸设置工具，支持平滑过渡动画
 [image_engine]
 # 壁纸切换间隔（秒）
 # 范围: 10 - 86400（10秒 ~ 24小时）
@@ -68,10 +69,10 @@ interval = 600
 # 目标显示器
 # - 空字符串 = 所有已连接的显示器
 # - 逗号分隔多个显示器如 "eDP-1,HDMI-A-1"
-# 可通过 `swww query` 查看显示器名称
+# 可通过 `swww/awww query` 查看显示器名称
 outputs = ""
 
-# 透传给 swww img 的参数
+# 透传给 swww/awww img 的参数
 # 过渡效果类型 (--transition-type):
 #   none, simple, fade, left, right, top, bottom,
 #   wipe, wave, grow, center, any, outer, random
@@ -80,7 +81,7 @@ outputs = ""
 #   --transition-fps        过渡帧率
 #   --transition-step       过渡步长
 #   --resize                缩放模式: crop, fit, no
-# 详见: swww img --help
+# 详见: swww/awww img --help
 swww_args = [
     "--transition-type=fade",
     "--transition-duration=2.0",
@@ -88,6 +89,17 @@ swww_args = [
     "--transition-step=20",
     "--resize=crop"
 ]
+
+# === 壁纸选择算法 ===
+[algorithm]
+# 当前仅支持：clockwise_biased_softmax
+strategy = "clockwise_biased_softmax"
+
+# 左侧候选惩罚强度；越大越偏向顺时针方向
+bias_lambda = 0.35
+
+# softmax 温度；越小越稳定，越大越随机
+temperature = 0.28
 
 # === 显存监控 ===
 # 监控 GPU 显存使用，在显存不足时自动降级为静态壁纸

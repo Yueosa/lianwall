@@ -14,12 +14,50 @@ use std::sync::Arc;
 
 use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger, VramOverrideAction};
 use lianwall_core::config::WallMode;
-use lianwall_core::algorithm::select_next;
+use lianwall_core::algorithm::{select_next_with_config, SelectionConfig};
 use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
 use lianwall_core::engine::detect_image_bin;
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
 use crate::state::SharedState;
+
+fn publish_mode_changed_if_needed(
+    event_bus: &EventBus,
+    old_mode: WallMode,
+    new_mode: WallMode,
+) {
+    if old_mode != new_mode {
+        event_bus.publish(Event::ModeChanged {
+            from: old_mode,
+            to: new_mode,
+        });
+    }
+}
+
+async fn selection_config_from_state(state: &Arc<SharedState>) -> SelectionConfig {
+    let config = state.config.read().await;
+    SelectionConfig {
+        bias_lambda: config.algorithm.bias_lambda,
+        temperature: config.algorithm.temperature,
+    }
+}
+
+async fn sync_space_current_index(
+    state: &Arc<SharedState>,
+    mode: WallMode,
+    path: &PathBuf,
+) {
+    match mode {
+        WallMode::Video => {
+            let mut space = state.video_space.write().await;
+            space.current_index = space.items.iter().position(|item| &item.path == path);
+        }
+        WallMode::Image => {
+            let mut space = state.image_space.write().await;
+            space.current_index = space.items.iter().position(|item| &item.path == path);
+        }
+    }
+}
 
 /// 处理命令请求
 pub async fn handle_command(
@@ -72,6 +110,7 @@ pub async fn handle_command(
 /// - 光标不在末尾：光标前进一步，播放光标指向的壁纸
 async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
     let mode = *state.engine.mode.read().await;
+    let selection = selection_config_from_state(state).await;
     
     // 检查历史光标位置
     let is_at_end = state.playback_history.read().await.is_at_end();
@@ -97,6 +136,9 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: Wa
         // 更新模式和当前壁纸
         *state.engine.mode.write().await = detected_mode;
         *state.engine.current.write().await = Some(path.clone());
+        sync_space_current_index(state, detected_mode, &path).await;
+
+        publish_mode_changed_if_needed(event_bus, mode, detected_mode);
         
         // 发布事件
         event_bus.publish(Event::WallpaperChanged { path, mode: detected_mode, trigger });
@@ -108,14 +150,14 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: Wa
     let path = match mode {
         WallMode::Video => {
             let mut space = state.video_space.write().await;
-            match select_next(&mut space) {
+            match select_next_with_config(&mut space, selection) {
                 Some(output) => space.items[output.index].path.clone(),
                 None => return Response::error(ErrorCode::EmptySpace, "No available video wallpapers"),
             }
         }
         WallMode::Image => {
             let mut space = state.image_space.write().await;
-            match select_next(&mut space) {
+            match select_next_with_config(&mut space, selection) {
                 Some(output) => space.items[output.index].path.clone(),
                 None => return Response::error(ErrorCode::EmptySpace, "No available image wallpapers"),
             }
@@ -143,6 +185,8 @@ async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: Wa
 ///
 /// 光标后退一步，播放光标指向的壁纸
 async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
+    let old_mode = *state.engine.mode.read().await;
+
     // 从播放历史后退
     let path = {
         let mut history = state.playback_history.write().await;
@@ -163,6 +207,9 @@ async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus, trigger: Wa
     // 更新模式和当前壁纸
     *state.engine.mode.write().await = detected_mode;
     *state.engine.current.write().await = Some(path.clone());
+    sync_space_current_index(state, detected_mode, &path).await;
+
+    publish_mode_changed_if_needed(event_bus, old_mode, detected_mode);
     
     // 发布事件
     event_bus.publish(Event::WallpaperChanged { path, mode: detected_mode, trigger });
@@ -191,6 +238,8 @@ async fn handle_set_wallpaper(
     path: PathBuf,
     trigger: WallpaperTrigger,
 ) -> Response {
+    let old_mode = *state.engine.mode.read().await;
+
     // 检测壁纸类型
     let mode = detect_mode(&path);
     
@@ -205,6 +254,9 @@ async fn handle_set_wallpaper(
     // 更新模式和当前壁纸
     *state.engine.mode.write().await = mode;
     *state.engine.current.write().await = Some(path.clone());
+    sync_space_current_index(state, mode, &path).await;
+
+    publish_mode_changed_if_needed(event_bus, old_mode, mode);
     
     // 发布事件
     event_bus.publish(Event::WallpaperChanged { path, mode, trigger });
@@ -218,6 +270,7 @@ async fn handle_set_mode(
     event_bus: &EventBus,
     mode: WallMode,
 ) -> Response {
+    let selection = selection_config_from_state(state).await;
     let old_mode = *state.engine.mode.read().await;
     
     if old_mode == mode {
@@ -243,7 +296,7 @@ async fn handle_set_mode(
             match mode {
                 WallMode::Video => {
                     let mut space = state.video_space.write().await;
-                    match select_next(&mut space) {
+                    match select_next_with_config(&mut space, selection) {
                         Some(output) => space.items[output.index].path.clone(),
                         None => {
                             // 空间为空，仍然切换模式并发布事件
@@ -255,7 +308,7 @@ async fn handle_set_mode(
                 }
                 WallMode::Image => {
                     let mut space = state.image_space.write().await;
-                    match select_next(&mut space) {
+                    match select_next_with_config(&mut space, selection) {
                         Some(output) => space.items[output.index].path.clone(),
                         None => {
                             *state.engine.mode.write().await = mode;
@@ -450,6 +503,10 @@ fn get_config_value(config: &lianwall_core::config::Config, key: &str) -> serde_
         "image_engine.interval" => json!(config.image_engine.interval),
         "image_engine.outputs" => json!(&config.image_engine.outputs),
         "image_engine.swww_args" => json!(&config.image_engine.swww_args),
+        // algorithm
+        "algorithm.strategy" => json!(&config.algorithm.strategy),
+        "algorithm.bias_lambda" => json!(config.algorithm.bias_lambda),
+        "algorithm.temperature" => json!(config.algorithm.temperature),
         // vram
         "vram.enabled" => json!(config.vram.enabled),
         "vram.threshold_percent" => json!(config.vram.threshold_percent),
@@ -578,6 +635,40 @@ async fn handle_set_config(
                 }
             } else {
                 return Response::error(ErrorCode::InvalidRequest, "Invalid swww_args value, expected array");
+            }
+        }
+
+        // ==================== algorithm ====================
+        "algorithm.strategy" => {
+            if let Some(v) = value.as_str() {
+                match v {
+                    "clockwise_biased_softmax" => {
+                        config.algorithm.strategy = lianwall_core::config::AlgorithmStrategy::ClockwiseBiasedSoftmax;
+                    }
+                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid strategy, expected: clockwise_biased_softmax"),
+                }
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid strategy value, expected string");
+            }
+        }
+        "algorithm.bias_lambda" => {
+            if let Some(v) = value.as_f64() {
+                if !(0.0..=4.0).contains(&v) {
+                    return Response::error(ErrorCode::InvalidRequest, "bias_lambda must be between 0.0 and 4.0");
+                }
+                config.algorithm.bias_lambda = v;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid bias_lambda value");
+            }
+        }
+        "algorithm.temperature" => {
+            if let Some(v) = value.as_f64() {
+                if !(0.01..=5.0).contains(&v) {
+                    return Response::error(ErrorCode::InvalidRequest, "temperature must be between 0.01 and 5.0");
+                }
+                config.algorithm.temperature = v;
+            } else {
+                return Response::error(ErrorCode::InvalidRequest, "Invalid temperature value");
             }
         }
         
@@ -988,7 +1079,7 @@ async fn apply_wallpaper(
         WallMode::Image => {
             // 检测可用的图片引擎（awww 优先，降级到 swww）
             let image_bin = detect_image_bin().await
-                .ok_or_else(|| anyhow::anyhow!("Neither awww nor swww found"))?;
+                .ok_or_else(|| anyhow::anyhow!("Neither awww nor legacy swww found"))?;
             let daemon_bin = format!("{}-daemon", image_bin);
 
             // 确保 daemon 运行（先启动新引擎）
@@ -1062,6 +1153,7 @@ async fn handle_vram_override(
     event_bus: &EventBus,
     action: VramOverrideAction,
 ) -> Response {
+    let selection = selection_config_from_state(state).await;
     match action {
         VramOverrideAction::Downgrade => {
             *state.vram_override.write().await = Some(true);
@@ -1078,7 +1170,7 @@ async fn handle_vram_override(
                     let current = space.current_index
                         .and_then(|i| space.items.get(i).map(|w| w.path.clone()));
                     current.or_else(|| {
-                        select_next(&mut space)
+                        select_next_with_config(&mut space, selection)
                             .map(|output| space.items[output.index].path.clone())
                     })
                 };
@@ -1109,7 +1201,7 @@ async fn handle_vram_override(
                     let current = space.current_index
                         .and_then(|i| space.items.get(i).map(|w| w.path.clone()));
                     current.or_else(|| {
-                        select_next(&mut space)
+                        select_next_with_config(&mut space, selection)
                             .map(|output| space.items[output.index].path.clone())
                     })
                 };

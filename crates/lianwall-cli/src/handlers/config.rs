@@ -271,6 +271,11 @@ fn get_config_value(config: &lianwall_core::config::Config, key: &str) -> Option
         ["image_engine", "outputs"] => Some(config.image_engine.outputs.clone()),
         ["image_engine", "swww_args"] => Some(format!("{:?}", config.image_engine.swww_args)),
 
+        // algorithm
+        ["algorithm", "strategy"] => Some(format!("{:?}", config.algorithm.strategy).to_lowercase()),
+        ["algorithm", "bias_lambda"] => Some(config.algorithm.bias_lambda.to_string()),
+        ["algorithm", "temperature"] => Some(config.algorithm.temperature.to_string()),
+
         // vram
         ["vram", "enabled"] => Some(config.vram.enabled.to_string()),
         ["vram", "threshold_percent"] => Some(config.vram.threshold_percent.to_string()),
@@ -356,6 +361,28 @@ fn set_config_value(
         }
         ["image_engine", "swww_args"] => {
             config.image_engine.swww_args = parse_string_array(value);
+        }
+
+        // algorithm
+        ["algorithm", "strategy"] => {
+            config.algorithm.strategy = match value.to_lowercase().as_str() {
+                "clockwise_biased_softmax" => lianwall_core::config::AlgorithmStrategy::ClockwiseBiasedSoftmax,
+                _ => return Err(format!("Invalid strategy: {}. Use 'clockwise_biased_softmax'", value)),
+            };
+        }
+        ["algorithm", "bias_lambda"] => {
+            let v: f64 = value.parse().map_err(|_| format!("Invalid bias_lambda: {}", value))?;
+            if !(0.0..=4.0).contains(&v) {
+                return Err(format!("bias_lambda must be between 0.0 and 4.0, got {}", v));
+            }
+            config.algorithm.bias_lambda = v;
+        }
+        ["algorithm", "temperature"] => {
+            let v: f64 = value.parse().map_err(|_| format!("Invalid temperature: {}", value))?;
+            if !(0.01..=5.0).contains(&v) {
+                return Err(format!("temperature must be between 0.01 and 5.0, got {}", v));
+            }
+            config.algorithm.temperature = v;
         }
 
         // vram

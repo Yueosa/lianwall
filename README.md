@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.3.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.5.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
@@ -382,11 +382,11 @@ mpv_args = [                             # 透传给 mpv 的参数
     "--panscan=1.0"
 ]
 
-# === 静态壁纸引擎 (awww/swww) ===
+# === 静态壁纸引擎 (awww) ===
 [image_engine]
 interval = 600                           # 自动切换间隔（秒）
 outputs = ""                             # 目标显示器（空 = 所有）
-swww_args = [                            # 透传给 awww/swww img 的参数
+swww_args = [                            # 透传给 awww img 的参数（内部键名保持不变）
     "--transition-type=fade",
     "--transition-duration=2.0",
     "--transition-fps=60",
@@ -444,7 +444,7 @@ awww query
 # 手动启动 awww-daemon
 awww-daemon &
 
-# 或检查 swww-daemon（旧版系统）
+# 兼容旧版系统时也可使用 legacy swww
 swww query
 swww-daemon &
 ```
