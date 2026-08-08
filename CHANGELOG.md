@@ -4,6 +4,7 @@
 
 | 版本 | 日期 | 主要变化 |
 |------|------|----------|
+| [5.5.1](changelogs/CHANGELOG-5.5.1.md) | 2026-08-08 | 壁纸切换超时改为性能探针，不再误报业务 Timeout |
 | [5.5.0](changelogs/CHANGELOG-5.5.0.md) | 2026-05-13 | 顺时针偏置概率选择算法、算法参数配置、GUI 联动稳定性修复 |
 | [5.4.0](changelogs/CHANGELOG-5.4.0.md) | 2026-03-25 | awww / swww 双版本兼容，优先使用 awww |
 | [5.3.0](changelogs/CHANGELOG-5.3.0.md) | 2026-02-26 | VRAM 自定义后端（Intel 等非主流 GPU）、手动覆盖 Socket 命令、`lianwall vram` 子命令组 |

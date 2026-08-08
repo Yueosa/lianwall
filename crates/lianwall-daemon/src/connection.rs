@@ -8,7 +8,7 @@
 
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -232,53 +232,113 @@ async fn process_request(
         
         // Command: 发送到命令队列
         _ => {
+            let cmd_name = request.name();
+            // 壁纸切换的权威结果是状态变更 + WallpaperChanged 事件。
+            // 等待回执超时只反映引擎性能，不能当成业务失败。
+            let wait_for_completion = is_wallpaper_mutation(&request);
+
             let (response_tx, response_rx) = oneshot::channel();
-            
             let msg = CommandMsg {
                 request,
                 response_tx,
             };
-            
-            // 获取超时时间
-            let timeout = get_request_timeout(&msg.request);
-            
-            // 发送到命令队列
+
             if cmd_tx.send(msg).await.is_err() {
                 return Some(Response::error(ErrorCode::InternalError, "Command queue closed"));
             }
-            
-            // 等待响应（带超时）
-            match tokio::time::timeout(timeout, response_rx).await {
-                Ok(Ok(response)) => Some(response),
-                Ok(Err(_)) => Some(Response::error(ErrorCode::InternalError, "Response channel dropped")),
-                Err(_) => Some(Response::error(ErrorCode::Timeout, "Command timeout")),
+
+            if wait_for_completion {
+                wait_wallpaper_command(cmd_name, response_rx).await
+            } else {
+                let timeout = get_request_timeout_by_name(cmd_name);
+                match tokio::time::timeout(timeout, response_rx).await {
+                    Ok(Ok(response)) => Some(response),
+                    Ok(Err(_)) => Some(Response::error(
+                        ErrorCode::InternalError,
+                        "Response channel dropped",
+                    )),
+                    Err(_) => Some(Response::error(ErrorCode::Timeout, "Command timeout")),
+                }
             }
         }
     }
 }
 
-/// 获取请求超时时间
-///
-/// 设计决策：不同命令设置不同超时
-fn get_request_timeout(request: &Request) -> Duration {
-    match request {
-        // Query: 快速响应
-        Request::Ping | Request::GetStatus | Request::GetConfig { .. } => Duration::from_secs(2),
-        Request::GetSpace { .. } | Request::GetTimeInfo => Duration::from_secs(5),
-        
-        // Command: 根据操作类型
-        Request::Next { .. } | Request::Prev { .. } | Request::SetWallpaper { .. } => Duration::from_secs(5),
-        Request::SetMode { .. } => Duration::from_secs(10),
-        Request::Lock { .. } | Request::Unlock { .. } | Request::ToggleLock { .. } => Duration::from_secs(2),
-        Request::SetConfig { .. } | Request::ReloadConfig => Duration::from_secs(5),
-        Request::ReloadHooks => Duration::from_secs(5),
-        Request::ListHooks => Duration::from_secs(2),
-        Request::Rescan => Duration::from_secs(60), // 大目录可能很慢
-        Request::Shutdown => Duration::from_secs(10),
-        Request::VramOverride { .. } => Duration::from_secs(10),
-        
-        // Subscribe: 无需长超时
-        Request::Subscribe { .. } | Request::Unsubscribe => Duration::from_secs(5),
+/// 壁纸类命令：等真正完成；慢只记性能日志，不回 Timeout 业务错误
+async fn wait_wallpaper_command(
+    cmd_name: &'static str,
+    response_rx: oneshot::Receiver<Response>,
+) -> Option<Response> {
+    /// 超过该阈值只打 warn，不中断等待
+    const SLOW_THRESHOLD: Duration = Duration::from_secs(5);
+    const PROBE_INTERVAL: Duration = Duration::from_secs(5);
+
+    let start = Instant::now();
+    let mut probe = tokio::time::interval(PROBE_INTERVAL);
+    probe.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // 跳过 interval 的立即首 tick，避免一进等待就打日志
+    probe.tick().await;
+
+    tokio::pin!(response_rx);
+
+    loop {
+        tokio::select! {
+            result = &mut response_rx => {
+                let elapsed = start.elapsed();
+                if elapsed > SLOW_THRESHOLD {
+                    tracing::warn!(
+                        command = cmd_name,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        "Wallpaper command finished slowly (perf signal, not a business failure)"
+                    );
+                } else {
+                    tracing::debug!(
+                        command = cmd_name,
+                        elapsed_ms = elapsed.as_millis() as u64,
+                        "Wallpaper command finished"
+                    );
+                }
+                return match result {
+                    Ok(response) => Some(response),
+                    Err(_) => Some(Response::error(
+                        ErrorCode::InternalError,
+                        "Response channel dropped",
+                    )),
+                };
+            }
+            _ = probe.tick() => {
+                tracing::info!(
+                    command = cmd_name,
+                    elapsed_ms = start.elapsed().as_millis() as u64,
+                    "Wallpaper command still in progress (perf probe)"
+                );
+            }
+        }
+    }
+}
+
+fn is_wallpaper_mutation(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::Next { .. }
+            | Request::Prev { .. }
+            | Request::SetWallpaper { .. }
+            | Request::SetMode { .. }
+    )
+}
+
+/// 非壁纸命令的回执等待上限（壁纸类走 wait_wallpaper_command）
+fn get_request_timeout_by_name(cmd_name: &str) -> Duration {
+    match cmd_name {
+        "Ping" | "GetStatus" | "GetConfig" => Duration::from_secs(2),
+        "GetSpace" | "GetTimeInfo" => Duration::from_secs(5),
+        "Lock" | "Unlock" | "ToggleLock" | "ListHooks" => Duration::from_secs(2),
+        "SetConfig" | "ReloadConfig" | "ReloadHooks" | "Subscribe" | "Unsubscribe" => {
+            Duration::from_secs(5)
+        }
+        "Rescan" => Duration::from_secs(60),
+        "Shutdown" | "VramOverride" => Duration::from_secs(10),
+        _ => Duration::from_secs(10),
     }
 }
 
