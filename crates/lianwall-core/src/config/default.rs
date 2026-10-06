@@ -33,6 +33,11 @@ interval = 600
 # 可通过 `wlr-randr` 或 `hyprctl monitors` 查看显示器名称
 display = "*"
 
+# mpv IPC socket 路径
+# 常驻 mpvpaper 进程通过该 socket 接收换片命令（消除冷启动延迟）
+# 设为空字符串则禁用 IPC，每次切换都冷启动新进程
+ipc_socket = "/tmp/lianwall-mpv.sock"
+
 # 透传给 mpvpaper 的参数
 # 常用选项:
 #   -p          启动时暂停视频

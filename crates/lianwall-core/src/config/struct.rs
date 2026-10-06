@@ -47,6 +47,14 @@ pub struct VideoEngineConfig {
     pub mpvpaper_args: Vec<String>,
     /// 透传给 mpv 的参数（通过 mpvpaper -o 传递）
     pub mpv_args: Vec<String>,
+    /// mpv IPC socket 路径（用于常驻进程换片，空字符串表示禁用）
+    #[serde(default = "default_ipc_socket")]
+    pub ipc_socket: String,
+}
+
+/// ipc_socket 默认值：旧配置文件无此字段时自动启用 IPC 换片
+fn default_ipc_socket() -> String {
+    "/tmp/lianwall-mpv.sock".to_string()
 }
 
 /// 静态壁纸引擎配置 (swww/awww)

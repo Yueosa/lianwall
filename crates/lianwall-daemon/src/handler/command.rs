@@ -19,6 +19,7 @@ use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
 use lianwall_core::engine::detect_image_bin;
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
+use crate::ipc;
 use crate::state::SharedState;
 
 fn publish_mode_changed_if_needed(
@@ -1020,19 +1021,44 @@ async fn apply_wallpaper(
     
     match mode {
         WallMode::Video => {
+            // 优先走 IPC 热切换:mpvpaper 常驻时通过 mpv IPC 发 loadfile,避免冷启动
+            let ipc_socket = &config.video_engine.ipc_socket;
+            if !ipc_socket.is_empty() && was_mpvpaper_running {
+                match ipc::loadfile(ipc_socket, path).await {
+                    Ok(()) => {
+                        tracing::info!("Switched video wallpaper via mpv IPC: {:?}", path);
+                        // 换片完成。若 swww 残留(异常情况),直接清理
+                        if was_swww_running {
+                            state.engine.swww_daemon.kill().await;
+                        }
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        tracing::warn!("mpv IPC loadfile failed, falling back to cold start: {}", e);
+                    }
+                }
+            }
+
             // 启动 mpvpaper（先启动新引擎）
             tracing::info!("Applying video wallpaper: {:?}", path);
-            
+
             let mut cmd = tokio::process::Command::new("mpvpaper");
-            
+
             // 添加 mpvpaper 自身参数
             for arg in &config.video_engine.mpvpaper_args {
                 cmd.arg(arg);
             }
-            
+
             // 添加 mpv 参数（通过 -o 传递）
-            if !config.video_engine.mpv_args.is_empty() {
-                let mpv_args_str = config.video_engine.mpv_args.join(" ");
+            let mut mpv_args = config.video_engine.mpv_args.clone();
+            // 注入 IPC socket,供后续热切换使用;用户已手动配置则不重复注入
+            if !ipc_socket.is_empty()
+                && !mpv_args.iter().any(|a| a.contains("input-ipc-server"))
+            {
+                mpv_args.push(format!("--input-ipc-server={}", ipc_socket));
+            }
+            if !mpv_args.is_empty() {
+                let mpv_args_str = mpv_args.join(" ");
                 cmd.arg("-o").arg(&mpv_args_str);
             }
             

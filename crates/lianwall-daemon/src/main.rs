@@ -301,6 +301,12 @@ async fn main() -> anyhow::Result<()> {
     state.engine.swww_daemon.kill().await;
     state.engine.mpvpaper.kill().await;
 
+    // 清理 mpv IPC socket 残留文件
+    let ipc_socket = state.get_config().await.video_engine.ipc_socket;
+    if !ipc_socket.is_empty() {
+        let _ = tokio::fs::remove_file(&ipc_socket).await;
+    }
+
     // 等待 task 结束（带超时）
     let _ = tokio::time::timeout(
         std::time::Duration::from_secs(5),
