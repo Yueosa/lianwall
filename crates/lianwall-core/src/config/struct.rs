@@ -50,6 +50,20 @@ pub struct VideoEngineConfig {
     /// mpv IPC socket 路径（用于常驻进程换片，空字符串表示禁用）
     #[serde(default = "default_ipc_socket")]
     pub ipc_socket: String,
+    /// 视频切换过渡
+    #[serde(default)]
+    pub transition: VideoTransition,
+}
+
+/// 视频切换过渡类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoTransition {
+    /// 硬切换
+    #[default]
+    None,
+    /// 新视频淡入 0.4 秒
+    Fade,
 }
 
 /// ipc_socket 默认值：旧配置文件无此字段时自动启用 IPC 换片

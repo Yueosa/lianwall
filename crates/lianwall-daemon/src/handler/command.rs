@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger, VramOverrideAction};
-use lianwall_core::config::WallMode;
+use lianwall_core::config::{WallMode, VideoTransition};
 use lianwall_core::algorithm::{select_next_with_config, SelectionConfig};
 use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
 use lianwall_core::engine::detect_image_bin;
@@ -1056,6 +1056,12 @@ async fn apply_wallpaper(
                 && !mpv_args.iter().any(|a| a.contains("input-ipc-server"))
             {
                 mpv_args.push(format!("--input-ipc-server={}", ipc_socket));
+            }
+            // 注入过渡滤镜;用户已在 mpv_args 手动配置 vf 则不重复注入
+            if config.video_engine.transition == VideoTransition::Fade
+                && !mpv_args.iter().any(|a| a.contains("vf"))
+            {
+                mpv_args.push("--vf=lavfi=[fade=t=in:st=0:d=0.4]".to_string());
             }
             if !mpv_args.is_empty() {
                 let mpv_args_str = mpv_args.join(" ");

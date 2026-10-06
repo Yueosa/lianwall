@@ -116,6 +116,7 @@ async fn get_config(state: &Arc<SharedState>, key: Option<String>) -> Response {
             "video_engine.mpvpaper_args" => serde_json::to_value(&config.video_engine.mpvpaper_args).ok(),
             "video_engine.mpv_args" => serde_json::to_value(&config.video_engine.mpv_args).ok(),
             "video_engine.ipc_socket" => serde_json::to_value(&config.video_engine.ipc_socket).ok(),
+            "video_engine.transition" => serde_json::to_value(config.video_engine.transition).ok(),
             // image_engine
             "image_engine.interval" => serde_json::to_value(config.image_engine.interval).ok(),
             "image_engine.outputs" => serde_json::to_value(&config.image_engine.outputs).ok(),
@@ -263,7 +264,7 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
             value_type: "array".to_string(),
             description: "透传给 awww img 的参数（内部键名保持 swww_args）".to_string(),
             default: serde_json::json!([
-                "--transition-type=fade",
+                "--transition-type=outer",
                 "--transition-duration=2.0",
                 "--transition-fps=60",
                 "--transition-step=20",

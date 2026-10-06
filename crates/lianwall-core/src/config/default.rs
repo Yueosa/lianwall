@@ -38,6 +38,10 @@ display = "*"
 # 设为空字符串则禁用 IPC，每次切换都冷启动新进程
 ipc_socket = "/tmp/lianwall-mpv.sock"
 
+# 视频切换过渡 ("none" = 硬切换；"fade" = 新视频淡入 0.4 秒)
+# 注意: fade 需要回读解码帧，与 --hwdec=auto 硬解同用可能掉帧，请按机器性能开启
+transition = "none"
+
 # 透传给 mpvpaper 的参数
 # 常用选项:
 #   -p          启动时暂停视频
@@ -87,8 +91,9 @@ outputs = ""
 #   --transition-step       过渡步长
 #   --resize                缩放模式: crop, fit, no
 # 详见: swww/awww img --help
+# 注: 默认使用 outer(从边缘向内推进); fade 在深色壁纸之间过渡不明显
 swww_args = [
-    "--transition-type=fade",
+    "--transition-type=outer",
     "--transition-duration=2.0",
     "--transition-fps=60",
     "--transition-step=20",
