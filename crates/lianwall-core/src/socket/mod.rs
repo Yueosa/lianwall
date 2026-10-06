@@ -22,13 +22,9 @@
 //!
 //! # 协议格式
 //!
-//! 使用长度前缀帧:
-//! ```text
-//! +----------------+------------------+
-//! | 长度 (4 bytes) | JSON 数据        |
-//! | u32 big-endian | UTF-8 字符串     |
-//! +----------------+------------------+
-//! ```
+//! 换行分隔 JSON（NDJSON）：每帧一行 JSON，以 `\n` 结尾。
+//! 请求/响应帧顶层带 `id` 字段（u64，客户端自增，响应回带）；
+//! 不带 `id` 或 `id=0` 的帧为服务端主动推送（Event、订阅后的同步状态）。
 //!
 //! # 消息分类
 //!
@@ -39,15 +35,9 @@
 //!
 //! # 模块结构
 //!
-//! - [`protocol`] - 协议定义（请求、响应、事件）
-//! - [`codec`] - 消息编解码
+//! - [`protocol`] - 协议定义（请求、响应、事件、帧辅助函数）
 //! - [`error`] - 错误类型
-//!
-//! # 注意
-//! 
-//! Client 模块将在 Phase 3 重写以支持新协议和订阅模式
 
-pub mod codec;
 pub mod error;
 pub mod protocol;
 
@@ -56,6 +46,8 @@ pub use error::SocketError;
 pub use protocol::{
     // 常量
     PROTOCOL_VERSION, MAX_MESSAGE_SIZE,
+    // 帧辅助
+    extract_request_id, request_frame, response_frame,
     // 请求
     Request,
     // 响应

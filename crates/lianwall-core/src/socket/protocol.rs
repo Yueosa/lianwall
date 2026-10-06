@@ -31,10 +31,39 @@ use crate::config::WallMode;
 // ============================================================================
 
 /// 协议版本
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// 最大消息大小 (1 MB)
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+
+// ============================================================================
+// 请求帧 / 响应帧 (request id)
+// ============================================================================
+
+/// 从请求 JSON 提取请求 id（无 id 字段 → 0，视为旧客户端）
+pub fn extract_request_id(raw: &serde_json::Value) -> u64 {
+    raw.get("id").and_then(|v| v.as_u64()).unwrap_or(0)
+}
+
+/// 把 Request 序列化为带 id 的请求帧
+pub fn request_frame(id: u64, request: &Request) -> serde_json::Value {
+    let mut frame = serde_json::to_value(request).unwrap_or(serde_json::Value::Null);
+    if let Some(obj) = frame.as_object_mut() {
+        obj.insert("id".to_string(), serde_json::Value::from(id));
+    }
+    frame
+}
+
+/// 把 Response 序列化为带 id 的响应帧
+///
+/// id=0 表示非请求应答（主动推送，如 Event、订阅后的 immediate Status）
+pub fn response_frame(id: u64, response: &Response) -> serde_json::Value {
+    let mut frame = serde_json::to_value(response).unwrap_or(serde_json::Value::Null);
+    if let Some(obj) = frame.as_object_mut() {
+        obj.insert("id".to_string(), serde_json::Value::from(id));
+    }
+    frame
+}
 
 // ============================================================================
 // 请求 (Request)
@@ -176,44 +205,6 @@ impl Request {
             Request::Subscribe { .. } => "Subscribe",
             Request::Unsubscribe => "Unsubscribe",
         }
-    }
-
-    /// 是否是查询请求（可并发处理）
-    pub fn is_query(&self) -> bool {
-        matches!(
-            self,
-            Request::Ping
-                | Request::GetStatus
-                | Request::GetSpace { .. }
-                | Request::GetTimeInfo
-                | Request::GetConfig { .. }
-                | Request::ListHooks
-        )
-    }
-
-    /// 是否是修改状态的命令（需要排队）
-    pub fn is_command(&self) -> bool {
-        matches!(
-            self,
-            Request::Next { .. }
-                | Request::Prev { .. }
-                | Request::SetWallpaper { .. }
-                | Request::SetMode { .. }
-                | Request::Lock { .. }
-                | Request::Unlock { .. }
-                | Request::ToggleLock { .. }
-                | Request::SetConfig { .. }
-                | Request::Rescan
-                | Request::ReloadConfig
-                | Request::ReloadHooks
-                | Request::Shutdown
-                | Request::VramOverride { .. }
-        )
-    }
-
-    /// 是否是订阅相关请求
-    pub fn is_subscription(&self) -> bool {
-        matches!(self, Request::Subscribe { .. } | Request::Unsubscribe)
     }
 }
 
@@ -970,19 +961,36 @@ mod tests {
     }
 
     #[test]
-    fn test_request_classification() {
-        assert!(Request::Ping.is_query());
-        assert!(Request::GetStatus.is_query());
-        assert!(Request::ListHooks.is_query());
-        assert!(!Request::Next { trigger_hint: None }.is_query());
+    fn test_request_deserialize_ignores_id_field() {
+        // 协议 v3: 请求帧顶层带 id 字段,internally tagged enum 必须能忽略它
+        let json = r#"{"id":42,"cmd":"Ping"}"#;
+        let req: Request = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, Request::Ping));
 
-        assert!(Request::Next { trigger_hint: None }.is_command());
-        assert!(Request::SetMode { mode: WallMode::Video }.is_command());
-        assert!(Request::ReloadHooks.is_command());
-        assert!(!Request::Ping.is_command());
+        let json = r#"{"id":1,"cmd":"GetSpace","mode":"Video"}"#;
+        let req: Request = serde_json::from_str(json).unwrap();
+        assert!(matches!(req, Request::GetSpace { mode: Some(WallMode::Video) }));
+    }
 
-        assert!(Request::Subscribe { events: vec![], immediate_sync: false }.is_subscription());
-        assert!(Request::Unsubscribe.is_subscription());
-        assert!(!Request::Ping.is_subscription());
+    #[test]
+    fn test_frame_helpers_roundtrip() {
+        // request_frame 生成带 id 的请求帧,extract_request_id 能取回
+        let frame = request_frame(7, &Request::Next { trigger_hint: None });
+        assert_eq!(extract_request_id(&frame), 7);
+        let req: Request = serde_json::from_value(frame).unwrap();
+        assert!(matches!(req, Request::Next { .. }));
+
+        // response_frame 生成带 id 的响应帧
+        let frame = response_frame(9, &Response::ok());
+        assert_eq!(frame.get("id").and_then(|v| v.as_u64()), Some(9));
+        assert_eq!(frame.get("type").and_then(|v| v.as_str()), Some("Ok"));
+
+        // id=0 的推送帧也带 id 字段,统一格式
+        let frame = response_frame(0, &Response::ok());
+        assert_eq!(frame.get("id").and_then(|v| v.as_u64()), Some(0));
+
+        // 无 id 字段的旧请求 → 0
+        let raw = serde_json::json!({"cmd": "Ping"});
+        assert_eq!(extract_request_id(&raw), 0);
     }
 }

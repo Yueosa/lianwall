@@ -1,7 +1,7 @@
 # Lianwall Daemon API 文档
 
-> 协议版本：2  
-> 文档版本：5.1.1
+> 协议版本：3  
+> 文档版本：5.5.2
 
 ## 📡 通信协议
 
@@ -11,6 +11,13 @@
 - **地址**：默认 `/tmp/lianwall.sock`（可配置）
 - **消息格式**：行分隔的 JSON（每条消息以 `\n` 结尾）
 - **最大消息大小**：1 MB
+
+### 请求 id（协议 v3 新增）
+
+- 请求帧顶层可携带 `id` 字段（u64，客户端自增）：`{"id": 123, "cmd": "GetStatus"}`
+- 响应帧回带相同的 `id`：`{"id": 123, "type": "Status", "payload": {...}}`，客户端按 id 精确匹配响应，不再依赖 FIFO 顺序
+- **`id` 缺失或 `id=0` 的帧为服务端主动推送**（Event、Subscribe 后的 immediate Status 同步）
+- 旧客户端不带 `id` 发送请求时，响应回带 `id: 0`，按原 FIFO 逻辑读取即可，完全兼容
 
 ### 消息分类
 
@@ -44,7 +51,7 @@
   "type": "Pong",
   "payload": {
     "uptime_secs": 3600,
-    "protocol_version": 2
+    "protocol_version": 3
   }
 }
 ```
@@ -77,7 +84,7 @@
     "vram_total_mb": 8192,
     "vram_degraded": false,
     "uptime_secs": 3600,
-    "protocol_version": 2,
+    "protocol_version": 3,
     "next_time_point": "18:00",
     "time_points_count": 4,
     "next_switch_secs": 300
@@ -939,7 +946,7 @@
 ### 基本查询
 ```
 → {"cmd":"Ping"}
-← {"type":"Pong","payload":{"uptime_secs":3600,"protocol_version":2}}
+← {"type":"Pong","payload":{"uptime_secs":3600,"protocol_version":3}}
 
 → {"cmd":"GetStatus"}
 ← {"type":"Status","payload":{...}}

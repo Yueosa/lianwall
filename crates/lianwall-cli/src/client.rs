@@ -50,6 +50,7 @@ use lianwall_core::config::WallMode;
 use lianwall_core::socket::{
     ConfigSnapshot, ErrorCode, Event, EventType, Request, Response, SpaceSnapshot,
     StatusInfo, TimeScheduleInfo, HookInfo, VramOverrideAction,
+    extract_request_id, request_frame,
 };
 
 /// 客户端错误
@@ -108,6 +109,7 @@ impl From<std::io::Error> for ClientError {
 pub struct Client {
     reader: BufReader<UnixStream>,
     writer: UnixStream,
+    next_id: u64,
 }
 
 impl Client {
@@ -128,33 +130,41 @@ impl Client {
         let writer = stream.try_clone()?;
         let reader = BufReader::new(stream);
 
-        Ok(Self { reader, writer })
+        Ok(Self { reader, writer, next_id: 0 })
     }
 
-    /// 发送请求并接收响应（行分隔 JSON 协议）
+    /// 发送请求并接收响应（行分隔 JSON 协议，响应按请求 id 匹配）
     fn request(&mut self, req: Request) -> Result<Response, ClientError> {
-        // 序列化并发送（行分隔）
-        let json = serde_json::to_string(&req)
-            .map_err(|e| ClientError::Codec(format!("Serialize error: {}", e)))?;
+        // 序列化并发送（带自增 id）
+        self.next_id += 1;
+        let id = self.next_id;
+        let json = request_frame(id, &req).to_string();
         writeln!(self.writer, "{}", json)?;
         self.writer.flush()?;
 
-        // 读取响应（行分隔）
-        let mut line = String::new();
-        self.reader.read_line(&mut line)?;
-        
-        let resp: Response = serde_json::from_str(line.trim())
-            .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
+        // 循环读行，直到拿到 id 匹配的响应；推送帧（Event、id=0）跳过
+        loop {
+            let mut line = String::new();
+            self.reader.read_line(&mut line)?;
 
-        // 检查错误响应
-        if let Response::Error { code, message } = &resp {
-            return Err(ClientError::DaemonError {
-                code: code.clone(),
-                message: message.clone(),
-            });
+            let raw: serde_json::Value = serde_json::from_str(line.trim())
+                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
+            if extract_request_id(&raw) != id {
+                continue;
+            }
+            let resp: Response = serde_json::from_value(raw)
+                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
+
+            // 检查错误响应
+            if let Response::Error { code, message } = &resp {
+                return Err(ClientError::DaemonError {
+                    code: code.clone(),
+                    message: message.clone(),
+                });
+            }
+
+            return Ok(resp);
         }
-
-        Ok(resp)
     }
 
     // ========================================================================
@@ -388,8 +398,14 @@ impl Client {
         loop {
             let mut line = String::new();
             self.reader.read_line(&mut line)?;
-            
-            let resp: Response = serde_json::from_str(line.trim())
+
+            let raw: serde_json::Value = serde_json::from_str(line.trim())
+                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
+            // 响应帧（id>0）不属于事件流，跳过
+            if extract_request_id(&raw) != 0 {
+                continue;
+            }
+            let resp: Response = serde_json::from_value(raw)
                 .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
 
             match resp {

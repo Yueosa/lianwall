@@ -13,7 +13,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::sync::{broadcast, mpsc, oneshot};
 
-use lianwall_core::socket::{Request, Response, ErrorCode, EventType};
+use lianwall_core::socket::{Request, Response, ErrorCode, EventType, extract_request_id, response_frame};
 
 use crate::command::CommandMsg;
 use crate::event::{Event, EventBus, SpaceUpdateReason};
@@ -66,20 +66,20 @@ pub async fn handle(
                         match result {
                             Ok(0) => break, // EOF
                             Ok(_) => {
-                                if let Some(response) = process_request(
+                                if let Some((req_id, response)) = process_request(
                                     &line,
                                     &state,
                                     &event_bus,
                                     &cmd_tx,
                                     &mut conn_state,
                                 ).await {
-                                    send_response(&mut writer, &response).await?;
-                                    
-                                    // 处理 immediate_sync：发送当前状态
+                                    send_response(&mut writer, req_id, &response).await?;
+
+                                    // 处理 immediate_sync：发送当前状态（主动推送，id=0）
                                     if conn_state.pending_sync {
                                         conn_state.pending_sync = false;
                                         let status = handler::handle_query(&state, Request::GetStatus).await;
-                                        send_response(&mut writer, &status).await?;
+                                        send_response(&mut writer, 0, &status).await?;
                                     }
                                 }
                             }
@@ -98,7 +98,8 @@ pub async fn handle(
                                 let event_type = event_to_type(&event);
                                 if conn_state.subscribed_events.contains(&event_type) {
                                     if let Some(response) = event_to_response(&event) {
-                                        send_response(&mut writer, &response).await?;
+                                        // 事件推送，非请求应答，id=0
+                                        send_response(&mut writer, 0, &response).await?;
                                     }
                                 }
                             }
@@ -117,20 +118,20 @@ pub async fn handle(
             match reader.read_line(&mut line).await {
                 Ok(0) => break, // EOF
                 Ok(_) => {
-                    if let Some(response) = process_request(
+                    if let Some((req_id, response)) = process_request(
                         &line,
                         &state,
                         &event_bus,
                         &cmd_tx,
                         &mut conn_state,
                     ).await {
-                        send_response(&mut writer, &response).await?;
-                        
-                        // 处理 immediate_sync：发送当前状态
+                        send_response(&mut writer, req_id, &response).await?;
+
+                        // 处理 immediate_sync：发送当前状态（主动推送，id=0）
                         if conn_state.pending_sync {
                             conn_state.pending_sync = false;
                             let status = handler::handle_query(&state, Request::GetStatus).await;
-                            send_response(&mut writer, &status).await?;
+                            send_response(&mut writer, 0, &status).await?;
                         }
                     }
                 }
@@ -146,39 +147,50 @@ pub async fn handle(
 }
 
 /// 处理单个请求
+///
+/// 返回 Some((请求 id, 响应))；响应帧回带请求 id，供客户端精确匹配。
+/// 旧客户端不带 id 时按 0 处理。
 async fn process_request(
     line: &str,
     state: &Arc<SharedState>,
     event_bus: &EventBus,
     cmd_tx: &mpsc::Sender<CommandMsg>,
     conn_state: &mut ConnectionState,
-) -> Option<Response> {
-    // 解析请求
-    let request: Request = match serde_json::from_str(line.trim()) {
+) -> Option<(u64, Response)> {
+    // 先按 Value 解析，提取请求 id，再反序列化为 Request
+    let raw: serde_json::Value = match serde_json::from_str(line.trim()) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!("Connection #{} parse error: {}", conn_state.id, e);
+            return Some((0, Response::error(ErrorCode::InvalidRequest, format!("Parse error: {}", e))));
+        }
+    };
+    let id = extract_request_id(&raw);
+    let request: Request = match serde_json::from_value(raw) {
         Ok(req) => req,
         Err(e) => {
             tracing::warn!("Connection #{} parse error: {}", conn_state.id, e);
-            return Some(Response::error(ErrorCode::InvalidRequest, format!("Parse error: {}", e)));
+            return Some((id, Response::error(ErrorCode::InvalidRequest, format!("Parse error: {}", e))));
         }
     };
-    
+
     tracing::debug!("Connection #{} request: {:?}", conn_state.id, request);
-    
+
     // 根据请求类型分发
-    match &request {
+    let response: Option<Response> = match &request {
         // Query: 直接读取状态
-        Request::Ping => Some(Response::Pong { 
+        Request::Ping => Some(Response::Pong {
             uptime_secs: state.uptime_secs(),
             protocol_version: lianwall_core::socket::PROTOCOL_VERSION,
         }),
-        
+
         Request::GetStatus
         | Request::GetConfig { .. }
         | Request::GetSpace { .. }
         | Request::GetTimeInfo => {
             Some(handler::handle_query(state, request).await)
         }
-        
+
         // ListHooks: 直接读取 HookHandle
         Request::ListHooks => {
             let guard = state.hook_handle.read().await;
@@ -205,31 +217,31 @@ async fn process_request(
                 )),
             }
         }
-        
+
         // Subscribe: 管理订阅状态
         Request::Subscribe { events, immediate_sync } => {
             // 展开 All 为所有具体事件类型
             let expanded_events = EventType::expand(events);
             conn_state.subscribed_events = expanded_events.iter().cloned().collect();
-            
+
             conn_state.subscribed = true;
             conn_state.event_rx = Some(event_bus.subscribe());
-            
+
             // 保存 immediate_sync 标志，稍后处理
             conn_state.pending_sync = *immediate_sync;
-            
+
             Some(Response::Subscribed {
                 session_id: format!("conn-{}", conn_state.id),
                 subscribed_events: expanded_events,
             })
         }
-        
+
         Request::Unsubscribe => {
             conn_state.subscribed = false;
             conn_state.event_rx = None;
             Some(Response::Unsubscribed)
         }
-        
+
         // Command: 发送到命令队列
         _ => {
             let cmd_name = request.name();
@@ -244,7 +256,7 @@ async fn process_request(
             };
 
             if cmd_tx.send(msg).await.is_err() {
-                return Some(Response::error(ErrorCode::InternalError, "Command queue closed"));
+                return Some((id, Response::error(ErrorCode::InternalError, "Command queue closed")));
             }
 
             if wait_for_completion {
@@ -261,7 +273,9 @@ async fn process_request(
                 }
             }
         }
-    }
+    };
+
+    response.map(|r| (id, r))
 }
 
 /// 壁纸类命令：等真正完成；慢只记性能日志，不回 Timeout 业务错误
@@ -472,12 +486,13 @@ fn event_to_response(event: &Event) -> Option<Response> {
     }
 }
 
-/// 发送响应
+/// 发送响应（响应帧回带请求 id；主动推送用 id=0）
 async fn send_response(
     writer: &mut tokio::net::unix::OwnedWriteHalf,
+    id: u64,
     response: &Response,
 ) -> anyhow::Result<()> {
-    let json = serde_json::to_string(response)?;
+    let json = response_frame(id, response).to_string();
     writer.write_all(json.as_bytes()).await?;
     writer.write_all(b"\n").await?;
     writer.flush().await?;
