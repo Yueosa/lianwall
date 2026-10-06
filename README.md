@@ -243,6 +243,9 @@ bind = ALT, S, exec, lianwall switch    # 切换模式
 | `vram upgrade` | 强制切换回 Video 模式（绕过自动检测） |
 | `vram reset` | 清除手动覆盖，恢复自动检测 |
 | `vram status` | 查看显存用量及覆盖状态 |
+| `rotation pause` | 暂停当前模式的自动轮换（仅内存，重启恢复） |
+| `rotation resume` | 恢复当前模式的自动轮换 |
+| `rotation status` | 查看轮换暂停状态 |
 
 ---
 

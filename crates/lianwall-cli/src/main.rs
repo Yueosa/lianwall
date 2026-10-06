@@ -59,6 +59,8 @@ fn main() {
         Command::Hook { action } => handlers::handle_hook(&fmt, action),
         // VRAM
         Command::Vram { action } => handlers::handle_vram(&fmt, action),
+        // Rotation
+        Command::Rotation { action } => handlers::handle_rotation(&fmt, action),
         // 订阅（调试）
         Command::Subscribe { events } => {
             let socket_path = get_socket_path();

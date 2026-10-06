@@ -662,6 +662,65 @@
 
 ---
 
+#### 21. PauseRotation
+
+暂停当前模式的自动轮换。interval 置 0，仅修改 daemon 内存，不写配置文件；daemon 重启后自动恢复。
+
+**请求**
+```json
+{"cmd": "PauseRotation"}
+```
+
+**响应**
+```json
+{"type": "Ok"}
+```
+
+已暂停时返回 `InvalidRequest` 错误。
+
+---
+
+#### 22. ResumeRotation
+
+恢复当前模式的自动轮换，还原暂停前的 interval。
+
+**请求**
+```json
+{"cmd": "ResumeRotation"}
+```
+
+**响应**
+```json
+{"type": "Ok"}
+```
+
+未暂停时返回 `InvalidRequest` 错误。
+
+---
+
+#### 23. GetRotationStatus
+
+查询当前模式的轮换暂停状态（Query，可并发）。
+
+**请求**
+```json
+{"cmd": "GetRotationStatus"}
+```
+
+**响应**
+```json
+{
+  "type": "RotationStatus",
+  "payload": {
+    "paused": true,
+    "mode": "Video",
+    "saved_interval": 600
+  }
+}
+```
+
+---
+
 ## 📤 响应 (Response)
 
 所有响应使用 `type` 字段标识类型。
@@ -683,6 +742,7 @@
 | `TimeInfo` | GetTimeInfo 响应 |
 | `Config` | GetConfig 响应 |
 | `HookList` | ListHooks 响应 |
+| `RotationStatus` | GetRotationStatus 响应 |
 
 ### 订阅响应
 

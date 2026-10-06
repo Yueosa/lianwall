@@ -104,6 +104,9 @@ pub enum Request {
         key: Option<String>,
     },
 
+    /// 获取轮换暂停状态
+    GetRotationStatus,
+
     // ==================== Command (状态修改) ====================
     /// 切换到下一张壁纸
     Next {
@@ -162,6 +165,12 @@ pub enum Request {
         action: VramOverrideAction,
     },
 
+    /// 暂停当前模式的自动轮换（interval 置 0，仅内存，不写盘）
+    PauseRotation,
+
+    /// 恢复当前模式的自动轮换（还原暂停前的 interval）
+    ResumeRotation,
+
     // ==================== Subscribe (订阅管理) ====================
     /// 订阅事件
     Subscribe {
@@ -186,6 +195,7 @@ impl Request {
             Request::GetSpace { .. } => "GetSpace",
             Request::GetTimeInfo => "GetTimeInfo",
             Request::GetConfig { .. } => "GetConfig",
+            Request::GetRotationStatus => "GetRotationStatus",
             // Command
             Request::Next { .. } => "Next",
             Request::Prev { .. } => "Prev",
@@ -201,6 +211,8 @@ impl Request {
             Request::ListHooks => "ListHooks",
             Request::Shutdown => "Shutdown",
             Request::VramOverride { .. } => "VramOverride",
+            Request::PauseRotation => "PauseRotation",
+            Request::ResumeRotation => "ResumeRotation",
             // Subscribe
             Request::Subscribe { .. } => "Subscribe",
             Request::Unsubscribe => "Unsubscribe",
@@ -249,6 +261,9 @@ pub enum Response {
 
     /// Hook 列表
     HookList(Vec<HookInfo>),
+
+    /// 轮换暂停状态
+    RotationStatus(RotationStatusInfo),
 
     // ==================== 订阅响应 ====================
     /// 订阅成功
@@ -604,10 +619,20 @@ pub enum VramAction {
 // 数据结构
 // ============================================================================
 
+/// 轮换暂停状态（GetRotationStatus 响应）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RotationStatusInfo {
+    /// 当前模式是否已暂停轮换
+    pub paused: bool,
+    /// 当前模式
+    pub mode: WallMode,
+    /// 暂停前保存的 interval（未暂停为 None）
+    pub saved_interval: Option<u64>,
+}
+
 /// 状态信息（GetStatus 响应）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatusInfo {
-    /// 当前模式
+pub struct StatusInfo {    /// 当前模式
     pub mode: WallMode,
 
     /// 当前壁纸路径

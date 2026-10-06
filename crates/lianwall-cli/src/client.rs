@@ -49,7 +49,7 @@ use std::time::Duration;
 use lianwall_core::config::WallMode;
 use lianwall_core::socket::{
     ConfigSnapshot, ErrorCode, Event, EventType, Request, Response, SpaceSnapshot,
-    StatusInfo, TimeScheduleInfo, HookInfo, VramOverrideAction,
+    StatusInfo, TimeScheduleInfo, HookInfo, VramOverrideAction, RotationStatusInfo,
     extract_request_id, request_frame,
 };
 
@@ -358,6 +358,26 @@ impl Client {
     pub fn vram_override(&mut self, action: VramOverrideAction) -> Result<(), ClientError> {
         self.request(Request::VramOverride { action })?;
         Ok(())
+    }
+
+    /// 暂停当前模式的自动轮换
+    pub fn pause_rotation(&mut self) -> Result<(), ClientError> {
+        self.request(Request::PauseRotation)?;
+        Ok(())
+    }
+
+    /// 恢复当前模式的自动轮换
+    pub fn resume_rotation(&mut self) -> Result<(), ClientError> {
+        self.request(Request::ResumeRotation)?;
+        Ok(())
+    }
+
+    /// 获取轮换暂停状态
+    pub fn rotation_status(&mut self) -> Result<RotationStatusInfo, ClientError> {
+        match self.request(Request::GetRotationStatus)? {
+            Response::RotationStatus(info) => Ok(info),
+            other => Err(unexpected_response(&other)),
+        }
     }
 
     // ========================================================================

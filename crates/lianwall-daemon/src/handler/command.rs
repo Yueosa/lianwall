@@ -98,10 +98,81 @@ pub async fn handle_command(
         Request::Shutdown => handle_shutdown(state, event_bus).await,
         
         Request::VramOverride { action } => handle_vram_override(state, event_bus, action).await,
-        
+
+        Request::PauseRotation => handle_pause_rotation(state, event_bus).await,
+        Request::ResumeRotation => handle_resume_rotation(state, event_bus).await,
+
         // Query 请求不应该到这里
         _ => Response::error(ErrorCode::InvalidRequest, "Not a command request"),
     }
+}
+
+/// 暂停当前模式的自动轮换
+///
+/// 只改内存 config（不写盘）,saved interval 存 daemon 内存,重启丢失
+async fn handle_pause_rotation(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
+    let mode = *state.engine.mode.read().await;
+    let (key, saved_lock) = match mode {
+        WallMode::Video => ("video_engine.interval", &state.saved_video_interval),
+        WallMode::Image => ("image_engine.interval", &state.saved_image_interval),
+    };
+
+    let mut config = state.config.write().await;
+    let interval = match mode {
+        WallMode::Video => config.video_engine.interval,
+        WallMode::Image => config.image_engine.interval,
+    };
+    if interval == 0 {
+        return Response::error(ErrorCode::InvalidRequest, "Rotation is already paused");
+    }
+
+    *saved_lock.write().await = Some(interval);
+    match mode {
+        WallMode::Video => config.video_engine.interval = 0,
+        WallMode::Image => config.image_engine.interval = 0,
+    }
+    let old_value = serde_json::Value::from(interval);
+    drop(config);
+
+    // 触发 scheduler 重建 timer（interval=0 即暂停）
+    event_bus.publish(Event::ConfigChanged {
+        key: key.to_string(),
+        old_value,
+        new_value: serde_json::Value::from(0),
+    });
+
+    tracing::info!("Rotation paused for {:?} (saved interval: {}s)", mode, interval);
+    Response::ok()
+}
+
+/// 恢复当前模式的自动轮换
+async fn handle_resume_rotation(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
+    let mode = *state.engine.mode.read().await;
+    let (key, saved_lock) = match mode {
+        WallMode::Video => ("video_engine.interval", &state.saved_video_interval),
+        WallMode::Image => ("image_engine.interval", &state.saved_image_interval),
+    };
+
+    let saved = saved_lock.write().await.take();
+    let Some(saved) = saved else {
+        return Response::error(ErrorCode::InvalidRequest, "Rotation is not paused");
+    };
+
+    let mut config = state.config.write().await;
+    match mode {
+        WallMode::Video => config.video_engine.interval = saved,
+        WallMode::Image => config.image_engine.interval = saved,
+    }
+    drop(config);
+
+    event_bus.publish(Event::ConfigChanged {
+        key: key.to_string(),
+        old_value: serde_json::Value::from(0),
+        new_value: serde_json::Value::from(saved),
+    });
+
+    tracing::info!("Rotation resumed for {:?} (interval: {}s)", mode, saved);
+    Response::ok()
 }
 
 /// 切换到下一张壁纸（浏览器式前进）
@@ -565,8 +636,8 @@ async fn handle_set_config(
         // ==================== video_engine ====================
         "video_engine.interval" => {
             if let Some(v) = value.as_u64() {
-                if v < 10 || v > 86400 {
-                    return Response::error(ErrorCode::InvalidRequest, "interval must be between 10 and 86400");
+                if (v != 0 && v < 10) || v > 86400 {
+                    return Response::error(ErrorCode::InvalidRequest, "interval must be 0 (paused) or between 10 and 86400");
                 }
                 config.video_engine.interval = v;
             } else {
@@ -610,8 +681,8 @@ async fn handle_set_config(
         // ==================== image_engine ====================
         "image_engine.interval" => {
             if let Some(v) = value.as_u64() {
-                if v < 10 || v > 86400 {
-                    return Response::error(ErrorCode::InvalidRequest, "interval must be between 10 and 86400");
+                if (v != 0 && v < 10) || v > 86400 {
+                    return Response::error(ErrorCode::InvalidRequest, "interval must be 0 (paused) or between 10 and 86400");
                 }
                 config.image_engine.interval = v;
             } else {
@@ -803,6 +874,9 @@ async fn handle_reload_config(state: &Arc<SharedState>, event_bus: &EventBus) ->
     }) {
         Ok(result) => {
             *state.config.write().await = result.config;
+            // 磁盘配置为准,清除悬空的轮换暂停态
+            *state.saved_video_interval.write().await = None;
+            *state.saved_image_interval.write().await = None;
             // 整体重载时 key 为 "all"，old/new 为 null
             event_bus.publish(Event::ConfigChanged {
                 key: "all".to_string(),

@@ -18,6 +18,38 @@ use crate::command::CommandMsg;
 use crate::event::{Event, EventBus};
 use crate::state::SharedState;
 
+/// 轮换计时器
+///
+/// interval=0 表示轮换已暂停：timer 永久 pending,不会触发切换
+/// （tokio::time::interval 不允许零间隔,会 panic)
+enum RotationTimer {
+    Active(tokio::time::Interval),
+    Paused,
+}
+
+impl RotationTimer {
+    /// 重建计时器并消耗首次立即 tick;间隔为 0 时进入暂停态
+    async fn reset(&mut self, dur: Duration) {
+        if dur.is_zero() {
+            *self = RotationTimer::Paused;
+        } else {
+            let mut t = interval(dur);
+            t.tick().await; // 消耗立即触发的首次 tick
+            *self = RotationTimer::Active(t);
+        }
+    }
+
+    /// 等待下一次触发;暂停态永久 pending
+    async fn tick(&mut self) {
+        match self {
+            RotationTimer::Active(t) => {
+                t.tick().await;
+            }
+            RotationTimer::Paused => std::future::pending::<()>().await,
+        }
+    }
+}
+
 /// 调度器配置
 pub struct SchedulerConfig {
     /// 切换间隔（秒）
@@ -53,11 +85,11 @@ pub async fn run(
     let config = state.get_config().await;
     let mode = *state.engine.mode.read().await;
     let mut current_interval = get_interval_for_mode(&config, mode);
-    let mut timer = interval(current_interval);
-    timer.tick().await; // 消耗立即触发的首次 tick，避免启动后立即切换
-    
+    let mut timer = RotationTimer::Paused;
+    timer.reset(current_interval).await;
+
     // 设置下次切换时间（同步到 state 供 status 查询）
-    state.set_next_switch((Instant::now() + current_interval).into()).await;
+    state.set_next_switch(next_switch_instant(current_interval).into()).await;
     
     // 计算下一个时间点的等待时间
     let mut time_point_sleep = create_time_point_sleep(&state).await;
@@ -81,7 +113,7 @@ pub async fn run(
                 }
                 
                 // 更新下次切换时间（同步到 state）
-                state.set_next_switch((Instant::now() + current_interval).into()).await;
+                state.set_next_switch(next_switch_instant(current_interval).into()).await;
                 
                 // 发布 tick 事件（内部使用）
                 event_bus.publish(Event::SchedulerTick);
@@ -129,9 +161,8 @@ pub async fn run(
                             
                             if new_interval != current_interval {
                                 current_interval = new_interval;
-                                timer = interval(current_interval);
-                                timer.tick().await; // 消耗立即触发的首次 tick
-                                state.set_next_switch((Instant::now() + current_interval).into()).await;
+                                timer.reset(current_interval).await;
+                                state.set_next_switch(next_switch_instant(current_interval).into()).await;
                                 tracing::info!("Scheduler interval updated to {:?} (config changed: {})", current_interval, key);
                             }
                         }
@@ -153,9 +184,8 @@ pub async fn run(
                         
                         if new_interval != current_interval {
                             current_interval = new_interval;
-                            timer = interval(current_interval);
-                            timer.tick().await; // 消耗立即触发的首次 tick
-                            state.set_next_switch((Instant::now() + current_interval).into()).await;
+                            timer.reset(current_interval).await;
+                            state.set_next_switch(next_switch_instant(current_interval).into()).await;
                             tracing::info!("Scheduler interval updated to {:?} (mode changed to {:?})", current_interval, to);
                         }
                     }
@@ -171,9 +201,8 @@ pub async fn run(
                             WallpaperTrigger::ManualSet |
                             WallpaperTrigger::ModeSwitch
                         ) {
-                            timer = interval(current_interval);
-                            timer.tick().await; // 消耗立即触发的首次 tick
-                            state.set_next_switch((Instant::now() + current_interval).into()).await;
+                            timer.reset(current_interval).await;
+                            state.set_next_switch(next_switch_instant(current_interval).into()).await;
                             tracing::debug!("Timer reset after manual switch ({:?})", trigger);
                         }
                     }
@@ -232,6 +261,15 @@ fn get_interval_for_mode(config: &lianwall_core::config::Config, mode: WallMode)
         WallMode::Image => config.image_engine.interval,
     };
     Duration::from_secs(secs as u64)
+}
+
+/// 计算下次切换时间点;interval=0(已暂停)时返回极远时间,避免 status 倒计时异常
+fn next_switch_instant(dur: Duration) -> Instant {
+    if dur.is_zero() {
+        Instant::now() + Duration::from_secs(u32::MAX as u64)
+    } else {
+        Instant::now() + dur
+    }
 }
 
 /// 检查是否应该切换壁纸

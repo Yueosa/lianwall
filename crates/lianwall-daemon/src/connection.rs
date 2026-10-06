@@ -187,7 +187,8 @@ async fn process_request(
         Request::GetStatus
         | Request::GetConfig { .. }
         | Request::GetSpace { .. }
-        | Request::GetTimeInfo => {
+        | Request::GetTimeInfo
+        | Request::GetRotationStatus => {
             Some(handler::handle_query(state, request).await)
         }
 

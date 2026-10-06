@@ -607,6 +607,58 @@ lianwall --json hook reload
 
 ---
 
+### 轮换暂停命令
+
+#### `rotation pause` — 暂停当前模式的自动轮换
+
+仅修改 daemon 内存，不写配置文件；daemon 重启后自动恢复。
+
+```bash
+lianwall --json rotation pause
+```
+
+```json
+{
+  "success": true,
+  "action": "pause"
+}
+```
+
+#### `rotation resume` — 恢复当前模式的自动轮换
+
+```bash
+lianwall --json rotation resume
+```
+
+```json
+{
+  "success": true,
+  "action": "resume"
+}
+```
+
+#### `rotation status` — 查看轮换暂停状态
+
+```bash
+lianwall --json rotation status
+```
+
+```json
+{
+  "paused": true,
+  "mode": "Video",
+  "saved_interval": 600
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `paused` | bool | 当前模式是否已暂停 |
+| `mode` | string | 当前模式（Video/Image） |
+| `saved_interval` | number\|null | 暂停前的切换间隔（秒），未暂停为 null |
+
+---
+
 ## 使用示例
 
 ### 脚本：监控壁纸切换

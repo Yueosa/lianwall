@@ -133,6 +133,15 @@ pub enum Command {
         action: VramAction,
     },
 
+    /// Pause or resume automatic wallpaper rotation
+    ///
+    /// Pause only affects the current mode and is not persisted
+    /// (daemon restart restores rotation).
+    Rotation {
+        #[command(subcommand)]
+        action: RotationAction,
+    },
+
     /// Subscribe to daemon events (for debugging)
     ///
     /// Available event types: wallpaper, status, config, space, vram, time, error, all
@@ -178,6 +187,18 @@ pub enum VramAction {
     Reset,
 
     /// Show VRAM status
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RotationAction {
+    /// Pause automatic rotation for current mode
+    Pause,
+
+    /// Resume automatic rotation for current mode
+    Resume,
+
+    /// Show rotation pause status
     Status,
 }
 

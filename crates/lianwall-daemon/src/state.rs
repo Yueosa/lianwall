@@ -314,6 +314,12 @@ pub struct SharedState {
     /// 扫描的壁纸原始总数（过滤前），用于 status 显示
     /// (video_scanned, image_scanned)
     pub scanned_counts: RwLock<(usize, usize)>,
+
+    /// 暂停前保存的 video interval（Some = 视频模式暂停中，daemon 重启丢失）
+    pub saved_video_interval: RwLock<Option<u64>>,
+
+    /// 暂停前保存的 image interval（Some = 图片模式暂停中，daemon 重启丢失）
+    pub saved_image_interval: RwLock<Option<u64>>,
     
     /// Hook 管理器句柄（hook 系统初始化后设置）
     pub hook_handle: RwLock<Option<HookHandle>>,
@@ -366,6 +372,8 @@ impl SharedState {
             playback_history: RwLock::new(PlaybackHistory::new()),
             next_switch: RwLock::new(Instant::now() + std::time::Duration::from_secs(initial_interval)),
             scanned_counts: RwLock::new((0, 0)),
+            saved_video_interval: RwLock::new(None),
+            saved_image_interval: RwLock::new(None),
             hook_handle: RwLock::new(None),
             start_time: Instant::now(),
             shutdown_tx,

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use lianwall_core::socket::{
     Request, Response, StatusInfo, ConfigSnapshot, ConfigKeyInfo, ConfigConstraints,
     SpaceSnapshot, WallpaperPoint, TimeScheduleInfo, ModeSchedule, WallpaperTimeSegment,
-    TimeRangeInfo, ErrorCode, PROTOCOL_VERSION,
+    TimeRangeInfo, ErrorCode, PROTOCOL_VERSION, RotationStatusInfo,
 };
 use lianwall_core::config::WallMode;
 use lianwall_core::wallpaper::{TimePoint, WallpaperSpace};
@@ -29,6 +29,8 @@ pub async fn handle_query(state: &Arc<SharedState>, request: Request) -> Respons
         Request::GetSpace { mode } => get_space(state, mode).await,
         
         Request::GetTimeInfo => get_time_info(state).await,
+
+        Request::GetRotationStatus => get_rotation_status(state).await,
         
         // 其他请求不应该到这里
         _ => Response::error(ErrorCode::InvalidRequest, "Not a query request"),
@@ -96,6 +98,20 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         next_time_point,
         time_points_count,
         next_switch_secs: Some(next_switch_secs),
+    })
+}
+
+/// 获取轮换暂停状态
+async fn get_rotation_status(state: &Arc<SharedState>) -> Response {
+    let mode = *state.engine.mode.read().await;
+    let saved = match mode {
+        WallMode::Video => *state.saved_video_interval.read().await,
+        WallMode::Image => *state.saved_image_interval.read().await,
+    };
+    Response::RotationStatus(RotationStatusInfo {
+        paused: saved.is_some(),
+        mode,
+        saved_interval: saved,
     })
 }
 
