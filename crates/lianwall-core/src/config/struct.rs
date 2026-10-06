@@ -48,7 +48,10 @@ pub struct VideoEngineConfig {
     /// 透传给 mpv 的参数（通过 mpvpaper -o 传递）
     pub mpv_args: Vec<String>,
     /// mpv IPC socket 路径（用于常驻进程换片，空字符串表示禁用）
-    #[serde(default = "default_ipc_socket")]
+    ///
+    /// 默认禁用：kill+spawn 冷启动是刻意设计，规避 mpvpaper 长时间运行的内存增长。
+    /// 切换频繁且不在意的用户可配置路径启用热切换
+    #[serde(default)]
     pub ipc_socket: String,
     /// 视频切换过渡
     #[serde(default)]
@@ -64,11 +67,6 @@ pub enum VideoTransition {
     None,
     /// 新视频淡入 0.4 秒
     Fade,
-}
-
-/// ipc_socket 默认值：旧配置文件无此字段时自动启用 IPC 换片
-fn default_ipc_socket() -> String {
-    "/tmp/lianwall-mpv.sock".to_string()
 }
 
 /// 静态壁纸引擎配置 (swww/awww)

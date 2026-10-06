@@ -34,9 +34,9 @@ interval = 600
 display = "*"
 
 # mpv IPC socket 路径
-# 常驻 mpvpaper 进程通过该 socket 接收换片命令（消除冷启动延迟）
-# 设为空字符串则禁用 IPC，每次切换都冷启动新进程
-ipc_socket = "/tmp/lianwall-mpv.sock"
+# 默认空 = 禁用: 每次切换 kill+spawn 新进程（刻意设计，规避 mpvpaper 长时间运行的内存增长）
+# 配置路径（如 "/tmp/lianwall-mpv.sock"）后 mpvpaper 常驻，切换改为 IPC 热换片，延迟更低
+ipc_socket = ""
 
 # 视频切换过渡 ("none" = 硬切换；"fade" = 新视频淡入 0.4 秒)
 # 注意: fade 需要回读解码帧，与 --hwdec=auto 硬解同用可能掉帧，请按机器性能开启

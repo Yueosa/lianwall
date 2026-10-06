@@ -21,10 +21,12 @@
 **问题**：视频壁纸每次切换都是「kill 旧 mpvpaper → spawn 新 mpvpaper」,mpv + 硬解冷启动开销大，切换延迟明显。
 
 **修复**:
-- mpvpaper 启动时注入 `--input-ipc-server`，常驻单个进程；切换时通过 mpv JSON IPC 发 `loadfile` 换片，不再产生新进程
+- 新增可选的常驻模式：mpvpaper 启动时注入 `--input-ipc-server`，切换时通过 mpv JSON IPC 发 `loadfile` 热换片，延迟从秒级降为毫秒级
 - IPC 失败（进程崩溃、socket 不可用、超时 2s）自动回退原冷启动路径，功能不中断
-- 新增配置 `video_engine.ipc_socket`(默认 `/tmp/lianwall-mpv.sock`)。**旧配置文件无此字段时自动启用**；显式设空字符串可禁用，退回每次冷启动
-- daemon 退出时自动清理 IPC socket 残留文件
+- 新增配置 `video_engine.ipc_socket`,**默认为空 = 禁用**。
+  kill+spawn 冷启动仍是默认行为——这是刻意设计：mpvpaper 长时间运行存在内存增长问题，每次切换换新进程可规避。
+  切换频繁且不在意的用户可配置 `ipc_socket = "/tmp/lianwall-mpv.sock"` 启用热切换
+- 启用时 daemon 退出自动清理 IPC socket 残留文件
 
 **影响文件**:`lianwall-core/src/config/{struct,default}.rs`、`lianwall-daemon/src/ipc.rs`(新增)、`handler/command.rs`、`handler/query.rs`、`main.rs`
 
@@ -75,6 +77,6 @@ lianwall rotation status   # 查看状态
 
 ## 升级说明
 
-- **配置文件**：向后兼容，无需手动修改。旧配置自动启用 mpv IPC;`transition` 默认 `none` 行为同现状
+- **配置文件**：向后兼容，无需手动修改。`ipc_socket` 默认为空（保持 kill+spawn 行为，规避 mpvpaper 长跑内存增长）;`transition` 默认 `none` 行为同现状
 - **协议**：v3 完全向后兼容 v2 客户端（id 兜底 0)；建议 CLI/daemon/GUI 同步升级
 - **AUR**:`lianwall-bin` + `lianwalld-bin` + `lianwall-gui-bin`(1.5.0）建议一起更新
