@@ -5,13 +5,6 @@
 //! - video_space / image_space: 壁纸空间
 //! - engine: 引擎状态（swww/mpvpaper 进程）
 //! - gpu: GPU 监控状态
-//!
-//! # 设计决策
-//!
-//! TODO: 锁粒度优化
-//! 当前实现: video_space/image_space 分开锁，配置/引擎/GPU 各自独立
-//! 未来期望: 根据实际性能测试结果，可能采用 dashmap 等并发容器
-//! 原因: 需要实际数据支撑优化方向
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -45,6 +38,19 @@ impl GpuSnapshot {
             backend: GpuBackend::None,
         }
     }
+}
+
+/// 空间计数摘要（不 clone items，只取标量）
+///
+/// 用于 GetStatus 等只需要计数的高频查询，避免深拷贝整个壁纸空间
+#[derive(Debug, Clone, Copy)]
+pub struct SpaceSummary {
+    /// 壁纸总数
+    pub total: usize,
+    /// 锁定的壁纸数
+    pub locked_count: usize,
+    /// 冷却队列长度
+    pub cooldown_len: usize,
 }
 
 /// 浏览器式播放历史
@@ -401,6 +407,19 @@ impl SharedState {
     /// 获取图片空间快照
     pub async fn get_image_space(&self) -> WallpaperSpace {
         self.image_space.read().await.clone()
+    }
+
+    /// 获取指定模式空间的计数摘要（不 clone items）
+    pub async fn get_space_summary(&self, mode: WallMode) -> SpaceSummary {
+        let space = match mode {
+            WallMode::Video => self.video_space.read().await,
+            WallMode::Image => self.image_space.read().await,
+        };
+        SpaceSummary {
+            total: space.items.len(),
+            locked_count: space.items.iter().filter(|w| w.locked).count(),
+            cooldown_len: space.cooldown_queue.len(),
+        }
     }
     
     /// 更新视频空间

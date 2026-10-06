@@ -38,16 +38,11 @@ pub async fn handle_query(state: &Arc<SharedState>, request: Request) -> Respons
 /// 获取状态
 async fn get_status(state: &Arc<SharedState>) -> Response {
     let engine = state.get_engine_state().await;
-    let video_space = state.get_video_space().await;
-    let image_space = state.get_image_space().await;
     let gpu_snapshot = state.get_gpu_snapshot().await;
     let time_points = state.get_time_points().await;
-    
-    let (space, mode) = if engine.mode == WallMode::Video {
-        (&video_space, WallMode::Video)
-    } else {
-        (&image_space, WallMode::Image)
-    };
+
+    let mode = engine.mode;
+    let summary = state.get_space_summary(mode).await;
     
     let current_filename = engine.current.as_ref().and_then(|p| {
         p.file_name().map(|s| s.to_string_lossy().to_string())
@@ -61,12 +56,8 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         "none"
     };
     
-    let locked_count = space.items.iter().filter(|w| w.locked).count();
-    let in_cooldown = space.cooldown_queue.len();
-    let available_count = space.items.iter()
-        .filter(|w| !w.locked)
-        .count()
-        .saturating_sub(in_cooldown);
+    let available_count = (summary.total - summary.locked_count)
+        .saturating_sub(summary.cooldown_len);
     
     // 获取原始扫描总数（过滤前）
     let (video_scanned, image_scanned) = *state.scanned_counts.read().await;
@@ -92,8 +83,8 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         current: engine.current.clone(),
         current_filename,
         engine: engine_name.to_string(),
-        total_wallpapers: space.items.len(),
-        locked_count,
+        total_wallpapers: summary.total,
+        locked_count: summary.locked_count,
         available_count,
         scanned_count: video_scanned + image_scanned,
         vram_used_mb,

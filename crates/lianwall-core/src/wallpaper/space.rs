@@ -90,8 +90,11 @@ pub fn rebuild_space(
 
     // 继承锁定状态和播放历史
     if let Some(p) = persisted {
+        let by_path: std::collections::HashMap<&std::path::PathBuf, &PersistedRecord> =
+            p.items.iter().map(|r| (&r.path, r)).collect();
+
         for item in &mut space.items {
-            if let Some(old_record) = p.items.iter().find(|r| r.path == item.path) {
+            if let Some(old_record) = by_path.get(&item.path) {
                 item.locked = old_record.locked;
                 item.last_played = old_record.last_played;
             }
@@ -176,5 +179,76 @@ mod tests {
             let expected = TAU * (i as f64) / 10.0;
             assert!((item.angle - expected).abs() < 1e-10);
         }
+    }
+
+    #[test]
+    fn test_rebuild_space_restores_persisted_state() {
+        use super::super::r#struct::ModeData;
+
+        let persisted = ModeData {
+            pointer: 1.5,
+            selector_nonce: 7,
+            current_path: Some(PathBuf::from("/test/3.jpg")),
+            items: vec![
+                PersistedRecord {
+                    path: PathBuf::from("/test/1.jpg"),
+                    locked: true,
+                    last_played: Some(1000),
+                },
+                PersistedRecord {
+                    path: PathBuf::from("/test/3.jpg"),
+                    locked: false,
+                    last_played: Some(2000),
+                },
+            ],
+        };
+
+        // 传入 5 张壁纸,其中 2 张在 persisted 中,1 张 persisted 项已不存在
+        let space = rebuild_space(make_wallpapers(5), None, Some(&persisted), 42);
+
+        assert_eq!(space.pointer, 1.5);
+        assert_eq!(space.selector_nonce, 7);
+
+        let by_path: std::collections::HashMap<_, _> = space
+            .items
+            .iter()
+            .map(|item| (&item.path, item))
+            .collect();
+
+        let item1 = by_path[&PathBuf::from("/test/1.jpg")];
+        assert!(item1.locked);
+        assert_eq!(item1.last_played, Some(1000));
+
+        let item3 = by_path[&PathBuf::from("/test/3.jpg")];
+        assert!(!item3.locked);
+        assert_eq!(item3.last_played, Some(2000));
+
+        // 不在 persisted 中的项保持默认
+        let item0 = by_path[&PathBuf::from("/test/0.jpg")];
+        assert!(!item0.locked);
+        assert_eq!(item0.last_played, None);
+
+        // current_index 指向 persisted 的 current_path
+        let current = space.current_index.expect("current_index should be restored");
+        assert_eq!(space.items[current].path, PathBuf::from("/test/3.jpg"));
+    }
+
+    #[test]
+    fn test_rebuild_space_prefers_runtime_pointer() {
+        use super::super::r#struct::ModeData;
+
+        let old_space = build_space(make_wallpapers(5), 42);
+        let persisted = ModeData {
+            pointer: 9.9,
+            selector_nonce: 99,
+            current_path: None,
+            items: vec![],
+        };
+
+        let space = rebuild_space(make_wallpapers(5), Some(&old_space), Some(&persisted), 42);
+
+        // 运行时状态优先于持久化数据
+        assert_eq!(space.pointer, old_space.pointer);
+        assert_eq!(space.selector_nonce, old_space.selector_nonce);
     }
 }

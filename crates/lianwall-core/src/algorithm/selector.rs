@@ -122,20 +122,20 @@ fn sample_biased_candidate(
     let temperature = selection.temperature.max(1e-6);
     let gap = (TAU / candidates.len() as f64).max(1e-9);
 
-    let scores: Vec<f64> = candidates
+    let mut weights: Vec<f64> = candidates
         .iter()
         .map(|&idx| biased_score(space.pointer, space.items[idx].angle, gap, selection.bias_lambda))
         .collect();
 
-    let max_logit = scores
+    let max_logit = weights
         .iter()
         .map(|score| -score / temperature)
         .fold(f64::NEG_INFINITY, f64::max);
 
-    let weights: Vec<f64> = scores
-        .iter()
-        .map(|score| (-score / temperature - max_logit).exp())
-        .collect();
+    // 原地将 scores 转换为 softmax 权重
+    for score in &mut weights {
+        *score = (-*score / temperature - max_logit).exp();
+    }
 
     let total_weight: f64 = weights.iter().sum();
     if !total_weight.is_finite() || total_weight <= 0.0 {
