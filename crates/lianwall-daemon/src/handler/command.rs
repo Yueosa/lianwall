@@ -19,6 +19,9 @@ use lianwall_core::algorithm::{select_next_with_config, SelectionConfig};
 use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
 use lianwall_core::engine::detect_image_bin;
 
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::sync::watch;
+
 use crate::event::{Event, EventBus, SpaceUpdateReason};
 use crate::ipc;
 use crate::state::SharedState;
@@ -1082,17 +1085,44 @@ async fn handle_shutdown(state: &Arc<SharedState>, event_bus: &EventBus) -> Resp
     Response::ok()
 }
 
-/// 跨引擎切换延迟（ms）
+/// 首帧检测超时
 ///
-/// 新引擎启动后等待此时间再杀旧引擎，确保新引擎渲染出首帧。
-/// - Image→Video: mpvpaper 需要初始化 mpv + 解码首帧 + wlr-layer-shell 渲染
-/// - Video→Image: swww img 返回即已生效，但加短延迟确保合成器刷新
-const CROSS_ENGINE_DELAY_MS: u64 = 800;
+/// 新 mpvpaper 启动后,从其输出检测首帧渲染再杀旧引擎;
+/// 输出被禁用(--quiet 等)导致检测不到时,超时兜底。
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_millis(2000);
 
-/// 同引擎切换延迟（ms）
+/// mpv 输出行是否表明首帧已渲染(状态行 "V: ..." 或 VO 初始化行)
+fn is_first_frame_line(line: &str) -> bool {
+    line.contains("VO:") || line.contains("V: ")
+}
+
+/// 持续 drain mpvpaper 的输出管道
 ///
-/// Video→Video 时，新 mpvpaper 启动后等待此时间再杀旧 mpvpaper。
-const SAME_ENGINE_VIDEO_DELAY_MS: u64 = 600;
+/// 必须有人读管道,否则 mpv 状态行写满缓冲区后 mpvpaper 阻塞。
+/// 检测到首帧行时通过 watch 通知一次。
+fn spawn_output_drain<T>(pipe: Option<T>, first_frame_tx: watch::Sender<bool>)
+where
+    T: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    let Some(pipe) = pipe else { return };
+    tokio::spawn(async move {
+        let mut lines = BufReader::new(pipe).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if !*first_frame_tx.borrow() && is_first_frame_line(&line) {
+                let _ = first_frame_tx.send(true);
+                tracing::debug!("mpvpaper first frame detected: {}", line.trim());
+            }
+        }
+    });
+}
+
+/// 等待首帧渲染信号,超时兜底
+async fn wait_first_frame(first_frame_tx: &watch::Sender<bool>) -> bool {
+    let mut rx = first_frame_tx.subscribe();
+    tokio::time::timeout(FIRST_FRAME_TIMEOUT, rx.wait_for(|v| *v))
+        .await
+        .is_ok()
+}
 
 /// 应用壁纸
 ///
@@ -1166,40 +1196,47 @@ async fn apply_wallpaper(
             cmd.arg(&config.video_engine.display);
             cmd.arg(path);
             
-            // 抑制输出
-            cmd.stdout(std::process::Stdio::null());
-            cmd.stderr(std::process::Stdio::null());
-            
+            // 捕获输出:用于检测首帧渲染;drain task 持续读取,防止管道写满阻塞 mpvpaper
+            cmd.stdout(std::process::Stdio::piped());
+            cmd.stderr(std::process::Stdio::piped());
+
             match cmd.spawn() {
-                Ok(child) => {
+                Ok(mut child) => {
+                    let (first_frame_tx, _) = watch::channel(false);
+                    spawn_output_drain(child.stdout.take(), first_frame_tx.clone());
+                    spawn_output_drain(child.stderr.take(), first_frame_tx.clone());
+
                     if was_mpvpaper_running {
                         // 同引擎切换 (Video→Video):
-                        // 先等新 mpvpaper 渲染首帧，再杀旧的
+                        // 等新 mpvpaper 真正渲染首帧再杀旧的:
+                        // 过早杀会黑屏闪烁,过晚杀则双 4K 解码导致卡顿
                         let old_child = state.engine.mpvpaper.take().await;
                         state.engine.mpvpaper.set_without_kill(child).await;
-                        
-                        tokio::time::sleep(std::time::Duration::from_millis(SAME_ENGINE_VIDEO_DELAY_MS)).await;
-                        
+
+                        if !wait_first_frame(&first_frame_tx).await {
+                            tracing::debug!("First frame not detected within {:?}, killing old mpvpaper anyway", FIRST_FRAME_TIMEOUT);
+                        }
+
                         if let Some(mut old) = old_child {
                             let _ = old.kill().await;
                             let _ = old.wait().await;
-                            tracing::debug!("Killed old mpvpaper after new one stabilized");
+                            tracing::debug!("Killed old mpvpaper after new one rendered first frame");
                         }
                     } else {
-                        // 无旧 mpvpaper 或跨引擎切换，直接设置
+                        // 无旧 mpvpaper,直接设置
                         state.engine.mpvpaper.set_without_kill(child).await;
+                    }
+
+                    // 跨引擎切换：等 mpvpaper 渲染首帧后再停止 swww，避免黑屏闪烁
+                    if was_swww_running {
+                        wait_first_frame(&first_frame_tx).await;
+                        state.engine.swww_daemon.kill().await;
+                        tracing::debug!("Killed swww-daemon after mpvpaper rendered first frame");
                     }
                 }
                 Err(e) => {
                     anyhow::bail!("Failed to start mpvpaper: {}", e);
                 }
-            }
-            
-            // 跨引擎切换：等待 mpvpaper 渲染首帧后再停止 swww，避免黑屏闪烁
-            if was_swww_running {
-                tokio::time::sleep(std::time::Duration::from_millis(CROSS_ENGINE_DELAY_MS)).await;
-                state.engine.swww_daemon.kill().await;
-                tracing::debug!("Killed swww-daemon after mpvpaper stabilized");
             }
         }
         WallMode::Image => {
