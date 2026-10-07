@@ -11,6 +11,7 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger, VramOverrideAction};
 use lianwall_core::config::{WallMode, VideoTransition};
@@ -134,6 +135,9 @@ async fn handle_pause_rotation(state: &Arc<SharedState>, event_bus: &EventBus) -
     let old_value = serde_json::Value::from(interval);
     drop(config);
 
+    // 同步置零 next_switch:scheduler 异步处理事件前,客户端查询不能读到旧值
+    state.set_next_switch(Instant::now()).await;
+
     // 触发 scheduler 重建 timer（interval=0 即暂停）
     event_bus.publish(Event::ConfigChanged {
         key: key.to_string(),
@@ -164,6 +168,9 @@ async fn handle_resume_rotation(state: &Arc<SharedState>, event_bus: &EventBus) 
         WallMode::Image => config.image_engine.interval = saved,
     }
     drop(config);
+
+    // 同步重置 next_switch:scheduler 异步重建 timer 前,客户端查询必须读到新值
+    state.set_next_switch(Instant::now() + Duration::from_secs(saved)).await;
 
     event_bus.publish(Event::ConfigChanged {
         key: key.to_string(),
@@ -856,6 +863,19 @@ async fn handle_set_config(
         return Response::error(ErrorCode::ConfigError, format!("Failed to save config: {}", e));
     }
     
+    // 当前模式的 interval 被修改时,同步更新 next_switch:
+    // scheduler 异步重建 timer 前,客户端查询必须读到新值
+    let mode = *state.engine.mode.read().await;
+    let affects_rotation = matches!(
+        (mode, key.as_str()),
+        (WallMode::Video, "video_engine.interval") | (WallMode::Image, "image_engine.interval")
+    );
+    if affects_rotation && let Some(v) = value.as_u64() {
+        let base = Instant::now();
+        let next = if v == 0 { base } else { base + Duration::from_secs(v) };
+        state.set_next_switch(next).await;
+    }
+
     // 发布配置变更事件
     event_bus.publish(Event::ConfigChanged {
         key: key.clone(),
