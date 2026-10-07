@@ -32,9 +32,11 @@ use lianwall_core::config::ConfigCreateInput;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // 初始化日志
+    // 注意:handler/scheduler 等模块在 lib crate (lianwall_daemon) 里,
+    // 过滤器必须同时覆盖 bin (lianwalld) 和 lib (lianwall_daemon),否则只输出启动日志
     tracing_subscriber::fmt()
         .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "lianwalld=info,lianwall_core=info".into()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "lianwalld=info,lianwall_daemon=info,lianwall_core=info".into()),
         )
         .init();
 
