@@ -4,6 +4,7 @@
 
 | 版本 | 日期 | 主要变化 |
 |------|------|----------|
+| [5.5.3](changelogs/CHANGELOG-5.5.3.md) | 2026-10-07 | 轮换状态竞态修复(GUI 倒计时卡死)、mpvpaper 首帧检测切换、daemon 日志修复 |
 | [5.5.2](changelogs/CHANGELOG-5.5.2.md) | 2026-10-07 | mpvpaper 常驻 IPC 换片、切换动画优化、性能修复、Socket 协议 v3、暂停轮换 |
 | [5.5.1](changelogs/CHANGELOG-5.5.1.md) | 2026-08-08 | 壁纸切换超时改为性能探针，不再误报业务 Timeout |
 | [5.5.0](changelogs/CHANGELOG-5.5.0.md) | 2026-05-13 | 顺时针偏置概率选择算法、算法参数配置、GUI 联动稳定性修复 |
