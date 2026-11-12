@@ -1,7 +1,7 @@
 # Lianwall Daemon API 文档
 
 > 协议版本：3  
-> 文档版本：5.5.2
+> 文档版本：5.6.0
 
 ## 📡 通信协议
 
@@ -16,8 +16,33 @@
 
 - 请求帧顶层可携带 `id` 字段（u64，客户端自增）：`{"id": 123, "cmd": "GetStatus"}`
 - 响应帧回带相同的 `id`：`{"id": 123, "type": "Status", "payload": {...}}`，客户端按 id 精确匹配响应，不再依赖 FIFO 顺序
-- **`id` 缺失或 `id=0` 的帧为服务端主动推送**（Event、Subscribe 后的 immediate Status 同步）
-- 旧客户端不带 `id` 发送请求时，响应回带 `id: 0`，按原 FIFO 逻辑读取即可，完全兼容
+- 新客户端使用非零 `id`；`id=0` 用于服务端主动推送（Event、Subscribe 后的 immediate Status 同步）。
+- 旧客户端不带 `id` 或使用 `id=0` 发送请求时，响应回带 `id: 0`，普通响应按请求顺序返回；事件通过 `type: "Event"` 区分，不能消耗普通响应队列。
+
+### 请求、事件与完成顺序（5.6.0）
+
+- 同一连接的命令按接收顺序进入全局串行队列。等待命令完成期间，连接继续读取后续请求并推送订阅事件。
+- 非零 ID 的响应可以乱序返回。例如 Next 尚未完成时，后发 Ping 可先收到 Pong；客户端必须按 ID 匹配。
+- 事件可能先于命令回执到达。事件是状态变化通知，不是某个请求的回执；不能据此认定另一个待处理请求也已完成。
+- 查询读取当时可用的状态，不保证之前入队的命令已经执行；查询也可能等待共享状态锁。
+- Subscribe 的 Subscribed 回执先发送，`immediate_sync=true` 时紧接着发送 ID=0 的 Status；false 时不额外发送 Status。
+- 订阅 `status_changed` 或 `all` 后，调度器更新实际轮换期限时也会推送 ID=0 的 Status 快照。它不匹配普通 GetStatus 回调；客户端应使用它校准倒计时。旧客户端可忽略这种已知响应类型，不新增事件或协议字段。
+- 客户端断开后，连接释放响应等待任务；已入队命令继续执行。重连后应查询实际状态，不能假定断线撤销了操作。
+
+### 配置与关闭语义（5.6.0）
+
+- `paths.mode` 是启动默认模式。SetConfig 修改它会保存配置，但不切换当前会话；当前模式以 Status 为准，实时切换使用 SetMode。
+- 配置叶子字段在 daemon 与离线 CLI 共享类型、范围校验；写盘成功后才提交内存和 ConfigChanged，写盘失败保持内存不变。
+- PauseRotation 只在内存临时暂停，其他配置的保存不会把临时的 interval=0 写盘。显式 SetConfig interval 则持久化该值并取消临时覆盖。
+- 显式 interval=0 是配置暂停，Status 倒计时为 null、RotationStatus.paused=true；没有 saved_interval 时需设置正间隔恢复，而不是猜测之前的间隔。
+- Shutdown 回执表示已受理；停止接受新命令，待执行命令返回未执行错误，尽量送完当前回执后关闭连接。关闭 hook 使用单独的总预算，不保证收到回执时所有清理已结束。
+
+### 满载处理（5.6.0）
+
+- 每连接最多 64 个尚未回收的命令响应等待任务。达到上限或全局命令队列已满时，立即返回 `internal_error`，消息明确包含 `request was not queued`，该次请求未入队执行。
+- 未收到回执、读超时或断线与上述明确拒绝不同：结果可能未知，重试前应先确认状态。
+- 为保持旧客户端 FIFO，服务端最多缓存 64 条等待前序响应的旧格式回执；超过上限会关闭该连接，释放等待资源。
+- 以上限制不改变协议版本或 JSON 字段。事件仍受订阅过滤；广播缓冲丢事件时关闭连接，要求客户端重新订阅并读取快照，避免静默漏事件。
 
 ### 消息分类
 
@@ -99,7 +124,7 @@
 | `mode` | `WallMode` | 当前运行模式，取值见 [WallMode 枚举](#wallmode) |
 | `current` | `string?` | 当前壁纸完整路径，启动后未切换过时为 `null` |
 | `current_filename` | `string?` | 当前壁纸文件名，从 `current` 提取 |
-| `engine` | `string` | 当前活跃引擎进程，`"mpvpaper"` / `"swww"` / `"none"`（反映进程实际状态，非配置模式） |
+| `engine` | `string` | 当前活跃引擎进程，`"mpvpaper"` / `"awww"` / `"swww"`（legacy）/ `"none"`（反映进程实际状态，非配置模式） |
 | `total_wallpapers` | `number` | **当前模式**向量空间中的壁纸数（经时间过滤后的活跃数） |
 | `locked_count` | `number` | 当前模式中被锁定的壁纸数 |
 | `available_count` | `number` | 当前模式中可被选中的壁纸数（= `total` - `locked` - `in_cooldown`） |
@@ -111,7 +136,7 @@
 | `protocol_version` | `number` | Socket 协议版本号 |
 | `next_time_point` | `string?` | 下一个时间关键点 `"HH:MM"`，无时间约束壁纸时为 `null` |
 | `time_points_count` | `number` | 时间关键点总数，0 表示所有壁纸均无时间约束 |
-| `next_switch_secs` | `number?` | 距下次自动切换的剩余秒数（实时倒计时，非配置的 interval） |
+| `next_switch_secs` | `number \| null` | 距下次自动切换的剩余秒数；暂停时为 null，无自动切换期限 |
 
 > **关系公式**：
 > - `available_count = total_wallpapers - locked_count - cooldown_queue.len()`
@@ -121,7 +146,7 @@
 > - `total_wallpapers`, `locked_count`, `available_count` → 从**当前模式**的向量空间计算
 > - `scanned_count` → 从 `SharedState.scanned_counts` 读取（两个模式之和）
 > - `next_switch_secs` → 从 `SharedState.next_switch` 计算剩余时间
-> - `engine` → 检查 mpvpaper/swww 进程是否存活，而非读取配置模式
+> - `engine` → 检查 mpvpaper/awww 进程是否存活，而非读取配置模式
 
 ---
 
@@ -455,7 +480,7 @@
 
 | 键 | 类型 | 约束 | 描述 |
 |----|------|------|------|
-| `paths.mode` | `string` | `"Video"` / `"Image"` | 运行模式 |
+| `paths.mode` | `string` | `"Video"` / `"Image"` | 启动默认模式（实时切换使用 SetMode） |
 | `paths.video_dir` | `string` | - | 动态壁纸目录 |
 | `paths.image_dir` | `string` | - | 静态壁纸目录 |
 | `video_engine.interval` | `integer` | 10-86400 | 切换间隔（秒） |
@@ -464,7 +489,7 @@
 | `video_engine.mpv_args` | `string[]` | - | mpv 参数 |
 | `image_engine.interval` | `integer` | 10-86400 | 切换间隔（秒） |
 | `image_engine.outputs` | `string` | - | 目标显示器 |
-| `image_engine.swww_args` | `string[]` | - | swww 参数 |
+| `image_engine.awww_args` | `string[]` | - | awww 参数 |
 | `vram.enabled` | `boolean` | - | 启用显存监控 |
 | `vram.threshold_percent` | `number` | 5.0-50.0 | 降级阈值 |
 | `vram.recovery_percent` | `number` | 20.0-80.0 | 恢复阈值 |
@@ -805,7 +830,7 @@
     "data": {
       "changes": [
         {"field": "Mode", "value": "Image"},
-        {"field": "Engine", "value": "swww"}
+        {"field": "Engine", "value": "awww"}
       ]
     }
   }
@@ -817,7 +842,7 @@
 | field | value 类型 | 描述 |
 |-------|-----------|------|
 | `Mode` | `WallMode` | 模式变化（`"Video"` 或 `"Image"`） |
-| `Engine` | `string` | 活跃引擎变化（`"mpvpaper"` / `"swww"` / `"none"`） |
+| `Engine` | `string` | 活跃引擎变化（`"mpvpaper"` / `"awww"` / `"swww"`（legacy）/ `"none"`） |
 | `TotalWallpapers` | `number` | 向量空间壁纸总数变化 |
 | `AvailableCount` | `number` | 可用壁纸数变化（已扣除锁定和冷却） |
 | `LockedCount` | `number` | 锁定壁纸数变化 |
@@ -989,7 +1014,7 @@
 | `unknown` | 未知错误 |
 | `invalid_request` | 无效请求（命令不存在或参数错误） |
 | `not_found` | 资源不存在（壁纸路径等） |
-| `engine_error` | 引擎错误（mpvpaper/swww 启动失败） |
+| `engine_error` | 引擎错误（mpvpaper/awww 启动失败） |
 | `config_error` | 配置错误（无效配置值） |
 | `permission_denied` | 权限错误 |
 | `timeout` | 操作超时 |
@@ -1066,7 +1091,7 @@
 | 值 | 描述 |
 |----|------|
 | `"Video"` | 动态壁纸模式（使用 mpvpaper） |
-| `"Image"` | 静态壁纸模式（使用 swww） |
+| `"Image"` | 静态壁纸模式（使用 awww） |
 
 ### WallpaperTrigger
 
@@ -1132,3 +1157,21 @@
 | `AvailableCount` | `number` | 可用数量变化 |
 | `LockedCount` | `number` | 锁定数量变化 |
 | `VramDegraded` | `boolean` | 降级状态变化 |
+
+### 静态参数键兼容性
+
+`image_engine.awww_args` 替代旧键；Config JSON、GetConfig、SetConfig、配置 schema 和
+ConfigChanged 事件统一使用新名，旧键不作为 API 别名。仅磁盘 TOML 读取支持一次迁移，
+先备份 `config.toml.pre-awww.bak` 再原子替换。双键冲突拒绝加载；落盘迁移失败保留原文件，
+允许读取内存迁移结果并记录警告。GUI 与脚本需配套升级，协议帧格式及协议版本保持不变。
+
+### 连接资源与端点所有权
+
+请求每帧最多 1 MiB（不含换行），超限或无效 UTF-8 关闭该连接；已入队命令仍可能继续执行。
+响应写出/flush 共用 10 秒期限，持续不读的客户端将被断开；调用方应将断线后的未确认命令视为结果未知。
+带 ID 响应按 ID 匹配；无 ID 的非法 JSON 错误同样遵守旧客户端 FIFO。
+
+daemon 在初始化引擎/hook 前绑定端点，并持有 `<socket_path>.lock` 的非阻塞文件锁直至全部清理结束。
+第二实例启动失败；普通文件/符号链接不删除，活跃监听者保留，仅清理连接明确拒绝的残留 socket。
+锁文件保留在磁盘，锁本身随进程退出释放；运行期间不要删除锁文件。
+端点清理核对 inode，只清理本实例创建的 socket。GUI 自定义端点入口为 `lianwall-gui --socket PATH`。

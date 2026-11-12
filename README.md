@@ -4,11 +4,15 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.5.1-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-5.6.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
-**适用于所有支持 Wayland 的类 Unix 系统**（Linux / BSD 等）
+**面向 Linux Wayland 的个人工具，主要维护作者使用的 Hyprland 环境。**
+
+awww/mpvpaper 需要合成器提供相应协议；不再承诺“全 Wayland / Linux / BSD 可用”。
+其他合成器、发行版和显卡组合属于未经验证环境，欢迎反馈，但不承诺逐个平台适配。
+5.6.0 继续使用外部引擎；自研后端规划为后续 6.0.0，不属于本版。
 
 | 文档 | 说明 |
 |------|------|
@@ -52,7 +56,7 @@
 | 依赖 | 用途 | 安装 (Arch Linux) | 必需 |
 |------|------|------|------|
 | [mpvpaper](https://github.com/GhostNaN/mpvpaper) | 动态壁纸引擎 | `paru -S mpvpaper` | ✓ |
-| [awww](https://github.com/LGFae/swww) | 静态壁纸引擎 | `paru -S awww` | ✓ |
+| [awww](https://codeberg.org/LGFae/awww) | 静态壁纸引擎 | `paru -S awww` | ✓ |
 | nvidia-smi | NVIDIA 显存检测 | 随驱动安装 | ✗ |
 | rocm-smi | AMD 显存检测 | `pacman -S rocm-smi-lib` | ✗ |
 | 自定义脚本 | Intel 等其他 GPU 显存检测 | 用户自行编写 | ✗ |
@@ -389,7 +393,7 @@ mpv_args = [                             # 透传给 mpv 的参数
 [image_engine]
 interval = 600                           # 自动切换间隔（秒）
 outputs = ""                             # 目标显示器（空 = 所有）
-swww_args = [                            # 透传给 awww img 的参数（内部键名保持不变）
+awww_args = [                            # 透传给 awww img 的参数
     "--transition-type=fade",
     "--transition-duration=2.0",
     "--transition-fps=60",
@@ -487,3 +491,32 @@ LianWall License — 详见 [LICENSE](LICENSE) 文件
 **Made with 💜 by [Lian](https://github.com/Yueosa)**
 
 </div>
+
+### 静态引擎配置键迁移
+
+当前配置、CLI 和 socket API 统一使用 `image_engine.awww_args`。
+读取仅有旧 `swww_args` 的配置时，先验证完整配置，再将原文备份为同目录
+`config.toml.pre-awww.bak`，随后原子替换旧键，保留注释；自定义配置文件同样追加 `.pre-awww.bak`。
+迁移重复运行不会继续创建备份，已有备份不覆盖。两键同时存在时停止加载，请保留所需值到 `awww_args` 后删除旧键。
+
+只读配置或备份创建失败时，daemon 可使用内存中的迁移结果并记录警告，原文件不改写；
+修改配置前需解决写权限/备份冲突。已有备份内容不同或为符号链接时拒绝落盘迁移。
+恢复时停止 daemon，将备份复制回原配置；下次读取会再次迁移。CLI/GUI/API 不再接受旧键，
+调用脚本需同步更新；GUI 与 daemon 应配套升级。此项不改变外部引擎进程兼容策略。
+
+### 5.6.0 外部引擎边界
+
+请配套使用 GUI 1.6.0。awww 与 awww-daemon 必须成对存在于 PATH；检测不再依赖 `which`。
+现代 awww 使用本 daemon 独占命名空间（需支持 `--namespace`），不再按进程名全局 pkill。
+legacy swww 仍可检测回退，但共享端点已有外部 daemon 时明确拒绝接管；使用前请自行停止它。
+其他壁纸程序可能遮挡本程序表面，调试时请先排除同屏竞争。
+
+mpvpaper 以前台进程运行，请勿透传 `--fork/-f`。每个 `mpv_args` 数组元素表示一条
+`--option=value` 或无值选项；含空格/引号的值由调用层编码。
+每次冷启动通过独立 mpv IPC 查询视频参数确认解码就绪，最多等待 5 秒；进程存活或日志出现不再视为加载成功。这仍不代表合成器已呈现首帧。
+默认冷启动切换确认新进程解码就绪后再停止旧进程，失败保留旧状态与历史。
+启用 `ipc_socket` 后需收到 `file-loaded` 才确认热切换；IPC 失败回退冷启动时，
+同一 IPC 路径要求先关闭旧进程，因而该可选路径不保证失败时保持旧画面。已有非本程序拥有的 IPC 路径不覆盖。
+只清理本 daemon 的进程组及核对 inode 后的 IPC socket，不删除同名用户文件。
+
+调试本程序的图片后端时，使用 `awww query --namespace lianwall-<daemon进程PID>`；不带 namespace 的 query 查询的是外部默认实例。运行状态优先使用 `lianwall --json status`。

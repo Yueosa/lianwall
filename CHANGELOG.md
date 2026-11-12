@@ -2,8 +2,11 @@
 
 所有版本的变更记录。
 
+## 已发布版本
+
 | 版本 | 日期 | 主要变化 |
 |------|------|----------|
+| [5.6.0](changelogs/CHANGELOG-5.6.0.md) | 2026-11-12 | 外部引擎事务切换、通信与状态收敛、JSON/hook、原子文件与配置迁移 |
 | [5.5.3](changelogs/CHANGELOG-5.5.3.md) | 2026-10-07 | 轮换状态竞态修复(GUI 倒计时卡死)、mpvpaper 首帧检测切换、daemon 日志修复 |
 | [5.5.2](changelogs/CHANGELOG-5.5.2.md) | 2026-10-07 | mpvpaper 常驻 IPC 换片、切换动画优化、性能修复、Socket 协议 v3、暂停轮换 |
 | [5.5.1](changelogs/CHANGELOG-5.5.1.md) | 2026-08-08 | 壁纸切换超时改为性能探针，不再误报业务 Timeout |

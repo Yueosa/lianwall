@@ -2,6 +2,13 @@
 
 `lianwall` CLI 支持 `--json` 标志，以机器可读的 JSON 格式输出所有结果，适用于脚本集成和自动化场景。
 
+## 本轮配置兼容性变化
+
+静态参数字段及配置键改为 `image_engine.awww_args`，完整 JSON 配置也只输出 `awww_args`。
+旧 TOML 的 `swww_args` 在读取时备份并迁移；这不是 CLI/socket 的旧键别名。
+脚本需更新字段与 get/set 键，两键冲突返回错误。备份与恢复规则见 README。
+配置解析或迁移失败时返回非零码和 stdout JSON 错误，不再悄悄连接默认 socket。
+
 ## 快速上手
 
 ```bash
@@ -22,17 +29,17 @@ lianwall --json config get paths.mode
 
 ### 成功响应
 
-所有操作类命令（会改变状态的命令）均包含 `"success": true`：
+多数操作类命令包含 `"success": true`：
 
 ```json
 { "success": true, ...其他字段 }
 ```
 
-查询类命令直接输出对应的数据结构，无 `"success"` 包装。
+查询类命令直接输出对应的数据结构，无 `"success"` 包装；`reload/rescan` 成功使用 `"status":"ok"`，见目录操作。
 
 ### 错误响应
 
-任何命令出错时，均输出统一的错误结构（exit code 非零）：
+业务命令和参数错误在 **stdout** 输出一份 JSON，exit code 非零；stderr 用于非 JSON 诊断，不应作为结果解析入口：
 
 ```json
 {
@@ -91,7 +98,7 @@ lianwall --json status
 | `vram_degraded` | `boolean` | 是否处于显存降级状态 |
 | `uptime_secs` | `number` | 守护进程运行时间（秒） |
 | `protocol_version` | `number` | 协议版本号 |
-| `next_switch_secs` | `number \| null` | 下次切换倒计时（秒） |
+| `next_switch_secs` | `number \| null` | 下次自动切换倒计时（秒）；暂停时为 null |
 | `next_time_point` | `string \| null` | 下一个时间关键点（`"HH:MM"` 格式） |
 | `time_points_count` | `number` | 时间关键点总数 |
 
@@ -486,7 +493,7 @@ lianwall --json restart
 
 ### 目录操作
 
-> 这些命令等待 daemon 的异步事件完成，响应使用 `"status"` 字段（`"ok"` 或 `"timeout"`）而不是 `"success"`。
+> 这些命令等待 daemon 的异步事件完成，成功使用 `"status":"ok"`。超时或连接错误返回通用错误 JSON 和非零退出码；扫描可能仍在后台继续，可另行查询状态。
 
 #### `reload` — 重新加载配置并扫描目录
 
@@ -519,8 +526,8 @@ lianwall --json reload
 
 ```json
 {
-  "status": "timeout",
-  "message": "Timed out waiting for daemon confirmation"
+  "success": false,
+  "error": "Connection timeout"
 }
 ```
 
@@ -534,7 +541,7 @@ lianwall --json rescan
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `status` | `"ok" \| "timeout"` | 操作结果 |
+| `status` | `"ok"` | 成功时的操作结果；失败使用通用错误结构 |
 | `total` | `number` | 壁纸总数（video + image） |
 | `available` | `number` | 可用数量 |
 | `locked` | `number` | 锁定数量 |
@@ -701,3 +708,48 @@ else
     echo "daemon 未运行"
 fi
 ```
+
+
+## 订阅事件流（5.6.0）
+
+`lianwall --json subscribe [事件...]` 输出 NDJSON：每行一个紧凑 JSON，立即 flush，
+依次包含 `Subscribed`、初始 `Status`，之后是 `Event` 和调度更新/重同步用的 `Status`。
+类型及 payload 与 [Daemon API](DAEMON-API.md) 一致；不输出提示文字、颜色或空行。
+事件可用短名（如 `wallpaper`）或正式名（如 `wallpaper_changed`），未知名称直接报错。
+
+```sh
+lianwall --json subscribe wallpaper status
+```
+
+订阅初始化有超时；成功同步后，空闲连接可以一直等待，不再因 10 秒没有事件退出。
+EOF、解析错误或广播丢事件导致的断开，都会输出通用错误 JSON 并以非零码退出。
+CLI 不自动重连或补发事件，消费者应重新订阅并使用初始快照恢复；事件流不是持久化日志。
+
+```python
+import json
+import subprocess
+
+process = subprocess.Popen(
+    ["lianwall", "--json", "subscribe", "all"],
+    stdout=subprocess.PIPE, text=True,
+)
+for line in process.stdout:
+    frame = json.loads(line)
+    if frame.get("success") is False:
+        print("订阅结束:", frame["error"])
+        continue
+    if frame.get("type") == "Status":
+        snapshot = frame["payload"]  # 包含初始化快照和之后的倒计时快照
+    elif frame.get("type") == "Event":
+        event = frame["payload"]  # event + data
+print("退出码:", process.wait())
+```
+
+### 本轮兼容性变化
+
+- 错误 JSON 从 stderr 移至 stdout；脚本应检查退出码并解析 stdout，避免把两个通道拼接后解析。
+- 配置 get/set 在线与离线均保持真实 JSON 类型，数字/布尔/数组不再因 daemon 未运行而变成字符串。
+- `config set` 使用字段类型解析文本：字符串字段的 `123` 仍是字符串，数组支持 JSON 数组或逗号分隔。
+- `reload/rescan` 的超时不再返回成功退出码或 `status=timeout`，统一使用错误结构。
+- `start --foreground` 会接管终端输出，不能与 `--json` 混用；后台 start 支持 JSON。
+- `--help/--version` 属于 CLI 元信息，仍使用原有人类可读输出；`--json` 不带业务命令返回 JSON 错误。

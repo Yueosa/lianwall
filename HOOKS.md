@@ -36,7 +36,8 @@ lianwall hook list
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `max_concurrent` | `int` | `8` | 最大同时运行的 hook 数量，超出时排队等待。**修改此项需重启 daemon 生效**，其他字段热重载即可。 |
+| `max_concurrent` | `int` | `8` | 最大同时运行数，修改需重启 daemon。 |
+| `max_pending` | `int` | `256` | 等待任务上限；0 表示不排队，修改需重启 daemon。 |
 
 ### `[[hook]]` 字段
 
@@ -128,7 +129,7 @@ lianwall hook list
 
 ### `vram_changed` — 显存状态变化
 
-VRAM 监控检测到使用率越过阈值时触发（降级或恢复）。若 `vram.enabled = false`，此事件不会触发。
+保留现有行为：VRAM 监控更新快照时触发，包括 `downgrade/upgrade/keep`；未跨阈值时也可能是 keep。只关心降级/恢复的脚本应检查 `LIANWALL_VRAM_ACTION`。监控关闭且没有手动覆盖事件时不会触发。
 
 **环境变量：**
 
@@ -172,7 +173,7 @@ daemon 内部发生错误时触发（如引擎启动失败）。
 
 daemon 收到关闭信号后，在实际清理操作前触发。
 
-**特别说明**：此事件的超时强制为 5 秒，无论配置中设置多少，以确保 daemon 能及时退出。
+**关闭顺序**：CLI Shutdown、SIGINT、SIGTERM 使用同一路径。停止普通 hook、丢弃等待队列，再执行关闭 hook，完成后清理持久化状态和引擎。所有关闭 hook **共用 5 秒总预算**，同时遵守每条 `timeout` 和全局并发上限；预算到期会取消剩余任务，不是每条都等待 5 秒。
 
 **环境变量：**
 
@@ -321,4 +322,27 @@ LIANWALL_TRIGGER=manual_next \
 
 - **`daemon_startup` 事件暂不支持**：可用 `wallpaper_changed` + `trigger = ["daemon_start"]` 代替，但壁纸目录为空时不触发。
 - **`lock`/`unlock` 事件不包含文件路径**：`space_updated` + `lock_changed` 仅通知空间有变化，不告知具体文件。
-- **`max_concurrent` 修改需重启**：其他所有字段均支持 `lianwall hook reload` 热重载。
+- **队列限制修改需重启**：`max_concurrent/max_pending` 需要重启；规则列表可热加载。
+
+## 执行、积压与超时语义（5.6.0）
+
+- 普通任务按匹配顺序入队，并发执行的完成顺序不保证一致。队列满时丢弃最新匹配任务，
+  日志记录 hook 名称及累计丢弃数量，不再无限创建等待任务。广播缓冲丢事件另有警告，不能安全重放脚本。
+- stdin/stdout 为 null；stderr 持续读取但最多保留 4 KiB，失败日志最多显示 200 个字符，Unicode 安全。
+- 超时及取消会停止该次 hook 自有进程组，包括未脱离该组的普通后代；主动 setsid/更换进程组的程序不在这一清理边界内。
+- 普通 shell 正常完成时不清理刻意后台运行的程序。后台命令应自行重定向输出，避免继承日志管道。
+- `mode/trigger` 过滤只有在事件提供相应上下文时才匹配；不支持该上下文的事件不会忽略过滤条件后照常执行。
+
+### 事件范围与现有限制
+
+| 需求 | 当前可用事件/过滤 | 边界 |
+|---|---|---|
+| 壁纸应用完成 | wallpaper_changed + mode/trigger | 不是点击/请求受理通知；应用失败不发送成功事件 |
+| 当前模式变化 | mode_changed，mode 按目标模式匹配 | 启动偏好 paths.mode 的配置写入不是实时模式切换 |
+| 扫描/锁定变化 | space_updated | 时间点触发的重扫目前也使用 rescanned；精确时间边界用 time_point_reached |
+| 配置变化 | config_changed | 提供键名；无模式/壁纸触发原因过滤上下文 |
+| 显存变化 | vram_changed | 保留 keep 快照行为，脚本可按 ACTION 过滤 |
+| 启动完成 | 暂无独立事件 | daemon_start 仅是首次抽取壁纸的原因；空图库或恢复旧壁纸不保证触发该原因 |
+| 退出清理 | daemon_shutdown | 所有关闭规则共享预算；并发过多/脚本过慢时不保证每条都能完成 |
+
+新增启动事件、锁定文件路径、更多触发条件的设计继续在统一修复总表跟踪；本轮没有虚构新的成功通知。
