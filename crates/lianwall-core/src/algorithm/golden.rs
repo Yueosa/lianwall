@@ -73,8 +73,8 @@ mod tests {
         assert_eq!(calc_cooldown(4), 2);
         assert_eq!(calc_cooldown(10), 5);
         assert_eq!(calc_cooldown(14), 7);
-        assert_eq!(calc_cooldown(20), 7);   // 过渡区域
-        assert_eq!(calc_cooldown(30), 10);  // N/3 开始生效
+        assert_eq!(calc_cooldown(20), 7); // 过渡区域
+        assert_eq!(calc_cooldown(30), 10); // N/3 开始生效
         assert_eq!(calc_cooldown(60), 20);
         assert_eq!(calc_cooldown(100), 33); // 大列表：~33% 冷却
         assert_eq!(calc_cooldown(200), 66);

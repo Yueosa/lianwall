@@ -5,6 +5,9 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("Configuration migration at {path}: {message}")]
+    Migration { path: PathBuf, message: String },
+
     /// 文件 IO 错误
     #[error("IO error ({operation}) at {path}: {source}")]
     Io {

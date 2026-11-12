@@ -8,10 +8,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::{interval, sleep, Instant};
+use tokio::time::{interval, sleep};
 
-use lianwall_core::socket::{Request, WallpaperTrigger};
 use lianwall_core::config::WallMode;
+use lianwall_core::socket::{Request, WallpaperTrigger};
 use lianwall_core::wallpaper::TimePoint;
 
 use crate::command::CommandMsg;
@@ -71,16 +71,12 @@ impl Default for SchedulerConfig {
 }
 
 /// 运行调度器
-pub async fn run(
-    state: Arc<SharedState>,
-    event_bus: EventBus,
-    cmd_tx: mpsc::Sender<CommandMsg>,
-) {
+pub async fn run(state: Arc<SharedState>, event_bus: EventBus, cmd_tx: mpsc::Sender<CommandMsg>) {
     tracing::info!("Scheduler started");
-    
+
     let mut shutdown_rx = state.shutdown_receiver();
     let mut event_rx = event_bus.subscribe();
-    
+
     // 初始间隔（从配置读取，根据当前模式选择）
     let config = state.get_config().await;
     let mode = *state.engine.mode.read().await;
@@ -89,12 +85,12 @@ pub async fn run(
     timer.reset(current_interval).await;
 
     // 设置下次切换时间（同步到 state 供 status 查询）
-    state.set_next_switch(next_switch_instant(current_interval).into()).await;
-    
+    update_rotation_deadline(&state, &event_bus, current_interval).await;
+
     // 计算下一个时间点的等待时间
     let mut time_point_sleep = create_time_point_sleep(&state).await;
-    
-    loop {
+
+    while !state.is_shutting_down() {
         tokio::select! {
             // 定时触发壁纸切换
             _ = timer.tick() => {
@@ -106,49 +102,47 @@ pub async fn run(
                         request: Request::Next { trigger_hint: Some(WallpaperTrigger::Scheduled) },
                         response_tx,
                     };
-                    
+
                     if cmd_tx.send(msg).await.is_err() {
                         tracing::warn!("Failed to send Next command to queue");
                     }
                 }
-                
+
                 // 更新下次切换时间（同步到 state）
-                state.set_next_switch(next_switch_instant(current_interval).into()).await;
-                
-                // 发布 tick 事件（内部使用）
-                event_bus.publish(Event::SchedulerTick);
+                update_rotation_deadline(&state, &event_bus, current_interval).await;
+
             }
-            
+
             // 时间点到达，重建向量空间
             _ = &mut time_point_sleep => {
                 // 获取当前时间和下一个时间点
                 let now = lianwall_core::wallpaper::TimePoint::now();
                 let time_str = format!("{:02}:{:02}", now.hour, now.minute);
-                
+
                 tracing::info!("Time point {} reached, triggering rescan to rebuild space", time_str);
-                
+
                 // 发送 Rescan 命令重建向量空间
                 let (response_tx, _) = tokio::sync::oneshot::channel();
                 let _ = cmd_tx.send(CommandMsg {
                     request: Request::Rescan,
                     response_tx,
                 }).await;
-                
+
                 // 计算下一个时间点用于事件推送
                 let time_points = state.get_time_points().await;
                 let next_tp = lianwall_core::wallpaper::next_key_point(&now, &time_points);
                 let next_time_str = next_tp.map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
-                
+
                 // 发布事件
                 event_bus.publish(Event::TimePointReached {
                     time: time_str,
                     next_time: next_time_str,
                 });
-                
+
                 // 重新计算下一个时间点
                 time_point_sleep = create_time_point_sleep(&state).await;
             }
-            
+
             // 监听事件
             result = event_rx.recv() => {
                 match result {
@@ -158,15 +152,15 @@ pub async fn run(
                             let config = state.get_config().await;
                             let mode = *state.engine.mode.read().await;
                             let new_interval = get_interval_for_mode(&config, mode);
-                            
+
                             if new_interval != current_interval {
                                 current_interval = new_interval;
                                 timer.reset(current_interval).await;
-                                state.set_next_switch(next_switch_instant(current_interval).into()).await;
+                                update_rotation_deadline(&state, &event_bus, current_interval).await;
                                 tracing::info!("Scheduler interval updated to {:?} (config changed: {})", current_interval, key);
                             }
                         }
-                        
+
                         // 整体重载时自动触发 rescan，使壁纸目录与新配置同步
                         if key == "all" {
                             tracing::info!("Full config reload detected, triggering rescan");
@@ -181,13 +175,11 @@ pub async fn run(
                         // 模式切换，Video/Image 有不同的 interval
                         let config = state.get_config().await;
                         let new_interval = get_interval_for_mode(&config, to);
-                        
-                        if new_interval != current_interval {
-                            current_interval = new_interval;
-                            timer.reset(current_interval).await;
-                            state.set_next_switch(next_switch_instant(current_interval).into()).await;
-                            tracing::info!("Scheduler interval updated to {:?} (mode changed to {:?})", current_interval, to);
-                        }
+
+                        current_interval = new_interval;
+                        timer.reset(current_interval).await;
+                        update_rotation_deadline(&state, &event_bus, current_interval).await;
+                        tracing::info!("Scheduler interval updated to {:?} (mode changed to {:?})", current_interval, to);
                     }
                     Ok(Event::SpaceUpdated { .. }) => {
                         // 空间更新后（如 Rescan），重新计算时间点
@@ -202,7 +194,7 @@ pub async fn run(
                             WallpaperTrigger::ModeSwitch
                         ) {
                             timer.reset(current_interval).await;
-                            state.set_next_switch(next_switch_instant(current_interval).into()).await;
+                            update_rotation_deadline(&state, &event_bus, current_interval).await;
                             tracing::debug!("Timer reset after manual switch ({:?})", trigger);
                         }
                     }
@@ -210,7 +202,13 @@ pub async fn run(
                         // 忽略其他事件
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("Scheduler missed {} events", n);
+                        tracing::warn!("Scheduler missed {} events; rebuilding schedule from current state", n);
+                        let config = state.get_config().await;
+                        let mode = *state.engine.mode.read().await;
+                        current_interval = get_interval_for_mode(&config, mode);
+                        timer.reset(current_interval).await;
+                        update_rotation_deadline(&state, &event_bus, current_interval).await;
+                        time_point_sleep = create_time_point_sleep(&state).await;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                         tracing::info!("Event bus closed, scheduler stopping");
@@ -218,7 +216,7 @@ pub async fn run(
                     }
                 }
             }
-            
+
             // 收到关闭信号
             _ = shutdown_rx.recv() => {
                 tracing::info!("Scheduler shutting down");
@@ -226,26 +224,28 @@ pub async fn run(
             }
         }
     }
-    
+
     tracing::info!("Scheduler stopped");
 }
 
 /// 创建等待下一个时间点的 sleep future
 async fn create_time_point_sleep(state: &SharedState) -> std::pin::Pin<Box<tokio::time::Sleep>> {
     let time_points = state.get_time_points().await;
-    
+
     if time_points.is_empty() {
         // 没有时间点，返回一个很长的等待（实际上不会触发）
         tracing::debug!("No time points configured, time point scheduler disabled");
         return Box::pin(sleep(Duration::from_secs(86400 * 365))); // 1 年
     }
-    
+
     let now = TimePoint::now();
     if let Some(next_point) = lianwall_core::wallpaper::next_key_point(&now, &time_points) {
         let wait_secs = now.seconds_until(&next_point);
         tracing::info!(
             "Next time point: {:02}:{:02}, waiting {} seconds",
-            next_point.hour, next_point.minute, wait_secs
+            next_point.hour,
+            next_point.minute,
+            wait_secs
         );
         Box::pin(sleep(Duration::from_secs(wait_secs)))
     } else {
@@ -263,24 +263,22 @@ fn get_interval_for_mode(config: &lianwall_core::config::Config, mode: WallMode)
     Duration::from_secs(secs as u64)
 }
 
-/// 计算下次切换时间点;interval=0(已暂停)时返回极远时间,避免 status 倒计时异常
-fn next_switch_instant(dur: Duration) -> Instant {
-    if dur.is_zero() {
-        Instant::now() + Duration::from_secs(u32::MAX as u64)
-    } else {
-        Instant::now() + dur
-    }
+/// Publish only after the displayed deadline matches the scheduler's timer.
+async fn update_rotation_deadline(state: &SharedState, event_bus: &EventBus, duration: Duration) {
+    let deadline = (!duration.is_zero()).then(|| std::time::Instant::now() + duration);
+    state.set_next_switch(deadline).await;
+    event_bus.publish(Event::SchedulerTick);
 }
 
 /// 检查是否应该切换壁纸
 async fn should_switch(state: &SharedState, _event_bus: &EventBus) -> bool {
     // 检查配置是否启用 VRAM 监控
     let config = state.get_config().await;
-    
+
     if config.vram.enabled {
         // 获取 GPU 快照
         let gpu_snapshot = state.get_gpu_snapshot().await;
-        
+
         // 如果已降级，不切换视频壁纸
         if gpu_snapshot.degraded {
             let mode = *state.engine.mode.read().await;
@@ -289,7 +287,7 @@ async fn should_switch(state: &SharedState, _event_bus: &EventBus) -> bool {
                 return false;
             }
         }
-        
+
         // 如果有 VRAM 信息，检查阈值
         if let Some(ref vram_info) = gpu_snapshot.vram_info {
             if vram_info.free_percent < config.vram.threshold_percent {
@@ -302,10 +300,10 @@ async fn should_switch(state: &SharedState, _event_bus: &EventBus) -> bool {
             }
         }
     }
-    
+
     // 检查是否有壁纸可切换
     let mode = *state.engine.mode.read().await;
-    
+
     match mode {
         WallMode::Video => {
             let space = state.video_space.read().await;
@@ -331,14 +329,14 @@ pub async fn gpu_monitor(
     cmd_tx: mpsc::Sender<CommandMsg>,
 ) {
     tracing::info!("GPU monitor started");
-    
+
     let mut shutdown_rx = state.shutdown_receiver();
-    
+
     // 从配置获取检查间隔
     let config = state.get_config().await;
     let check_interval = config.vram.check_interval;
     let mut timer = interval(Duration::from_secs(check_interval));
-    
+
     // 初始化 VramState（根据配置选择后端）
     {
         let vram_state = lianwall_core::gpu::init_with_config(&config.vram);
@@ -349,7 +347,9 @@ pub async fn gpu_monitor(
     // 验证自定义后端配置
     if config.vram.backend == lianwall_core::config::VramBackend::Custom {
         if config.vram.custom_command.trim().is_empty() {
-            tracing::error!("vram.custom_command is empty while backend=custom, disabling GPU monitor");
+            tracing::error!(
+                "vram.custom_command is empty while backend=custom, disabling GPU monitor"
+            );
             return;
         }
         let backend = lianwall_core::gpu::GpuBackend::Custom {
@@ -358,13 +358,16 @@ pub async fn gpu_monitor(
         match lianwall_core::gpu::query_vram(backend).await {
             Ok(_) => tracing::info!("Custom VRAM command validated OK"),
             Err(e) => {
-                tracing::error!("Custom VRAM command trial run failed: {}, disabling GPU monitor", e);
+                tracing::error!(
+                    "Custom VRAM command trial run failed: {}, disabling GPU monitor",
+                    e
+                );
                 return;
             }
         }
     }
 
-    loop {
+    while !state.is_shutting_down() {
         tokio::select! {
             _ = timer.tick() => {
                 // 手动覆盖状态下，跳过自动检测
@@ -372,7 +375,7 @@ pub async fn gpu_monitor(
                     continue;
                 }
                 let config = state.get_config().await;
-                
+
                 // 使用 check() 函数做降级/升级决策
                 let action = {
                     let mut gpu_state_guard = state.gpu_state.write().await;
@@ -388,7 +391,7 @@ pub async fn gpu_monitor(
                         lianwall_core::gpu::VramAction::Keep
                     }
                 };
-                
+
                 // 根据决策执行操作
                 match action {
                     lianwall_core::gpu::VramAction::Downgrade => {
@@ -396,12 +399,6 @@ pub async fn gpu_monitor(
                         // 切换到图片模式
                         let current_mode = *state.engine.mode.read().await;
                         if current_mode == WallMode::Video {
-                            *state.engine.mode.write().await = WallMode::Image;
-                            event_bus.publish(Event::ModeChanged {
-                                from: WallMode::Video,
-                                to: WallMode::Image,
-                            });
-                            
                             // 发送 Next 命令切换到新模式的壁纸
                             let (response_tx, _) = tokio::sync::oneshot::channel();
                             let _ = cmd_tx.send(CommandMsg {
@@ -417,12 +414,6 @@ pub async fn gpu_monitor(
                         // 切换回视频模式
                         let current_mode = *state.engine.mode.read().await;
                         if current_mode == WallMode::Image {
-                            *state.engine.mode.write().await = WallMode::Video;
-                            event_bus.publish(Event::ModeChanged {
-                                from: WallMode::Image,
-                                to: WallMode::Video,
-                            });
-                            
                             // 发送 Next 命令切换到新模式的壁纸
                             let (response_tx, _) = tokio::sync::oneshot::channel();
                             let _ = cmd_tx.send(CommandMsg {
@@ -437,7 +428,7 @@ pub async fn gpu_monitor(
                         // 保持当前状态，不做任何操作
                     }
                 }
-                
+
                 // 更新 GPU 快照（供查询使用）
                 let backend_for_query = {
                     let gpu_state = state.gpu_state.read().await;
@@ -457,13 +448,87 @@ pub async fn gpu_monitor(
                     });
                 }
             }
-            
+
             _ = shutdown_rx.recv() => {
                 tracing::info!("GPU monitor shutting down");
                 break;
             }
         }
     }
-    
+
     tracing::info!("GPU monitor stopped");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn fixture() -> (Arc<SharedState>, EventBus) {
+        let mut config: lianwall_core::config::Config =
+            toml::from_str(lianwall_core::config::DEFAULT_CONFIG_TOML).unwrap();
+        config.video_engine.interval = 60;
+        config.image_engine.interval = 60;
+        (SharedState::init(config).await.unwrap(), EventBus::new(32))
+    }
+
+    async fn next_schedule(receiver: &mut tokio::sync::broadcast::Receiver<Event>) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if matches!(receiver.recv().await.unwrap(), Event::SchedulerTick) {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("scheduler did not publish the updated deadline");
+    }
+
+    #[tokio::test]
+    async fn test_paused_schedule_has_no_deadline() {
+        let (state, events) = fixture().await;
+        let mut receiver = events.subscribe();
+        update_rotation_deadline(&state, &events, Duration::ZERO).await;
+        next_schedule(&mut receiver).await;
+        assert_eq!(state.next_switch_remaining_secs().await, None);
+    }
+
+    #[tokio::test]
+    async fn test_manual_switch_publishes_new_deadline() {
+        let (state, events) = fixture().await;
+        let mut receiver = events.subscribe();
+        let (sender, _commands) = mpsc::channel(4);
+        let task = tokio::spawn(run(state.clone(), events.clone(), sender));
+        next_schedule(&mut receiver).await;
+        state
+            .set_next_switch(Some(std::time::Instant::now() + Duration::from_secs(5)))
+            .await;
+        events.publish(Event::WallpaperChanged {
+            path: "/test.mp4".into(),
+            mode: WallMode::Video,
+            trigger: WallpaperTrigger::ManualNext,
+        });
+        next_schedule(&mut receiver).await;
+        assert!(state.next_switch_remaining_secs().await.unwrap() >= 58);
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn test_mode_change_resets_equal_interval_schedule() {
+        let (state, events) = fixture().await;
+        let mut receiver = events.subscribe();
+        let (sender, _commands) = mpsc::channel(4);
+        let task = tokio::spawn(run(state.clone(), events.clone(), sender));
+        next_schedule(&mut receiver).await;
+        state
+            .set_next_switch(Some(std::time::Instant::now() + Duration::from_secs(5)))
+            .await;
+        *state.engine.mode.write().await = WallMode::Image;
+        events.publish(Event::ModeChanged {
+            from: WallMode::Video,
+            to: WallMode::Image,
+        });
+        next_schedule(&mut receiver).await;
+        assert!(state.next_switch_remaining_secs().await.unwrap() >= 58);
+        task.abort();
+    }
 }

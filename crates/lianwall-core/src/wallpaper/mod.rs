@@ -31,12 +31,11 @@ pub use error::WallpaperError;
 pub use persist::{load_weights, save_weights, weights_path};
 pub use space::{build_space, export_to_persisted, rebuild_space};
 pub use r#struct::*;
-pub use time_range::{next_key_point, TimePoint, TimeRange};
+pub use time_range::{TimePoint, TimeRange, next_key_point};
 
 // 扫描器导出
 pub use scanner::{
-    collect_time_points, filter_active,
-    scan_directory_async, scan_directory_streaming,
-    scan_with_rayon, scan_with_rayon_progress,
-    ParallelScanConfig, ScanProgress, ScanResult, ScannedWallpaper,
+    ParallelScanConfig, ScanProgress, ScanResult, ScannedWallpaper, collect_time_points,
+    filter_active, scan_directory_async, scan_directory_streaming, scan_with_rayon,
+    scan_with_rayon_progress,
 };

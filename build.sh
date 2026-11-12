@@ -3,17 +3,20 @@
 # 做了这些事
 # 1. 从 Cargo.toml 读取版本号
 # 2. cargo build --release 编译两个包
-# 3. 复制产物到 build/5.1.1/ 目录
+# 3. 复制产物到 build/<version>/ 目录
 # 4. 生成 sha256 校验和
 # ===========================================================
 # 产出文件：
-# build/5.1.1/
-# ├── lianwall_5.1.1_linux_x86_64      # CLI
-# ├── lianwalld_5.1.1_linux_x86_64     # Daemon  
-# └── checksums_5.1.1.txt              # 校验和
+# build/<version>/
+# ├── lianwall_<version>_linux_x86_64      # CLI
+# ├── lianwalld_<version>_linux_x86_64     # Daemon
+# └── checksums_<version>.txt              # 校验和
 # ===========================================================
 
-set -e
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 
 # =========================
 # 🎨 颜色定义
@@ -34,7 +37,7 @@ error()   { echo -e "${RED}❌ $*${NC}"; }
 # 📦 版本信息
 # =========================
 # 从 workspace Cargo.toml 读取版本（所有包共享同一版本）
-VERSION=$(grep '^version' Cargo.toml | grep -v '^\[' | head -1 | sed -E 's/version = "(.*)"/\1/')
+VERSION=$(awk '/^\[workspace.package\]/{section=1;next} section && /^version *=/{gsub(/"/, "", $3);print $3;exit}' Cargo.toml)
 
 # 验证版本号是否成功读取
 if [[ -z "$VERSION" ]]; then
@@ -53,7 +56,7 @@ mkdir -p "$DEST"
 
 info "Building release binaries..."
 
-cargo build --release --package lianwall-cli --package lianwall-daemon
+cargo build --locked --release --package lianwall-cli --package lianwall-daemon
 
 # 复制产物
 cp target/release/lianwall "$DEST/lianwall_${VERSION}_linux_x86_64"

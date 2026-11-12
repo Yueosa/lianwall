@@ -6,9 +6,9 @@
 use lianwall_core::config::WallMode;
 use lianwall_core::socket::SpaceSnapshot;
 
-use crate::output::{format_uptime, Formatter};
+use crate::output::{Formatter, format_uptime};
 
-use super::{connect, Result};
+use super::{Result, connect};
 
 /// 处理 status 命令
 pub fn handle_status(fmt: &Formatter) -> Result<()> {
@@ -146,7 +146,10 @@ fn print_space(fmt: &Formatter, space: &SpaceSnapshot) {
     fmt.print_kv("Available", &available.to_string());
     fmt.print_kv("Locked", &locked.to_string());
     fmt.print_kv("In Cooldown", &in_cooldown.to_string());
-    fmt.print_kv("Pointer", &format!("{:.1}°", space.pointer_angle.to_degrees()));
+    fmt.print_kv(
+        "Pointer",
+        &format!("{:.1}°", space.pointer_angle.to_degrees()),
+    );
 
     // Wallpaper list
     if !space.items.is_empty() {

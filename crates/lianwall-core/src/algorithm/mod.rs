@@ -19,6 +19,8 @@ mod golden;
 mod selector;
 mod r#struct;
 
-pub use golden::{angular_distance, calc_cooldown, GOLDEN_ANGLE};
-pub use selector::{select_next, select_next_with_config};
+pub use golden::{GOLDEN_ANGLE, angular_distance, calc_cooldown};
+pub use selector::{
+    commit_selection, preview_next_with_config, select_next, select_next_with_config,
+};
 pub use r#struct::{SelectOutput, SelectionConfig};

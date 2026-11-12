@@ -14,10 +14,14 @@
 mod default;
 mod error;
 mod ops;
+mod migration;
 mod r#struct;
+mod values;
 
 // 重导出
 pub use default::DEFAULT_CONFIG_TOML;
 pub use error::ConfigError;
 pub use ops::{config_path, create, delete, expand_path, read, update};
 pub use r#struct::*;
+
+pub use values::{get_value, parse_value, set_value};

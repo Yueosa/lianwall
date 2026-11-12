@@ -7,7 +7,7 @@
 use crate::commands::RotationAction;
 use crate::output::Formatter;
 
-use super::{connect, Result};
+use super::{Result, connect};
 
 /// 处理 rotation 子命令
 pub fn handle_rotation(fmt: &Formatter, action: RotationAction) -> Result<()> {

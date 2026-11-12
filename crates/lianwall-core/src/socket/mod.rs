@@ -44,21 +44,39 @@ pub mod protocol;
 // Re-exports
 pub use error::SocketError;
 pub use protocol::{
+    ConfigConstraints,
+    ConfigKeyInfo,
+    ConfigSnapshot,
+    ErrorCode,
+    // 事件
+    Event,
+    EventType,
+    HookInfo,
+    MAX_MESSAGE_SIZE,
+    ModeSchedule,
     // 常量
-    PROTOCOL_VERSION, MAX_MESSAGE_SIZE,
-    // 帧辅助
-    extract_request_id, request_frame, response_frame,
+    PROTOCOL_VERSION,
     // 请求
     Request,
     // 响应
-    Response, ErrorCode,
-    // 事件
-    Event, EventType,
-    // 辅助枚举
-    WallpaperTrigger, StatusChange, SpaceUpdateReason, VramAction, VramOverrideAction,
+    Response,
+    RotationStatusInfo,
+    SpaceSnapshot,
+    SpaceSummary,
+    SpaceUpdateReason,
+    StatusChange,
     // 数据结构
-    StatusInfo, SpaceSnapshot, WallpaperPoint, SpaceSummary,
-    TimeScheduleInfo, ModeSchedule, WallpaperTimeSegment, TimeRangeInfo,
-    ConfigSnapshot, ConfigKeyInfo, ConfigConstraints,
-    HookInfo, RotationStatusInfo,
+    StatusInfo,
+    TimeRangeInfo,
+    TimeScheduleInfo,
+    VramAction,
+    VramOverrideAction,
+    WallpaperPoint,
+    WallpaperTimeSegment,
+    // 辅助枚举
+    WallpaperTrigger,
+    // 帧辅助
+    extract_request_id,
+    request_frame,
+    response_frame,
 };

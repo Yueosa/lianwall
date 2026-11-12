@@ -2,6 +2,7 @@
 //!
 //! 导出 daemon 核心组件，供测试和集成使用
 
+pub mod backend;
 pub mod command;
 pub mod connection;
 pub mod event;

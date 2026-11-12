@@ -10,9 +10,9 @@ use lianwall_core::config::WallMode;
 use lianwall_core::socket::{Event, EventType};
 
 use crate::client::ClientError;
-use crate::output::{messages, Formatter};
+use crate::output::{Formatter, messages};
 
-use super::{connect, Result};
+use super::{Result, connect};
 
 /// 单个模式的空间信息
 struct ModeSpaceInfo {
@@ -29,12 +29,19 @@ struct SpaceCollector {
 
 impl SpaceCollector {
     fn new() -> Self {
-        Self { video: None, image: None }
+        Self {
+            video: None,
+            image: None,
+        }
     }
 
     /// 记录一个 SpaceUpdated 事件，返回是否两个模式都已收集
     fn record(&mut self, mode: &WallMode, total: usize, available: usize, locked: usize) -> bool {
-        let info = ModeSpaceInfo { total, available, locked };
+        let info = ModeSpaceInfo {
+            total,
+            available,
+            locked,
+        };
         match mode {
             WallMode::Video => self.video = Some(info),
             WallMode::Image => self.image = Some(info),
@@ -44,8 +51,16 @@ impl SpaceCollector {
 
     /// 汇总获取 (total, available, locked)
     fn totals(&self) -> (usize, usize, usize) {
-        let v = self.video.as_ref().map(|i| (i.total, i.available, i.locked)).unwrap_or_default();
-        let i = self.image.as_ref().map(|i| (i.total, i.available, i.locked)).unwrap_or_default();
+        let v = self
+            .video
+            .as_ref()
+            .map(|i| (i.total, i.available, i.locked))
+            .unwrap_or_default();
+        let i = self
+            .image
+            .as_ref()
+            .map(|i| (i.total, i.available, i.locked))
+            .unwrap_or_default();
         (v.0 + i.0, v.1 + i.1, v.2 + i.2)
     }
 
@@ -74,7 +89,10 @@ pub fn handle_reload(fmt: &Formatter) -> Result<()> {
     let mut client = connect()?;
 
     // 先订阅事件
-    client.subscribe(vec![EventType::ConfigChanged, EventType::SpaceUpdated], false)?;
+    client.subscribe(
+        vec![EventType::ConfigChanged, EventType::SpaceUpdated],
+        false,
+    )?;
 
     // 发送 reload 命令
     client.reload_config()?;
@@ -95,7 +113,8 @@ pub fn handle_reload(fmt: &Formatter) -> Result<()> {
                 config_changed = true;
             }
             Event::SpaceUpdated { mode, summary, .. } => {
-                space_done = collector.record(mode, summary.total, summary.available, summary.locked);
+                space_done =
+                    collector.record(mode, summary.total, summary.available, summary.locked);
             }
             _ => {}
         }
@@ -134,13 +153,14 @@ pub fn handle_reload(fmt: &Formatter) -> Result<()> {
             } else {
                 fmt.print_success(&format!(
                     "Reloaded: {} wallpapers ({} available, {} locked) [{}]",
-                    total, available, locked, collector.detail_string(fmt)
+                    total,
+                    available,
+                    locked,
+                    collector.detail_string(fmt)
                 ));
             }
         }
-        Err(_) => {
-            print_timeout_message(fmt);
-        }
+        Err(error) => return Err(error.into()),
     }
 
     Ok(())
@@ -212,13 +232,14 @@ pub fn handle_rescan(fmt: &Formatter) -> Result<()> {
             } else {
                 fmt.print_success(&format!(
                     "Rescanned: {} wallpapers ({} available, {} locked) [{}]",
-                    total, available, locked, collector.detail_string(fmt)
+                    total,
+                    available,
+                    locked,
+                    collector.detail_string(fmt)
                 ));
             }
         }
-        Err(_) => {
-            print_timeout_message(fmt);
-        }
+        Err(error) => return Err(error.into()),
     }
 
     Ok(())
@@ -229,7 +250,7 @@ fn wait_for_events<F>(
     client: &mut crate::client::Client,
     fmt: &Formatter,
     mut is_done: F,
-) -> std::result::Result<(), ()>
+) -> std::result::Result<(), ClientError>
 where
     F: FnMut(&Event) -> bool,
 {
@@ -244,7 +265,7 @@ where
 
         // Timeout check
         if elapsed >= WAIT_TIMEOUT_SECS {
-            return Err(());
+            return Err(ClientError::ConnectionTimeout);
         }
 
         // Show hint after 10 seconds
@@ -272,28 +293,7 @@ where
                 // Timeout, continue waiting
                 continue;
             }
-            Err(_) => {
-                // Other error, exit
-                return Err(());
-            }
+            Err(error) => return Err(error),
         }
-    }
-}
-
-/// Print timeout message
-fn print_timeout_message(fmt: &Formatter) {
-    use crate::output::messages;
-    
-    if fmt.is_json() {
-        println!(
-            "{}",
-            serde_json::json!({
-                "status": "timeout",
-                "message": messages::SCAN_BACKGROUND_HINT
-            })
-        );
-    } else {
-        fmt.print_warning(messages::TIMEOUT_WARNING);
-        fmt.print_info(messages::SCAN_BACKGROUND_HINT);
     }
 }

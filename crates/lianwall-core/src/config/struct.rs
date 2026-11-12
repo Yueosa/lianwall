@@ -19,7 +19,7 @@ pub struct Config {
 /// 路径配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PathsConfig {
-    /// 模式: "Video" 或 "Image"
+    /// 启动默认模式: "Video" 或 "Image"；当前会话模式由 daemon 持有。
     pub mode: WallMode,
     /// 动态壁纸目录
     pub video_dir: PathBuf,
@@ -33,7 +33,6 @@ pub enum WallMode {
     Video,
     Image,
 }
-
 
 /// 动态壁纸引擎配置 (mpvpaper)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,7 +68,7 @@ pub enum VideoTransition {
     Fade,
 }
 
-/// 静态壁纸引擎配置 (swww/awww)
+/// 静态壁纸引擎配置 (awww)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageEngineConfig {
     /// 切换间隔（秒）
@@ -77,8 +76,8 @@ pub struct ImageEngineConfig {
     /// 目标显示器（空字符串 = 所有显示器，或逗号分隔如 "eDP-1,HDMI-A-1"）
     #[serde(default)]
     pub outputs: String,
-    /// 透传给 swww/awww img 的参数
-    pub swww_args: Vec<String>,
+    /// 透传给 awww img 的参数
+    pub awww_args: Vec<String>,
 }
 
 /// 壁纸选择算法类型

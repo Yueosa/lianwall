@@ -1,14 +1,14 @@
 //! 壁纸选择器
 
-use rand::{rngs::StdRng, SeedableRng};
+use rand::{SeedableRng, rngs::StdRng};
 use std::f64::consts::TAU;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::wallpaper::WallpaperSpace;
 
+use super::golden::{GOLDEN_ANGLE, calc_cooldown};
 use super::r#struct::SelectOutput;
 use super::r#struct::SelectionConfig;
-use super::golden::{calc_cooldown, GOLDEN_ANGLE};
 
 /// 选择下一张壁纸
 ///
@@ -33,12 +33,20 @@ pub fn select_next_with_config(
     space: &mut WallpaperSpace,
     selection: SelectionConfig,
 ) -> Option<SelectOutput> {
+    let selected_idx = preview_next_with_config(space, selection)?;
+    Some(commit_selection(space, selected_idx))
+}
+
+/// Choose without modifying current index, cooldown, timestamps or the random nonce.
+pub fn preview_next_with_config(
+    space: &WallpaperSpace,
+    selection: SelectionConfig,
+) -> Option<usize> {
     if space.is_empty() {
         return None;
     }
 
     let cooldown = calc_cooldown(space.len());
-
     // 先在非冷却候选中抽样；若为空，再从冷却队列中回退选择
     let selected_idx = if let Some(idx) = choose_from_allowed(space, cooldown, selection) {
         idx
@@ -48,6 +56,12 @@ pub fn select_next_with_config(
         choose_from_cooldown_fallback(space, selection, false)?
     };
 
+    Some(selected_idx)
+}
+
+/// Commit only after the selected wallpaper was accepted by its backend.
+pub fn commit_selection(space: &mut WallpaperSpace, selected_idx: usize) -> SelectOutput {
+    let cooldown = calc_cooldown(space.len());
     // 更新当前壁纸索引
     space.current_index = Some(selected_idx);
 
@@ -69,10 +83,10 @@ pub fn select_next_with_config(
     space.pointer = new_pointer;
     space.selector_nonce = space.selector_nonce.saturating_add(1);
 
-    Some(SelectOutput {
+    SelectOutput {
         index: selected_idx,
         new_pointer,
-    })
+    }
 }
 
 fn choose_from_allowed(
@@ -85,7 +99,12 @@ fn choose_from_allowed(
         .iter()
         .enumerate()
         .filter(|(i, item)| {
-            !item.locked && !space.cooldown_queue.iter().take(cooldown).any(|&idx| idx == *i)
+            !item.locked
+                && !space
+                    .cooldown_queue
+                    .iter()
+                    .take(cooldown)
+                    .any(|&idx| idx == *i)
         })
         .map(|(i, _)| i)
         .collect();
@@ -124,7 +143,14 @@ fn sample_biased_candidate(
 
     let mut weights: Vec<f64> = candidates
         .iter()
-        .map(|&idx| biased_score(space.pointer, space.items[idx].angle, gap, selection.bias_lambda))
+        .map(|&idx| {
+            biased_score(
+                space.pointer,
+                space.items[idx].angle,
+                gap,
+                selection.bias_lambda,
+            )
+        })
         .collect();
 
     let max_logit = weights
@@ -139,17 +165,24 @@ fn sample_biased_candidate(
 
     let total_weight: f64 = weights.iter().sum();
     if !total_weight.is_finite() || total_weight <= 0.0 {
-        return candidates
-            .iter()
-            .copied()
-            .min_by(|&lhs, &rhs| {
-                let lhs_score = biased_score(space.pointer, space.items[lhs].angle, gap, selection.bias_lambda);
-                let rhs_score = biased_score(space.pointer, space.items[rhs].angle, gap, selection.bias_lambda);
-                lhs_score
-                    .partial_cmp(&rhs_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-                    .then(lhs.cmp(&rhs))
-            });
+        return candidates.iter().copied().min_by(|&lhs, &rhs| {
+            let lhs_score = biased_score(
+                space.pointer,
+                space.items[lhs].angle,
+                gap,
+                selection.bias_lambda,
+            );
+            let rhs_score = biased_score(
+                space.pointer,
+                space.items[rhs].angle,
+                gap,
+                selection.bias_lambda,
+            );
+            lhs_score
+                .partial_cmp(&rhs_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(lhs.cmp(&rhs))
+        });
     }
 
     let mut draw = deterministic_unit_random(space.pointer, space.selector_nonce) * total_weight;
@@ -182,9 +215,8 @@ fn counter_clockwise_distance(pointer: f64, angle: f64) -> f64 {
 }
 
 fn deterministic_unit_random(pointer: f64, nonce: u64) -> f64 {
-    let seed = pointer.to_bits()
-        ^ nonce.wrapping_mul(0x9e37_79b9_7f4a_7c15)
-        ^ 0xd1b5_4a32_d192_ed03;
+    let seed =
+        pointer.to_bits() ^ nonce.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ 0xd1b5_4a32_d192_ed03;
     let mut rng = StdRng::seed_from_u64(seed);
     rand::Rng::r#gen::<f64>(&mut rng)
 }
@@ -198,10 +230,12 @@ mod tests {
     use crate::wallpaper::ScannedWallpaper;
 
     fn make_test_wallpapers(n: usize) -> Vec<ScannedWallpaper> {
-        (0..n).map(|i| ScannedWallpaper {
-            path: PathBuf::from(format!("/test/{}.jpg", i)),
-            time_constraints: vec![],
-        }).collect()
+        (0..n)
+            .map(|i| ScannedWallpaper {
+                path: PathBuf::from(format!("/test/{}.jpg", i)),
+                time_constraints: vec![],
+            })
+            .collect()
     }
 
     #[test]
@@ -213,7 +247,7 @@ mod tests {
     #[test]
     fn test_select_single() {
         let mut space = build_space(make_test_wallpapers(1), 42);
-        
+
         let result = select_next(&mut space);
         assert!(result.is_some());
         assert_eq!(result.unwrap().index, 0);
@@ -223,9 +257,9 @@ mod tests {
     fn test_select_updates_pointer() {
         let mut space = build_space(make_test_wallpapers(5), 42);
         let old_pointer = space.pointer;
-        
+
         select_next(&mut space);
-        
+
         let expected = (old_pointer + GOLDEN_ANGLE) % TAU;
         assert!((space.pointer - expected).abs() < 1e-10);
     }
@@ -243,7 +277,7 @@ mod tests {
     #[test]
     fn test_cooldown_prevents_repeat() {
         let mut space = build_space(make_test_wallpapers(10), 42);
-        
+
         let mut selected: Vec<usize> = Vec::new();
         for _ in 0..20 {
             if let Some(result) = select_next(&mut space) {
@@ -255,18 +289,22 @@ mod tests {
         let cooldown = calc_cooldown(10);
         for window in selected.windows(cooldown) {
             let unique: std::collections::HashSet<_> = window.iter().collect();
-            assert_eq!(unique.len(), window.len(), "Found repeat in cooldown window");
+            assert_eq!(
+                unique.len(),
+                window.len(),
+                "Found repeat in cooldown window"
+            );
         }
     }
 
     #[test]
     fn test_locked_skipped() {
         let mut space = build_space(make_test_wallpapers(3), 42);
-        
+
         // 锁定所有但一个
         space.items[0].locked = true;
         space.items[1].locked = true;
-        
+
         let result = select_next(&mut space);
         assert!(result.is_some());
         assert_eq!(result.unwrap().index, 2);
@@ -275,11 +313,11 @@ mod tests {
     #[test]
     fn test_all_locked_returns_none() {
         let mut space = build_space(make_test_wallpapers(3), 42);
-        
+
         for item in &mut space.items {
             item.locked = true;
         }
-        
+
         assert!(select_next(&mut space).is_none());
     }
 
@@ -291,10 +329,13 @@ mod tests {
         space.cooldown_queue.clear();
         space.current_index = None;
 
-        let result = select_next_with_config(&mut space, SelectionConfig {
-            bias_lambda: 0.35,
-            temperature: 1e-6,
-        });
+        let result = select_next_with_config(
+            &mut space,
+            SelectionConfig {
+                bias_lambda: 0.35,
+                temperature: 1e-6,
+            },
+        );
 
         assert!(result.is_some());
         assert_eq!(result.unwrap().index, 1);
@@ -305,7 +346,9 @@ mod tests {
         let left = 0_f64.to_radians();
         let right = 36_f64.to_radians();
         let pointer = 17_f64.to_radians();
-        assert!(super::super::golden::angular_distance(pointer, left)
-            < super::super::golden::angular_distance(pointer, right));
+        assert!(
+            super::super::golden::angular_distance(pointer, left)
+                < super::super::golden::angular_distance(pointer, right)
+        );
     }
 }

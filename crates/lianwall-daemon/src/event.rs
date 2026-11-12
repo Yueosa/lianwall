@@ -69,7 +69,7 @@ pub enum Event {
         vram_info: Option<VramInfo>,
     },
     
-    /// 调度器 tick（内部事件，用于触发定时切换）
+    /// 调度期限已更新（内部通知，订阅 status 的客户端会收到权威 Status 快照）
     SchedulerTick,
     
     /// 时间点到达（触发重建向量空间）

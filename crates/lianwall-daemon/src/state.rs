@@ -10,11 +10,11 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::{broadcast, RwLock, Mutex};
+use tokio::sync::{Mutex, RwLock, broadcast};
 
 use lianwall_core::config::{Config, WallMode};
-use lianwall_core::gpu::{VramState, VramInfo, GpuBackend};
-use lianwall_core::wallpaper::{WallpaperSpace, TimePoint};
+use lianwall_core::gpu::{GpuBackend, VramInfo, VramState};
+use lianwall_core::wallpaper::{TimePoint, WallpaperSpace};
 
 use crate::hook::HookHandle;
 
@@ -51,6 +51,7 @@ pub struct SpaceSummary {
     pub locked_count: usize,
     /// 冷却队列长度
     pub cooldown_len: usize,
+    pub available_count: usize,
 }
 
 /// 浏览器式播放历史
@@ -109,6 +110,18 @@ impl PlaybackHistory {
         self.trim();
     }
 
+    pub fn peek_forward(&self) -> Option<PathBuf> {
+        self.cursor
+            .and_then(|cursor| self.entries.get(cursor + 1))
+            .cloned()
+    }
+    pub fn peek_backward(&self) -> Option<PathBuf> {
+        self.cursor
+            .and_then(|cursor| cursor.checked_sub(1))
+            .and_then(|cursor| self.entries.get(cursor))
+            .cloned()
+    }
+
     /// 前进（Next 时光标不在末尾）
     ///
     /// 返回前进后光标指向的壁纸路径
@@ -149,88 +162,86 @@ impl PlaybackHistory {
     }
 }
 
-/// 托管进程包装
-///
-/// TODO: 引擎进程管理优化
-/// 当前方案: Arc<Mutex<Option<Child>>> 包装
-/// 未来方案: 进程管理器 Task，通过 channel 发送 spawn/kill 命令
-/// 切换原因: 如果进程管理逻辑变复杂（例如需要重启策略、健康检查等），
-///         消息传递模式更易于维护和测试
-///
-/// 重要: 完全接管 swww 和 mpvpaper 的生命周期
-/// 任何在程序结束后仍然运行的 swww/mpvpaper 都属于设计失误
+/// A foreground engine and its private Unix process group.
+/// Dropping an uncommitted replacement also stops descendants.
+pub struct EngineProcess {
+    pub child: tokio::process::Child,
+    group: Option<i32>,
+    pub ipc_directory: Option<tempfile::TempDir>,
+}
+
+impl EngineProcess {
+    pub fn spawn(command: &mut tokio::process::Command) -> std::io::Result<Self> {
+        command.process_group(0).kill_on_drop(true);
+        let child = command.spawn()?;
+        let group = child.id().map(|id| id as i32);
+        Ok(Self {
+            child,
+            group,
+            ipc_directory: None,
+        })
+    }
+
+    fn signal_group(&self, signal: i32) {
+        if let Some(group) = self.group {
+            // SAFETY: the child was started in its own process group; never signal our group.
+            unsafe {
+                libc::kill(-group, signal);
+            }
+        }
+    }
+
+    pub async fn stop(mut self) {
+        self.signal_group(libc::SIGTERM);
+        let _ =
+            tokio::time::timeout(std::time::Duration::from_millis(500), self.child.wait()).await;
+        // The launcher may have exited while decoder/helper children remain.
+        self.signal_group(libc::SIGKILL);
+        let _ = self.child.wait().await;
+        self.group = None;
+    }
+}
+
+impl Drop for EngineProcess {
+    fn drop(&mut self) {
+        self.signal_group(libc::SIGKILL);
+    }
+}
+
+/// Only engines created by this daemon are owned and stopped.
 pub struct ManagedProcess {
-    child: Mutex<Option<tokio::process::Child>>,
+    child: Mutex<Option<EngineProcess>>,
     name: &'static str,
 }
 
 impl ManagedProcess {
-    /// 创建空的托管进程
     pub fn new(name: &'static str) -> Self {
         Self {
             child: Mutex::new(None),
             name,
         }
     }
-
-    /// 设置进程（如果已有旧进程，先 kill 旧进程）
-    pub async fn set(&self, child: tokio::process::Child) {
-        let mut guard = self.child.lock().await;
-        // 如果已有进程，先 kill
-        if let Some(mut old) = guard.take() {
-            let _ = old.kill().await;
-            let _ = old.wait().await;
+    pub async fn set(&self, child: EngineProcess) {
+        let old = self.child.lock().await.replace(child);
+        if let Some(old) = old {
+            old.stop().await;
         }
-        *guard = Some(child);
         tracing::debug!("{} process started", self.name);
     }
-
-    /// 设置进程（不杀旧进程，由调用方自行管理旧进程生命周期）
-    ///
-    /// 用于需要延迟杀死旧进程的场景（如 Video→Video 切换时
-    /// 先启动新 mpvpaper，等渲染首帧后再杀旧的）。
-    pub async fn set_without_kill(&self, child: tokio::process::Child) {
-        let mut guard = self.child.lock().await;
-        *guard = Some(child);
-        tracing::debug!("{} process started (no-kill mode)", self.name);
-    }
-
-    /// 取出进程（不杀死，转移所有权给调用方）
-    ///
-    /// 取出后内部状态变为 None（无进程）。
-    pub async fn take(&self) -> Option<tokio::process::Child> {
-        let mut guard = self.child.lock().await;
-        guard.take()
-    }
-
-    /// 终止进程
     pub async fn kill(&self) {
-        let mut guard = self.child.lock().await;
-        if let Some(mut child) = guard.take() {
-            if let Err(e) = child.kill().await {
-                tracing::warn!("Failed to kill {} process: {}", self.name, e);
-            }
-            let _ = child.wait().await;
-            tracing::debug!("{} process stopped", self.name);
+        let old = self.child.lock().await.take();
+        if let Some(old) = old {
+            old.stop().await;
         }
     }
-
-    /// 检查进程是否运行中
     pub async fn is_running(&self) -> bool {
         let mut guard = self.child.lock().await;
-        if let Some(child) = guard.as_mut() {
-            // try_wait 不会阻塞，返回 None 表示仍在运行
-            match child.try_wait() {
-                Ok(None) => true,
-                Ok(Some(_)) => {
-                    // 进程已退出，清理
-                    *guard = None;
-                    false
-                }
-                Err(_) => false,
+        match guard.as_mut().map(|process| process.child.try_wait()) {
+            Some(Ok(None)) => true,
+            _ => {
+                *guard = None;
+                false
             }
-        } else {
-            false
         }
     }
 }
@@ -242,6 +253,7 @@ pub struct EngineSnapshot {
     pub current: Option<PathBuf>,
     pub swww_daemon_running: bool,
     pub mpvpaper_running: bool,
+    pub image_bin: Option<String>,
 }
 
 /// 引擎状态（异步安全版本）
@@ -252,6 +264,8 @@ pub struct AsyncEngineState {
     pub current: RwLock<Option<PathBuf>>,
     /// swww-daemon 进程
     pub swww_daemon: ManagedProcess,
+    pub image_bin: RwLock<Option<String>>,
+    pub owned_ipc: Mutex<Option<(PathBuf, u64, u64)>>,
     /// mpvpaper 进程
     pub mpvpaper: ManagedProcess,
 }
@@ -262,7 +276,9 @@ impl AsyncEngineState {
         Self {
             mode: RwLock::new(mode),
             current: RwLock::new(None),
-            swww_daemon: ManagedProcess::new("swww-daemon"),
+            swww_daemon: ManagedProcess::new("image-daemon"),
+            image_bin: RwLock::new(None),
+            owned_ipc: Mutex::new(None),
             mpvpaper: ManagedProcess::new("mpvpaper"),
         }
     }
@@ -274,6 +290,7 @@ impl AsyncEngineState {
             current: self.current.read().await.clone(),
             swww_daemon_running: self.swww_daemon.is_running().await,
             mpvpaper_running: self.mpvpaper.is_running().await,
+            image_bin: self.image_bin.read().await.clone(),
         }
     }
 }
@@ -282,35 +299,35 @@ impl AsyncEngineState {
 pub struct SharedState {
     /// 配置
     pub config: RwLock<Config>,
-    
+
     /// 视频壁纸空间
     pub video_space: RwLock<WallpaperSpace>,
-    
+
     /// 图片壁纸空间
     pub image_space: RwLock<WallpaperSpace>,
-    
+
     /// 引擎状态
     pub engine: AsyncEngineState,
-    
+
     /// GPU/VRAM 状态（用于监控）
     pub gpu_state: RwLock<Option<VramState>>,
-    
+
     /// GPU 快照（包含最新 VRAM 信息，用于查询）
     pub gpu_snapshot: RwLock<GpuSnapshot>,
 
     /// VRAM 手动覆盖状态（Some(true)=强制降级到Image, Some(false)=强制升级到Video, None=自动）
     /// daemon 重启后自动清除，不持久化
     pub vram_override: RwLock<Option<bool>>,
-    
+
     /// 时间关键点缓存（用于时间调度）
     pub time_points: RwLock<BTreeSet<TimePoint>>,
-    
+
     /// 浏览器式壁纸播放历史（支持前进/后退导航）
     pub playback_history: RwLock<PlaybackHistory>,
-    
+
     /// 下次壁纸切换的时间点（用于 status 查询倒计时）
-    pub next_switch: RwLock<Instant>,
-    
+    pub next_switch: RwLock<Option<Instant>>,
+
     /// 扫描的壁纸原始总数（过滤前），用于 status 显示
     /// (video_scanned, image_scanned)
     pub scanned_counts: RwLock<(usize, usize)>,
@@ -320,13 +337,14 @@ pub struct SharedState {
 
     /// 暂停前保存的 image interval（Some = 图片模式暂停中，daemon 重启丢失）
     pub saved_image_interval: RwLock<Option<u64>>,
-    
+
     /// Hook 管理器句柄（hook 系统初始化后设置）
     pub hook_handle: RwLock<Option<HookHandle>>,
-    
+
     /// 启动时间
     start_time: Instant,
-    
+    shutting_down: std::sync::atomic::AtomicBool,
+
     /// 关闭信号发送端
     shutdown_tx: broadcast::Sender<()>,
 }
@@ -335,7 +353,7 @@ impl SharedState {
     /// 初始化共享状态
     pub async fn init(config: Config) -> anyhow::Result<Arc<Self>> {
         let (shutdown_tx, _) = broadcast::channel(1);
-        
+
         // 初始化壁纸空间（空的默认空间）
         let video_space = WallpaperSpace {
             items: Vec::new(),
@@ -351,15 +369,15 @@ impl SharedState {
             cooldown_queue: std::collections::VecDeque::new(),
             current_index: None,
         };
-        
+
         let initial_mode = config.paths.mode;
-        
+
         // 根据初始模式计算首次切换间隔
         let initial_interval = match initial_mode {
             WallMode::Video => config.video_engine.interval,
             WallMode::Image => config.image_engine.interval,
         };
-        
+
         let state = Arc::new(Self {
             config: RwLock::new(config),
             video_space: RwLock::new(video_space),
@@ -370,48 +388,59 @@ impl SharedState {
             vram_override: RwLock::new(None),
             time_points: RwLock::new(BTreeSet::new()),
             playback_history: RwLock::new(PlaybackHistory::new()),
-            next_switch: RwLock::new(Instant::now() + std::time::Duration::from_secs(initial_interval)),
+            next_switch: RwLock::new(
+                (initial_interval > 0)
+                    .then(|| Instant::now() + std::time::Duration::from_secs(initial_interval)),
+            ),
             scanned_counts: RwLock::new((0, 0)),
             saved_video_interval: RwLock::new(None),
             saved_image_interval: RwLock::new(None),
             hook_handle: RwLock::new(None),
             start_time: Instant::now(),
+            shutting_down: std::sync::atomic::AtomicBool::new(false),
             shutdown_tx,
         });
-        
+
         Ok(state)
     }
-    
+
     /// 获取运行时间（秒）
     pub fn uptime_secs(&self) -> u64 {
         self.start_time.elapsed().as_secs()
     }
-    
+
     /// 获取关闭信号接收端
     pub fn shutdown_receiver(&self) -> broadcast::Receiver<()> {
         self.shutdown_tx.subscribe()
     }
-    
+
     /// 发送关闭信号
+    pub fn is_shutting_down(&self) -> bool {
+        self.shutting_down
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
     pub fn trigger_shutdown(&self) {
+        self.shutting_down
+            .store(true, std::sync::atomic::Ordering::Release);
         let _ = self.shutdown_tx.send(());
     }
-    
+
     /// 获取配置快照
     pub async fn get_config(&self) -> Config {
         self.config.read().await.clone()
     }
-    
+
     /// 更新配置
     pub async fn set_config(&self, config: Config) {
         *self.config.write().await = config;
     }
-    
+
     /// 获取视频空间快照
     pub async fn get_video_space(&self) -> WallpaperSpace {
         self.video_space.read().await.clone()
     }
-    
+
     /// 获取图片空间快照
     pub async fn get_image_space(&self) -> WallpaperSpace {
         self.image_space.read().await.clone()
@@ -427,65 +456,68 @@ impl SharedState {
             total: space.items.len(),
             locked_count: space.items.iter().filter(|w| w.locked).count(),
             cooldown_len: space.cooldown_queue.len(),
+            available_count: space.ready_count(),
         }
     }
-    
+
     /// 更新视频空间
     pub async fn set_video_space(&self, space: WallpaperSpace) {
         *self.video_space.write().await = space;
     }
-    
+
     /// 更新图片空间
     pub async fn set_image_space(&self, space: WallpaperSpace) {
         *self.image_space.write().await = space;
     }
-    
+
     /// 获取引擎状态快照
     pub async fn get_engine_state(&self) -> EngineSnapshot {
         self.engine.snapshot().await
     }
-    
+
     /// 获取 GPU 快照（用于状态查询）
     pub async fn get_gpu_snapshot(&self) -> GpuSnapshot {
         self.gpu_snapshot.read().await.clone()
     }
-    
+
     /// 更新 GPU 快照
-    pub async fn update_gpu_snapshot(&self, vram_info: VramInfo, degraded: bool, backend: GpuBackend) {
+    pub async fn update_gpu_snapshot(
+        &self,
+        vram_info: VramInfo,
+        degraded: bool,
+        backend: GpuBackend,
+    ) {
         let mut snapshot = self.gpu_snapshot.write().await;
         snapshot.vram_info = Some(vram_info);
         snapshot.degraded = degraded;
         snapshot.backend = backend;
     }
-    
+
     /// 检查是否有 GPU 状态
     pub async fn has_gpu_state(&self) -> bool {
         self.gpu_state.read().await.is_some()
     }
-    
+
     /// 获取时间点集合
     pub async fn get_time_points(&self) -> BTreeSet<TimePoint> {
         self.time_points.read().await.clone()
     }
-    
+
     /// 更新时间点集合
     pub async fn set_time_points(&self, points: BTreeSet<TimePoint>) {
         *self.time_points.write().await = points;
     }
-    
+
     /// 获取下次切换的剩余秒数
-    pub async fn next_switch_remaining_secs(&self) -> u64 {
-        let next = *self.next_switch.read().await;
-        let now = Instant::now();
-        if next > now {
-            (next - now).as_secs()
-        } else {
-            0
-        }
+    pub async fn next_switch_remaining_secs(&self) -> Option<u64> {
+        self.next_switch
+            .read()
+            .await
+            .map(|next| next.saturating_duration_since(Instant::now()).as_secs())
     }
-    
-    /// 更新下次切换时间
-    pub async fn set_next_switch(&self, instant: Instant) {
+
+    /// None means automatic rotation is paused; it has no countdown deadline.
+    pub async fn set_next_switch(&self, instant: Option<Instant>) {
         *self.next_switch.write().await = instant;
     }
 }
@@ -493,42 +525,42 @@ impl SharedState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     fn test_config() -> Config {
         toml::from_str(lianwall_core::config::DEFAULT_CONFIG_TOML)
             .expect("Failed to parse default config")
     }
-    
+
     #[tokio::test]
     async fn test_shared_state_init() {
         let config = test_config();
         let state = SharedState::init(config).await.unwrap();
-        
+
         // 验证初始状态
         let engine = state.get_engine_state().await;
         assert!(!engine.swww_daemon_running);
         assert!(!engine.mpvpaper_running);
     }
-    
+
     #[tokio::test]
     async fn test_shutdown_signal() {
         let config = test_config();
         let state = SharedState::init(config).await.unwrap();
-        
+
         let mut rx = state.shutdown_receiver();
-        
+
         // 触发关闭
         state.trigger_shutdown();
-        
+
         // 应该收到信号
         assert!(rx.recv().await.is_ok());
     }
-    
+
     #[tokio::test]
     async fn test_uptime() {
         let config = test_config();
         let state = SharedState::init(config).await.unwrap();
-        
+
         // 刚启动，uptime 应该很小
         let uptime = state.uptime_secs();
         assert!(uptime < 2);

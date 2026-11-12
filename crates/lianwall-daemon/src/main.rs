@@ -23,11 +23,11 @@
 //! ```
 
 use std::sync::Arc;
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 
-use lianwall_daemon::{command, event::EventBus, scheduler, server, state::SharedState, hook};
-use lianwall_core::wallpaper::{scan_directory_async, rebuild_space, load_weights, filter_active};
 use lianwall_core::config::ConfigCreateInput;
+use lianwall_core::wallpaper::{filter_active, load_weights, rebuild_space, scan_directory_async};
+use lianwall_daemon::{command, event::EventBus, hook, scheduler, server, state::SharedState};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -36,19 +36,20 @@ async fn main() -> anyhow::Result<()> {
     // 过滤器必须同时覆盖 bin (lianwalld) 和 lib (lianwall_daemon),否则只输出启动日志
     tracing_subscriber::fmt()
         .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "lianwalld=info,lianwall_daemon=info,lianwall_core=info".into()),
+            std::env::var("RUST_LOG").unwrap_or_else(|_| {
+                "lianwalld=info,lianwall_daemon=info,lianwall_core=info".into()
+            }),
         )
         .init();
 
-    tracing::info!(
-        "LianWall Daemon v{} starting...",
-        env!("CARGO_PKG_VERSION")
-    );
+    tracing::info!("LianWall Daemon v{} starting...", env!("CARGO_PKG_VERSION"));
+
+    // Register before opening the server, so shutdown during startup is also captured.
+    let mut sigint = signal(SignalKind::interrupt())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
 
     // 加载配置（不存在则自动创建默认配置）
-    let config = match lianwall_core::config::create(ConfigCreateInput {
-        path: None,
-    }) {
+    let config = match lianwall_core::config::create(ConfigCreateInput { path: None }) {
         Ok(result) => {
             if result.created {
                 tracing::info!("Config not found, created default at {:?}", result.path);
@@ -63,9 +64,14 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Refuse duplicate startup before touching engines, hooks, or persistent state.
+    let bound_socket = server::bind(&config.daemon.socket_path)?;
+    let _socket_lifetime = bound_socket.keep_alive();
+
     // 初始化共享状态
     let state = SharedState::init(config.clone()).await?;
     tracing::info!("SharedState initialized");
+    let mut shutdown_rx = state.shutdown_receiver();
 
     // 创建事件总线
     let event_bus = EventBus::new(1024);
@@ -78,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 启动 Hook 管理器
     let hook_handle = hook::spawn(&event_bus);
-    *state.hook_handle.write().await = Some(hook_handle);
+    *state.hook_handle.write().await = Some(hook_handle.clone());
 
     // 初始扫描壁纸
     tracing::info!("Scanning wallpapers...");
@@ -92,8 +98,8 @@ async fn main() -> anyhow::Result<()> {
             vec![]
         }
     };
-    
-    // 扫描图片壁纸  
+
+    // 扫描图片壁纸
     let image_result = scan_directory_async(config.paths.image_dir.clone(), false).await;
     let image_wallpapers = match &image_result {
         Ok(result) => result.wallpapers.clone(),
@@ -109,22 +115,24 @@ async fn main() -> anyhow::Result<()> {
     let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers_for_time);
     tracing::info!("Found {} time points", time_points.len());
     state.set_time_points(time_points).await;
-    
+
     // 保存原始扫描总数（过滤前）
     *state.scanned_counts.write().await = (video_wallpapers.len(), image_wallpapers.len());
 
     // 根据当前时间过滤活跃壁纸
     let active_videos = filter_active(&video_wallpapers);
     let active_images = filter_active(&image_wallpapers);
-    
+
     // 克隆活跃壁纸用于构建空间（保留时间约束信息）
     let active_videos_owned: Vec<_> = active_videos.into_iter().cloned().collect();
     let active_images_owned: Vec<_> = active_images.into_iter().cloned().collect();
-    
+
     tracing::info!(
         "Time filter: {}/{} videos active, {}/{} images active",
-        active_videos_owned.len(), video_wallpapers.len(),
-        active_images_owned.len(), image_wallpapers.len()
+        active_videos_owned.len(),
+        video_wallpapers.len(),
+        active_images_owned.len(),
+        image_wallpapers.len()
     );
 
     // 加载持久化数据
@@ -177,7 +185,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Server Task
     let server_handle = tokio::spawn(async move {
-        if let Err(e) = server::run(state_clone, event_bus_clone, cmd_tx_clone).await {
+        if let Err(e) = server::run_bound(bound_socket, state_clone, event_bus_clone, cmd_tx_clone).await {
             tracing::error!("Server error: {}", e);
         }
     });
@@ -221,45 +229,52 @@ async fn main() -> anyhow::Result<()> {
                 state.image_space.read().await.current_index.is_some()
             }
         };
-        
+
         if has_current {
             // 恢复上次的壁纸：发送 SetWallpaper 命令
             let path = match mode {
                 lianwall_core::config::WallMode::Video => {
                     let space = state.video_space.read().await;
-                    space.current_index.and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
+                    space
+                        .current_index
+                        .and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
                 }
                 lianwall_core::config::WallMode::Image => {
                     let space = state.image_space.read().await;
-                    space.current_index.and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
+                    space
+                        .current_index
+                        .and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
                 }
             };
-            
+
             if let Some(path) = path {
                 tracing::info!("Restoring last wallpaper: {:?}", path);
                 let (response_tx, _) = tokio::sync::oneshot::channel();
-                let _ = cmd_queue.sender().send(command::CommandMsg {
-                    request: lianwall_core::socket::Request::SetWallpaper { path },
-                    response_tx,
-                }).await;
+                let _ = cmd_queue
+                    .sender()
+                    .send(command::CommandMsg {
+                        request: lianwall_core::socket::Request::SetWallpaper { path },
+                        response_tx,
+                    })
+                    .await;
             }
         } else {
             // 没有上次记录，抽一张新的
             tracing::info!("No previous wallpaper, selecting new one");
             let (response_tx, _) = tokio::sync::oneshot::channel();
-            let _ = cmd_queue.sender().send(command::CommandMsg {
-                request: lianwall_core::socket::Request::Next {
-                    trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::DaemonStart),
-                },
-                response_tx,
-            }).await;
+            let _ = cmd_queue
+                .sender()
+                .send(command::CommandMsg {
+                    request: lianwall_core::socket::Request::Next {
+                        trigger_hint: Some(lianwall_core::socket::WallpaperTrigger::DaemonStart),
+                    },
+                    response_tx,
+                })
+                .await;
         }
     }
 
     // 等待关闭信号
-    let mut sigint = signal(SignalKind::interrupt())?;
-    let mut sigterm = signal(SignalKind::terminate())?;
-    let mut shutdown_rx = state.shutdown_receiver();
 
     tokio::select! {
         _ = sigint.recv() => {
@@ -276,19 +291,25 @@ async fn main() -> anyhow::Result<()> {
     // 优雅关闭
     tracing::info!("Shutting down...");
 
+    // Stop accepting ordinary work before cleanup, regardless of shutdown source.
+    state.trigger_shutdown();
+    // One cleanup path for CLI Shutdown, SIGINT and SIGTERM, before engine cleanup.
+    event_bus.publish(lianwall_daemon::event::Event::ShuttingDown);
+    hook_handle.shutdown().await;
+
     // 保存状态到持久化文件
     {
-        use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
-        
+        use lianwall_core::wallpaper::{WeightsFile, export_to_persisted, save_weights};
+
         let video_space = state.video_space.read().await;
         let image_space = state.image_space.read().await;
-        
+
         let weights = WeightsFile {
             version: 1,
             video: export_to_persisted(&video_space),
             image: export_to_persisted(&image_space),
         };
-        
+
         if let Err(e) = save_weights(&weights) {
             tracing::warn!("Failed to save weights: {}", e);
         } else {
@@ -303,24 +324,17 @@ async fn main() -> anyhow::Result<()> {
     state.engine.swww_daemon.kill().await;
     state.engine.mpvpaper.kill().await;
 
-    // 清理 mpv IPC socket 残留文件
-    let ipc_socket = state.get_config().await.video_engine.ipc_socket;
-    if !ipc_socket.is_empty() {
-        let _ = tokio::fs::remove_file(&ipc_socket).await;
-    }
+    lianwall_daemon::backend::cleanup_ipc(&state).await;
 
     // 等待 task 结束（带超时）
-    let _ = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        async {
-            let _ = server_handle.await;
-            let _ = cmd_handle.await;
-            let _ = scheduler_handle.await;
-            if let Some(h) = gpu_handle {
-                let _ = h.await;
-            }
-        },
-    )
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let _ = server_handle.await;
+        let _ = cmd_handle.await;
+        let _ = scheduler_handle.await;
+        if let Some(h) = gpu_handle {
+            let _ = h.await;
+        }
+    })
     .await;
 
     tracing::info!("Daemon stopped");

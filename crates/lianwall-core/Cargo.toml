@@ -10,6 +10,7 @@ description = "Core library for lianwall - smart wallpaper manager"
 serde = { workspace = true }
 serde_json.workspace = true
 toml.workspace = true
+toml_edit = "0.22"
 rand.workspace = true
 dirs.workspace = true
 thiserror.workspace = true
@@ -21,5 +22,7 @@ rayon = { workspace = true }
 walkdir = { workspace = true }
 num_cpus = { workspace = true }
 
-[dev-dependencies]
 tempfile = "3.16"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

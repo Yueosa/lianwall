@@ -9,7 +9,9 @@ use std::path::PathBuf;
 #[derive(Parser, Debug)]
 #[command(name = "lianwall")]
 #[command(version)]
-#[command(about = "Selects wallpapers using the golden angle algorithm, sprinkled with Lian's magic")]
+#[command(
+    about = "Selects wallpapers using the golden angle algorithm, sprinkled with Lian's magic"
+)]
 #[command(author = "Lian <https://github.com/Yueosa/lianwall>")]
 #[command(propagate_version = true)]
 pub struct Cli {

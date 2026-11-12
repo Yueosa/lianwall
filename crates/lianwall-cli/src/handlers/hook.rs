@@ -6,7 +6,7 @@
 use crate::commands::HookAction;
 use crate::output::Formatter;
 
-use super::{connect, HandlerError, Result};
+use super::{HandlerError, Result, connect};
 
 /// 处理 hook 子命令
 pub fn handle_hook(fmt: &Formatter, action: HookAction) -> Result<()> {
@@ -61,8 +61,8 @@ fn handle_hook_list(fmt: &Formatter) -> Result<()> {
         );
 
         // 命令（截断显示）
-        let cmd_display = if hook.command.len() > 60 {
-            format!("{}...", &hook.command[..57])
+        let cmd_display = if hook.command.chars().count() > 60 {
+            format!("{}...", hook.command.chars().take(57).collect::<String>())
         } else {
             hook.command.clone()
         };
@@ -85,9 +85,9 @@ fn handle_hook_list(fmt: &Formatter) -> Result<()> {
 
 fn handle_hook_reload(fmt: &Formatter) -> Result<()> {
     let mut client = connect()?;
-    client.reload_hooks().map_err(|e| {
-        HandlerError::Other(format!("Failed to reload hooks: {}", e))
-    })?;
+    client
+        .reload_hooks()
+        .map_err(|e| HandlerError::Other(format!("Failed to reload hooks: {}", e)))?;
     if fmt.is_json() {
         println!("{}", serde_json::json!({"success": true}));
     } else {

@@ -12,6 +12,7 @@
 pub mod algorithm;
 pub mod config;
 pub mod engine;
+pub mod filesystem;
 pub mod gpu;
 pub mod hook;
 pub mod socket;

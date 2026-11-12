@@ -10,7 +10,7 @@ use lianwall_core::socket::VramOverrideAction;
 use crate::commands::VramAction;
 use crate::output::Formatter;
 
-use super::{connect, Result};
+use super::{Result, connect};
 
 /// 处理 vram 子命令
 pub fn handle_vram(fmt: &Formatter, action: VramAction) -> Result<()> {
@@ -59,8 +59,8 @@ pub fn handle_vram(fmt: &Formatter, action: VramAction) -> Result<()> {
             } else {
                 fmt.print_separator("VRAM Status");
                 if status.vram_total_mb > 0 {
-                    let free_pct = 100.0
-                        - (status.vram_used_mb as f64 / status.vram_total_mb as f64 * 100.0);
+                    let free_pct =
+                        100.0 - (status.vram_used_mb as f64 / status.vram_total_mb as f64 * 100.0);
                     fmt.print_kv(
                         "Usage",
                         &format!(

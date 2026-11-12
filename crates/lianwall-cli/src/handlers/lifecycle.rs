@@ -11,14 +11,20 @@ use std::time::Duration;
 
 use crate::output::Formatter;
 
-use super::{connect, is_daemon_running, HandlerError, Result};
+use super::{HandlerError, Result, connect, is_daemon_running};
 
 /// 处理 start 命令
 pub fn handle_start(fmt: &Formatter, foreground: bool) -> Result<()> {
+    if foreground && fmt.is_json() {
+        return Err(HandlerError::Other("--json cannot be combined with start --foreground; use background start for JSON output".into()));
+    }
     // 检查是否已在运行
-    if is_daemon_running() {
+    if is_daemon_running()? {
         if fmt.is_json() {
-            println!("{}", serde_json::json!({"success": true, "already_running": true}));
+            println!(
+                "{}",
+                serde_json::json!({"success": true, "already_running": true})
+            );
         } else {
             fmt.print_warning("Daemon is already running");
         }
@@ -49,7 +55,7 @@ pub fn handle_start(fmt: &Formatter, foreground: bool) -> Result<()> {
         // 等待 daemon 就绪
         for _ in 0..10 {
             thread::sleep(Duration::from_millis(200));
-            if is_daemon_running() {
+            if is_daemon_running()? {
                 let pid = child.id();
                 if fmt.is_json() {
                     println!("{}", serde_json::json!({"success": true, "pid": pid}));
@@ -110,9 +116,12 @@ fn exec_daemon(_daemon_exe: &PathBuf) -> std::io::Error {
 
 /// 处理 stop 命令
 pub fn handle_stop(fmt: &Formatter) -> Result<()> {
-    if !is_daemon_running() {
+    if !is_daemon_running()? {
         if fmt.is_json() {
-            println!("{}", serde_json::json!({"success": true, "already_stopped": true}));
+            println!(
+                "{}",
+                serde_json::json!({"success": true, "already_stopped": true})
+            );
         } else {
             fmt.print_warning("Daemon is not running");
         }
@@ -124,7 +133,7 @@ pub fn handle_stop(fmt: &Formatter) -> Result<()> {
     if fmt.is_json() {
         println!("{}", serde_json::json!({"success": true}));
     } else {
-        fmt.print_success("Daemon stopped");
+        fmt.print_success("Daemon shutdown requested");
     }
     Ok(())
 }
@@ -132,7 +141,7 @@ pub fn handle_stop(fmt: &Formatter) -> Result<()> {
 /// 处理 restart 命令
 pub fn handle_restart(fmt: &Formatter) -> Result<()> {
     // 停止（如果在运行）
-    if is_daemon_running() {
+    if is_daemon_running()? {
         if !fmt.is_json() {
             fmt.print_info("Stopping daemon...");
         }
@@ -142,7 +151,7 @@ pub fn handle_restart(fmt: &Formatter) -> Result<()> {
         // 等待完全停止
         for _ in 0..10 {
             thread::sleep(Duration::from_millis(200));
-            if !is_daemon_running() {
+            if !is_daemon_running()? {
                 break;
             }
         }

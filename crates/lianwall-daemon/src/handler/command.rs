@@ -9,28 +9,19 @@
 //! 未来方案: 立即返回 + 订阅事件确认（适用于需要快速响应的场景）
 //! 切换原因: 目前 CLI 场景可以接受短暂等待，保持简单
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use lianwall_core::socket::{Request, Response, ErrorCode, WallpaperTrigger, VramOverrideAction};
-use lianwall_core::config::{WallMode, VideoTransition};
-use lianwall_core::algorithm::{select_next_with_config, SelectionConfig};
-use lianwall_core::wallpaper::{export_to_persisted, save_weights, WeightsFile};
-use lianwall_core::engine::detect_image_bin;
-
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::watch;
+use lianwall_core::algorithm::{SelectionConfig, commit_selection, preview_next_with_config};
+use lianwall_core::config::WallMode;
+use lianwall_core::socket::{ErrorCode, Request, Response, VramOverrideAction, WallpaperTrigger};
+use lianwall_core::wallpaper::{WeightsFile, export_to_persisted, save_weights};
 
 use crate::event::{Event, EventBus, SpaceUpdateReason};
-use crate::ipc;
 use crate::state::SharedState;
 
-fn publish_mode_changed_if_needed(
-    event_bus: &EventBus,
-    old_mode: WallMode,
-    new_mode: WallMode,
-) {
+fn publish_mode_changed_if_needed(event_bus: &EventBus, old_mode: WallMode, new_mode: WallMode) {
     if old_mode != new_mode {
         event_bus.publish(Event::ModeChanged {
             from: old_mode,
@@ -47,11 +38,7 @@ async fn selection_config_from_state(state: &Arc<SharedState>) -> SelectionConfi
     }
 }
 
-async fn sync_space_current_index(
-    state: &Arc<SharedState>,
-    mode: WallMode,
-    path: &PathBuf,
-) {
+async fn sync_space_current_index(state: &Arc<SharedState>, mode: WallMode, path: &PathBuf) {
     match mode {
         WallMode::Video => {
             let mut space = state.video_space.write().await;
@@ -61,6 +48,16 @@ async fn sync_space_current_index(
             let mut space = state.image_space.write().await;
             space.current_index = space.items.iter().position(|item| &item.path == path);
         }
+    }
+}
+
+async fn commit_selected(state: &SharedState, mode: WallMode, path: &PathBuf) {
+    let mut space = match mode {
+        WallMode::Video => state.video_space.write().await,
+        WallMode::Image => state.image_space.write().await,
+    };
+    if let Some(index) = space.items.iter().position(|item| &item.path == path) {
+        commit_selection(&mut space, index);
     }
 }
 
@@ -75,7 +72,7 @@ pub async fn handle_command(
             uptime_secs: state.uptime_secs(),
             protocol_version: lianwall_core::socket::PROTOCOL_VERSION,
         },
-        
+
         Request::Next { trigger_hint } => {
             let trigger = trigger_hint.unwrap_or(WallpaperTrigger::ManualNext);
             handle_next(state, event_bus, trigger).await
@@ -84,23 +81,25 @@ pub async fn handle_command(
             let trigger = trigger_hint.unwrap_or(WallpaperTrigger::ManualPrev);
             handle_prev(state, event_bus, trigger).await
         }
-        
-        Request::SetWallpaper { path } => handle_set_wallpaper(state, event_bus, path, WallpaperTrigger::ManualSet).await,
+
+        Request::SetWallpaper { path } => {
+            handle_set_wallpaper(state, event_bus, path, WallpaperTrigger::ManualSet).await
+        }
         Request::SetMode { mode } => handle_set_mode(state, event_bus, mode).await,
-        
+
         Request::Lock { path } => handle_lock(state, event_bus, path).await,
         Request::Unlock { path } => handle_unlock(state, event_bus, path).await,
         Request::ToggleLock { path } => handle_toggle_lock(state, event_bus, path).await,
-        
+
         Request::SetConfig { key, value } => handle_set_config(state, event_bus, key, value).await,
         Request::ReloadConfig => handle_reload_config(state, event_bus).await,
-        
+
         Request::Rescan => handle_rescan(state, event_bus).await,
-        
+
         Request::ReloadHooks => handle_reload_hooks(state).await,
-        
+
         Request::Shutdown => handle_shutdown(state, event_bus).await,
-        
+
         Request::VramOverride { action } => handle_vram_override(state, event_bus, action).await,
 
         Request::PauseRotation => handle_pause_rotation(state, event_bus).await,
@@ -138,8 +137,8 @@ async fn handle_pause_rotation(state: &Arc<SharedState>, event_bus: &EventBus) -
     let old_value = serde_json::Value::from(interval);
     drop(config);
 
-    // 同步置零 next_switch:scheduler 异步处理事件前,客户端查询不能读到旧值
-    state.set_next_switch(Instant::now()).await;
+    // 同步清除 next_switch:scheduler 异步处理事件前,客户端查询不能读到旧值
+    state.set_next_switch(None).await;
 
     // 触发 scheduler 重建 timer（interval=0 即暂停）
     event_bus.publish(Event::ConfigChanged {
@@ -148,7 +147,11 @@ async fn handle_pause_rotation(state: &Arc<SharedState>, event_bus: &EventBus) -
         new_value: serde_json::Value::from(0),
     });
 
-    tracing::info!("Rotation paused for {:?} (saved interval: {}s)", mode, interval);
+    tracing::info!(
+        "Rotation paused for {:?} (saved interval: {}s)",
+        mode,
+        interval
+    );
     Response::ok()
 }
 
@@ -162,7 +165,17 @@ async fn handle_resume_rotation(state: &Arc<SharedState>, event_bus: &EventBus) 
 
     let saved = saved_lock.write().await.take();
     let Some(saved) = saved else {
-        return Response::error(ErrorCode::InvalidRequest, "Rotation is not paused");
+        let config = state.get_config().await;
+        let interval = match mode {
+            WallMode::Video => config.video_engine.interval,
+            WallMode::Image => config.image_engine.interval,
+        };
+        let message = if interval == 0 {
+            "Rotation is paused by configuration; set a positive interval to resume"
+        } else {
+            "Rotation is not paused"
+        };
+        return Response::error(ErrorCode::InvalidRequest, message);
     };
 
     let mut config = state.config.write().await;
@@ -173,7 +186,9 @@ async fn handle_resume_rotation(state: &Arc<SharedState>, event_bus: &EventBus) 
     drop(config);
 
     // 同步重置 next_switch:scheduler 异步重建 timer 前,客户端查询必须读到新值
-    state.set_next_switch(Instant::now() + Duration::from_secs(saved)).await;
+    state
+        .set_next_switch(Some(Instant::now() + Duration::from_secs(saved)))
+        .await;
 
     event_bus.publish(Event::ConfigChanged {
         key: key.to_string(),
@@ -190,122 +205,171 @@ async fn handle_resume_rotation(state: &Arc<SharedState>, event_bus: &EventBus) 
 /// 行为：
 /// - 光标在末尾：通过算法选出新壁纸，追加到历史，光标指向末尾
 /// - 光标不在末尾：光标前进一步，播放光标指向的壁纸
-async fn handle_next(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
+async fn handle_next(
+    state: &Arc<SharedState>,
+    event_bus: &EventBus,
+    trigger: WallpaperTrigger,
+) -> Response {
+    match trigger {
+        WallpaperTrigger::VramDowngrade => {
+            return handle_set_mode_with_trigger(state, event_bus, WallMode::Image, trigger).await;
+        }
+        WallpaperTrigger::VramUpgrade => {
+            return handle_set_mode_with_trigger(state, event_bus, WallMode::Video, trigger).await;
+        }
+        _ => (),
+    }
     let mode = *state.engine.mode.read().await;
     let selection = selection_config_from_state(state).await;
-    
+
     // 检查历史光标位置
     let is_at_end = state.playback_history.read().await.is_at_end();
-    
+
     if !is_at_end {
         // 光标不在末尾：前进一步，播放历史记录
         let path = {
-            let mut history = state.playback_history.write().await;
-            match history.forward() {
+            let history = state.playback_history.read().await;
+            match history.peek_forward() {
                 Some(p) => p,
                 None => return Response::error(ErrorCode::NoHistory, "Cannot forward in history"),
             }
         };
-        
+
         // 检测壁纸类型决定模式
         let detected_mode = detect_mode(&path);
-        
+
         // 应用壁纸
         if let Err(e) = apply_wallpaper(state, &path, detected_mode).await {
-            return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+            return Response::error(
+                ErrorCode::EngineError,
+                format!("Failed to apply wallpaper: {}", e),
+            );
         }
-        
+
+        state.playback_history.write().await.forward();
+
         // 更新模式和当前壁纸
         *state.engine.mode.write().await = detected_mode;
         *state.engine.current.write().await = Some(path.clone());
         sync_space_current_index(state, detected_mode, &path).await;
 
         publish_mode_changed_if_needed(event_bus, mode, detected_mode);
-        
+
         // 发布事件
-        event_bus.publish(Event::WallpaperChanged { path, mode: detected_mode, trigger });
-        
+        event_bus.publish(Event::WallpaperChanged {
+            path,
+            mode: detected_mode,
+            trigger,
+        });
+
         return Response::ok();
     }
-    
+
     // 光标在末尾：通过算法选出新壁纸
     let path = match mode {
         WallMode::Video => {
-            let mut space = state.video_space.write().await;
-            match select_next_with_config(&mut space, selection) {
-                Some(output) => space.items[output.index].path.clone(),
-                None => return Response::error(ErrorCode::EmptySpace, "No available video wallpapers"),
+            let space = state.video_space.read().await;
+            match preview_next_with_config(&space, selection) {
+                Some(output) => space.items[output].path.clone(),
+                None => {
+                    return Response::error(ErrorCode::EmptySpace, "No available video wallpapers");
+                }
             }
         }
         WallMode::Image => {
-            let mut space = state.image_space.write().await;
-            match select_next_with_config(&mut space, selection) {
-                Some(output) => space.items[output.index].path.clone(),
-                None => return Response::error(ErrorCode::EmptySpace, "No available image wallpapers"),
+            let space = state.image_space.read().await;
+            match preview_next_with_config(&space, selection) {
+                Some(output) => space.items[output].path.clone(),
+                None => {
+                    return Response::error(ErrorCode::EmptySpace, "No available image wallpapers");
+                }
             }
         }
     };
-    
-    // 追加到播放历史
-    state.playback_history.write().await.push(path.clone());
-    
+
     // 应用壁纸
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
-        return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+        return Response::error(
+            ErrorCode::EngineError,
+            format!("Failed to apply wallpaper: {}", e),
+        );
     }
-    
+
+    commit_selected(state, mode, &path).await;
+    state.playback_history.write().await.push(path.clone());
+
     // 更新当前壁纸
     *state.engine.current.write().await = Some(path.clone());
-    
+
     // 发布事件
-    event_bus.publish(Event::WallpaperChanged { path, mode, trigger });
-    
+    event_bus.publish(Event::WallpaperChanged {
+        path,
+        mode,
+        trigger,
+    });
+
     Response::ok()
 }
 
 /// 切换到上一张壁纸（浏览器式后退）
 ///
 /// 光标后退一步，播放光标指向的壁纸
-async fn handle_prev(state: &Arc<SharedState>, event_bus: &EventBus, trigger: WallpaperTrigger) -> Response {
+async fn handle_prev(
+    state: &Arc<SharedState>,
+    event_bus: &EventBus,
+    trigger: WallpaperTrigger,
+) -> Response {
     let old_mode = *state.engine.mode.read().await;
 
     // 从播放历史后退
     let path = {
-        let mut history = state.playback_history.write().await;
-        match history.backward() {
+        let history = state.playback_history.read().await;
+        match history.peek_backward() {
             Some(p) => p,
-            None => return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history"),
+            None => {
+                return Response::error(ErrorCode::NoHistory, "No previous wallpaper in history");
+            }
         }
     };
-    
+
     // 检测壁纸类型决定模式
     let detected_mode = detect_mode(&path);
-    
+
     // 应用壁纸（如果文件不存在，apply_wallpaper 会返回错误）
     if let Err(e) = apply_wallpaper(state, &path, detected_mode).await {
-        return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+        return Response::error(
+            ErrorCode::EngineError,
+            format!("Failed to apply wallpaper: {}", e),
+        );
     }
-    
+
+    state.playback_history.write().await.backward();
+
     // 更新模式和当前壁纸
     *state.engine.mode.write().await = detected_mode;
     *state.engine.current.write().await = Some(path.clone());
     sync_space_current_index(state, detected_mode, &path).await;
 
     publish_mode_changed_if_needed(event_bus, old_mode, detected_mode);
-    
+
     // 发布事件
-    event_bus.publish(Event::WallpaperChanged { path, mode: detected_mode, trigger });
-    
+    event_bus.publish(Event::WallpaperChanged {
+        path,
+        mode: detected_mode,
+        trigger,
+    });
+
     Response::ok()
 }
 
 /// 从文件扩展名检测壁纸模式
-fn detect_mode(path: &PathBuf) -> WallMode {
-    let ext = path.extension()
+fn detect_mode(path: &Path) -> WallMode {
+    let ext = path
+        .extension()
         .and_then(|e| e.to_str())
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
-    
+
     if matches!(ext.as_str(), "mp4" | "webm" | "mkv" | "avi" | "mov" | "gif") {
         WallMode::Video
     } else {
@@ -324,25 +388,32 @@ async fn handle_set_wallpaper(
 
     // 检测壁纸类型
     let mode = detect_mode(&path);
-    
+
     // 应用壁纸
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
-        return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+        return Response::error(
+            ErrorCode::EngineError,
+            format!("Failed to apply wallpaper: {}", e),
+        );
     }
-    
+
     // 追加到播放历史（非导航触发，截断光标之后的前进历史）
     state.playback_history.write().await.push(path.clone());
-    
+
     // 更新模式和当前壁纸
     *state.engine.mode.write().await = mode;
     *state.engine.current.write().await = Some(path.clone());
     sync_space_current_index(state, mode, &path).await;
 
     publish_mode_changed_if_needed(event_bus, old_mode, mode);
-    
+
     // 发布事件
-    event_bus.publish(Event::WallpaperChanged { path, mode, trigger });
-    
+    event_bus.publish(Event::WallpaperChanged {
+        path,
+        mode,
+        trigger,
+    });
+
     Response::ok()
 }
 
@@ -352,49 +423,68 @@ async fn handle_set_mode(
     event_bus: &EventBus,
     mode: WallMode,
 ) -> Response {
+    handle_set_mode_with_trigger(state, event_bus, mode, WallpaperTrigger::ModeSwitch).await
+}
+
+async fn handle_set_mode_with_trigger(
+    state: &Arc<SharedState>,
+    event_bus: &EventBus,
+    mode: WallMode,
+    trigger: WallpaperTrigger,
+) -> Response {
     let selection = selection_config_from_state(state).await;
     let old_mode = *state.engine.mode.read().await;
-    
+
     if old_mode == mode {
         return Response::ok(); // 模式未变
     }
-    
+
     // 先选好壁纸路径，但不提交模式变更
     let path = match mode {
         WallMode::Video => {
             let space = state.video_space.read().await;
-            space.current_index.and_then(|i| space.items.get(i).map(|w| w.path.clone()))
+            space
+                .current_index
+                .and_then(|i| space.items.get(i).map(|w| w.path.clone()))
         }
         WallMode::Image => {
             let space = state.image_space.read().await;
-            space.current_index.and_then(|i| space.items.get(i).map(|w| w.path.clone()))
+            space
+                .current_index
+                .and_then(|i| space.items.get(i).map(|w| w.path.clone()))
         }
     };
-    
+
     let path = match path {
         Some(p) => p,
         None => {
             // current_index 为 None（首次进入该模式），通过 select_next 选一张
             match mode {
                 WallMode::Video => {
-                    let mut space = state.video_space.write().await;
-                    match select_next_with_config(&mut space, selection) {
-                        Some(output) => space.items[output.index].path.clone(),
+                    let space = state.video_space.read().await;
+                    match preview_next_with_config(&space, selection) {
+                        Some(output) => space.items[output].path.clone(),
                         None => {
                             // 空间为空，仍然切换模式并发布事件
                             *state.engine.mode.write().await = mode;
-                            event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
+                            event_bus.publish(Event::ModeChanged {
+                                from: old_mode,
+                                to: mode,
+                            });
                             return Response::ok();
                         }
                     }
                 }
                 WallMode::Image => {
-                    let mut space = state.image_space.write().await;
-                    match select_next_with_config(&mut space, selection) {
-                        Some(output) => space.items[output.index].path.clone(),
+                    let space = state.image_space.read().await;
+                    match preview_next_with_config(&space, selection) {
+                        Some(output) => space.items[output].path.clone(),
                         None => {
                             *state.engine.mode.write().await = mode;
-                            event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
+                            event_bus.publish(Event::ModeChanged {
+                                from: old_mode,
+                                to: mode,
+                            });
                             return Response::ok();
                         }
                     }
@@ -402,25 +492,36 @@ async fn handle_set_mode(
             }
         }
     };
-    
+
     // 先应用壁纸，成功后才提交模式变更
     if let Err(e) = apply_wallpaper(state, &path, mode).await {
         // apply 失败 → 不提交模式，保持 old_mode
-        return Response::error(ErrorCode::EngineError, format!("Failed to apply wallpaper: {}", e));
+        return Response::error(
+            ErrorCode::EngineError,
+            format!("Failed to apply wallpaper: {}", e),
+        );
     }
-    
+
+    commit_selected(state, mode, &path).await;
     // 应用成功，提交模式变更
     *state.engine.mode.write().await = mode;
-    
+
     // 追加到播放历史（模式切换属于非导航触发）
     state.playback_history.write().await.push(path.clone());
-    
+
     *state.engine.current.write().await = Some(path.clone());
-    
+
     // 发布模式变更 + 壁纸切换事件
-    event_bus.publish(Event::ModeChanged { from: old_mode, to: mode });
-    event_bus.publish(Event::WallpaperChanged { path, mode, trigger: WallpaperTrigger::ModeSwitch });
-    
+    event_bus.publish(Event::ModeChanged {
+        from: old_mode,
+        to: mode,
+    });
+    event_bus.publish(Event::WallpaperChanged {
+        path,
+        mode,
+        trigger,
+    });
+
     Response::ok()
 }
 
@@ -442,11 +543,11 @@ async fn modify_lock_state(
     action: LockAction,
 ) -> Response {
     let current_mode = *state.engine.mode.read().await;
-    
+
     // 同时在两个空间中搜索并修改锁定状态
     let mut found_in_video = false;
     let mut found_in_image = false;
-    
+
     // 搜索 video_space
     {
         let mut space = state.video_space.write().await;
@@ -459,7 +560,7 @@ async fn modify_lock_state(
             found_in_video = true;
         }
     }
-    
+
     // 搜索 image_space
     {
         let mut space = state.image_space.write().await;
@@ -472,27 +573,30 @@ async fn modify_lock_state(
             found_in_image = true;
         }
     }
-    
+
     if !found_in_video && !found_in_image {
-        return Response::error(ErrorCode::NotFound, format!("Wallpaper not found in any space: {:?}", path));
+        return Response::error(
+            ErrorCode::NotFound,
+            format!("Wallpaper not found in any space: {:?}", path),
+        );
     }
-    
+
     // 立即保存锁定状态到持久化文件
     {
         let video_space = state.video_space.read().await;
         let image_space = state.image_space.read().await;
-        
+
         let weights = WeightsFile {
             version: 1,
             video: export_to_persisted(&video_space),
             image: export_to_persisted(&image_space),
         };
-        
+
         if let Err(e) = save_weights(&weights) {
             tracing::warn!("Failed to save lock state: {}", e);
         }
     }
-    
+
     // 发布空间更新事件
     // 如果找到的空间与当前模式一致，发布当前模式的事件
     // 否则发布找到壁纸的空间的事件
@@ -505,9 +609,9 @@ async fn modify_lock_state(
     } else {
         WallMode::Image
     };
-    
+
     publish_space_updated_event(state, event_bus, event_mode, SpaceUpdateReason::LockChange).await;
-    
+
     Response::ok()
 }
 
@@ -527,7 +631,7 @@ async fn publish_space_updated_event(
         let total = space.items.len();
         let locked = space.items.iter().filter(|w| w.locked).count();
         let in_cooldown = space.cooldown_queue.len();
-        let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+        let available = space.ready_count();
         (total, available, locked, in_cooldown)
     };
     event_bus.publish(Event::SpaceUpdated {
@@ -541,20 +645,12 @@ async fn publish_space_updated_event(
 }
 
 /// 锁定壁纸
-async fn handle_lock(
-    state: &Arc<SharedState>,
-    event_bus: &EventBus,
-    path: PathBuf,
-) -> Response {
+async fn handle_lock(state: &Arc<SharedState>, event_bus: &EventBus, path: PathBuf) -> Response {
     modify_lock_state(state, event_bus, path, LockAction::Lock).await
 }
 
 /// 解锁壁纸
-async fn handle_unlock(
-    state: &Arc<SharedState>,
-    event_bus: &EventBus,
-    path: PathBuf,
-) -> Response {
+async fn handle_unlock(state: &Arc<SharedState>, event_bus: &EventBus, path: PathBuf) -> Response {
     modify_lock_state(state, event_bus, path, LockAction::Unlock).await
 }
 
@@ -567,42 +663,6 @@ async fn handle_toggle_lock(
     modify_lock_state(state, event_bus, path, LockAction::Toggle).await
 }
 
-/// 获取配置键的当前值（用于事件通知）
-fn get_config_value(config: &lianwall_core::config::Config, key: &str) -> serde_json::Value {
-    use serde_json::json;
-    
-    match key {
-        // paths
-        "paths.mode" => json!(format!("{:?}", config.paths.mode)),
-        "paths.video_dir" => json!(config.paths.video_dir.display().to_string()),
-        "paths.image_dir" => json!(config.paths.image_dir.display().to_string()),
-        // video_engine
-        "video_engine.interval" => json!(config.video_engine.interval),
-        "video_engine.display" => json!(&config.video_engine.display),
-        "video_engine.mpvpaper_args" => json!(&config.video_engine.mpvpaper_args),
-        "video_engine.mpv_args" => json!(&config.video_engine.mpv_args),
-        // image_engine
-        "image_engine.interval" => json!(config.image_engine.interval),
-        "image_engine.outputs" => json!(&config.image_engine.outputs),
-        "image_engine.swww_args" => json!(&config.image_engine.swww_args),
-        // algorithm
-        "algorithm.strategy" => json!(&config.algorithm.strategy),
-        "algorithm.bias_lambda" => json!(config.algorithm.bias_lambda),
-        "algorithm.temperature" => json!(config.algorithm.temperature),
-        // vram
-        "vram.enabled" => json!(config.vram.enabled),
-        "vram.threshold_percent" => json!(config.vram.threshold_percent),
-        "vram.recovery_percent" => json!(config.vram.recovery_percent),
-        "vram.check_interval" => json!(config.vram.check_interval),
-        "vram.cooldown_seconds" => json!(config.vram.cooldown_seconds),
-        // daemon
-        "daemon.socket_path" => json!(config.daemon.socket_path.display().to_string()),
-        "daemon.pid_path" => json!(config.daemon.pid_path.display().to_string()),
-        "daemon.log_level" => json!(&config.daemon.log_level),
-        _ => serde_json::Value::Null,
-    }
-}
-
 /// 设置配置
 async fn handle_set_config(
     state: &Arc<SharedState>,
@@ -610,262 +670,42 @@ async fn handle_set_config(
     key: String,
     value: serde_json::Value,
 ) -> Response {
-    let mut config = state.config.write().await;
-    
-    // 先获取旧值
-    let old_value = get_config_value(&config, &key);
-    
-    match key.as_str() {
-        // ==================== paths ====================
-        "paths.mode" => {
-            if let Some(v) = value.as_str() {
-                match v {
-                    "Video" => config.paths.mode = WallMode::Video,
-                    "Image" => config.paths.mode = WallMode::Image,
-                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid mode value, expected 'Video' or 'Image'"),
-                }
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid mode value");
-            }
-        }
-        "paths.video_dir" => {
-            if let Some(v) = value.as_str() {
-                config.paths.video_dir = lianwall_core::config::expand_path(v);
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid video_dir value");
-            }
-        }
-        "paths.image_dir" => {
-            if let Some(v) = value.as_str() {
-                config.paths.image_dir = lianwall_core::config::expand_path(v);
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid image_dir value");
-            }
-        }
-        
-        // ==================== video_engine ====================
-        "video_engine.interval" => {
-            if let Some(v) = value.as_u64() {
-                if (v != 0 && v < 10) || v > 86400 {
-                    return Response::error(ErrorCode::InvalidRequest, "interval must be 0 (paused) or between 10 and 86400");
-                }
-                config.video_engine.interval = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid interval value");
-            }
-        }
-        "video_engine.display" => {
-            if let Some(v) = value.as_str() {
-                config.video_engine.display = v.to_string();
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid display value");
-            }
-        }
-        "video_engine.mpvpaper_args" => {
-            if let Some(arr) = value.as_array() {
-                let args: Result<Vec<String>, _> = arr.iter()
-                    .map(|v| v.as_str().map(|s| s.to_string()).ok_or("array item must be string"))
-                    .collect();
-                match args {
-                    Ok(a) => config.video_engine.mpvpaper_args = a,
-                    Err(e) => return Response::error(ErrorCode::InvalidRequest, e),
-                }
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid mpvpaper_args value, expected array");
-            }
-        }
-        "video_engine.mpv_args" => {
-            if let Some(arr) = value.as_array() {
-                let args: Result<Vec<String>, _> = arr.iter()
-                    .map(|v| v.as_str().map(|s| s.to_string()).ok_or("array item must be string"))
-                    .collect();
-                match args {
-                    Ok(a) => config.video_engine.mpv_args = a,
-                    Err(e) => return Response::error(ErrorCode::InvalidRequest, e),
-                }
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid mpv_args value, expected array");
-            }
-        }
-        
-        // ==================== image_engine ====================
-        "image_engine.interval" => {
-            if let Some(v) = value.as_u64() {
-                if (v != 0 && v < 10) || v > 86400 {
-                    return Response::error(ErrorCode::InvalidRequest, "interval must be 0 (paused) or between 10 and 86400");
-                }
-                config.image_engine.interval = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid interval value");
-            }
-        }
-        "image_engine.outputs" => {
-            if let Some(v) = value.as_str() {
-                config.image_engine.outputs = v.to_string();
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid outputs value");
-            }
-        }
-        "image_engine.swww_args" => {
-            if let Some(arr) = value.as_array() {
-                let args: Result<Vec<String>, _> = arr.iter()
-                    .map(|v| v.as_str().map(|s| s.to_string()).ok_or("array item must be string"))
-                    .collect();
-                match args {
-                    Ok(a) => config.image_engine.swww_args = a,
-                    Err(e) => return Response::error(ErrorCode::InvalidRequest, e),
-                }
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid swww_args value, expected array");
-            }
-        }
-
-        // ==================== algorithm ====================
-        "algorithm.strategy" => {
-            if let Some(v) = value.as_str() {
-                match v {
-                    "clockwise_biased_softmax" => {
-                        config.algorithm.strategy = lianwall_core::config::AlgorithmStrategy::ClockwiseBiasedSoftmax;
-                    }
-                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid strategy, expected: clockwise_biased_softmax"),
-                }
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid strategy value, expected string");
-            }
-        }
-        "algorithm.bias_lambda" => {
-            if let Some(v) = value.as_f64() {
-                if !(0.0..=4.0).contains(&v) {
-                    return Response::error(ErrorCode::InvalidRequest, "bias_lambda must be between 0.0 and 4.0");
-                }
-                config.algorithm.bias_lambda = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid bias_lambda value");
-            }
-        }
-        "algorithm.temperature" => {
-            if let Some(v) = value.as_f64() {
-                if !(0.01..=5.0).contains(&v) {
-                    return Response::error(ErrorCode::InvalidRequest, "temperature must be between 0.01 and 5.0");
-                }
-                config.algorithm.temperature = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid temperature value");
-            }
-        }
-        
-        // ==================== vram ====================
-        "vram.enabled" => {
-            if let Some(v) = value.as_bool() {
-                config.vram.enabled = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid enabled value, expected boolean");
-            }
-        }
-        "vram.threshold_percent" => {
-            if let Some(v) = value.as_f64() {
-                if v < 5.0 || v > 50.0 {
-                    return Response::error(ErrorCode::InvalidRequest, "threshold_percent must be between 5.0 and 50.0");
-                }
-                config.vram.threshold_percent = v as f32;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid threshold_percent value");
-            }
-        }
-        "vram.recovery_percent" => {
-            if let Some(v) = value.as_f64() {
-                if v < 20.0 || v > 80.0 {
-                    return Response::error(ErrorCode::InvalidRequest, "recovery_percent must be between 20.0 and 80.0");
-                }
-                config.vram.recovery_percent = v as f32;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid recovery_percent value");
-            }
-        }
-        "vram.check_interval" => {
-            if let Some(v) = value.as_u64() {
-                if v < 1 || v > 60 {
-                    return Response::error(ErrorCode::InvalidRequest, "check_interval must be between 1 and 60");
-                }
-                config.vram.check_interval = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid check_interval value");
-            }
-        }
-        "vram.cooldown_seconds" => {
-            if let Some(v) = value.as_u64() {
-                if v < 10 || v > 600 {
-                    return Response::error(ErrorCode::InvalidRequest, "cooldown_seconds must be between 10 and 600");
-                }
-                config.vram.cooldown_seconds = v;
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid cooldown_seconds value");
-            }
-        }
-        "vram.backend" => {
-            if let Some(v) = value.as_str() {
-                match v {
-                    "auto" => config.vram.backend = lianwall_core::config::VramBackend::Auto,
-                    "custom" => config.vram.backend = lianwall_core::config::VramBackend::Custom,
-                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid backend, expected: auto/custom"),
-                }
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid backend value, expected string");
-            }
-        }
-        "vram.custom_command" => {
-            if let Some(v) = value.as_str() {
-                config.vram.custom_command = v.to_string();
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid custom_command value, expected string");
-            }
-        }
-        
-        // ==================== daemon ====================
-        "daemon.socket_path" => {
-            if let Some(v) = value.as_str() {
-                config.daemon.socket_path = PathBuf::from(v);
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid socket_path value");
-            }
-        }
-        "daemon.pid_path" => {
-            if let Some(v) = value.as_str() {
-                config.daemon.pid_path = PathBuf::from(v);
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid pid_path value");
-            }
-        }
-        "daemon.log_level" => {
-            if let Some(v) = value.as_str() {
-                match v {
-                    "error" | "warn" | "info" | "debug" | "trace" => {
-                        config.daemon.log_level = v.to_string();
-                    }
-                    _ => return Response::error(ErrorCode::InvalidRequest, "Invalid log_level, expected: error/warn/info/debug/trace"),
-                }
-            } else {
-                return Response::error(ErrorCode::InvalidRequest, "Invalid log_level value");
-            }
-        }
-        
-        _ => {
-            return Response::error(ErrorCode::InvalidRequest, format!("Unknown config key: {}", key));
-        }
+    let mut candidate = state.get_config().await;
+    let old_value =
+        lianwall_core::config::get_value(&candidate, &key).unwrap_or(serde_json::Value::Null);
+    let value = match lianwall_core::config::set_value(&mut candidate, &key, value) {
+        Ok(value) => value,
+        Err(error) => return Response::error(ErrorCode::InvalidRequest, error),
+    };
+    // Temporary PauseRotation overrides must not leak into unrelated disk edits.
+    let mut config_to_save = candidate.clone();
+    if key != "video_engine.interval"
+        && let Some(saved) = *state.saved_video_interval.read().await
+    {
+        config_to_save.video_engine.interval = saved;
     }
-    
-    // 保存配置到文件
-    let config_to_save = config.clone();
-    drop(config); // 释放写锁，避免持有锁时进行 IO
-    
-    if let Err(e) = lianwall_core::config::update(lianwall_core::config::ConfigUpdateInput {
+    if key != "image_engine.interval"
+        && let Some(saved) = *state.saved_image_interval.read().await
+    {
+        config_to_save.image_engine.interval = saved;
+    }
+    if let Err(error) = lianwall_core::config::update(lianwall_core::config::ConfigUpdateInput {
         path: None,
         config: config_to_save,
     }) {
-        tracing::error!("Failed to save config: {}", e);
-        return Response::error(ErrorCode::ConfigError, format!("Failed to save config: {}", e));
+        return Response::error(
+            ErrorCode::ConfigError,
+            format!("Failed to save config: {error}"),
+        );
     }
-    
+    // Commit only after persistence succeeds; errors leave memory and events unchanged.
+    state.set_config(candidate).await;
+    if key == "video_engine.interval" {
+        *state.saved_video_interval.write().await = None;
+    } else if key == "image_engine.interval" {
+        *state.saved_image_interval.write().await = None;
+    }
+
     // 当前模式的 interval 被修改时,同步更新 next_switch:
     // scheduler 异步重建 timer 前,客户端查询必须读到新值
     let mode = *state.engine.mode.read().await;
@@ -873,9 +713,12 @@ async fn handle_set_config(
         (mode, key.as_str()),
         (WallMode::Video, "video_engine.interval") | (WallMode::Image, "image_engine.interval")
     );
-    if affects_rotation && let Some(v) = value.as_u64() {
+    if affects_rotation
+        && old_value != value
+        && let Some(v) = value.as_u64()
+    {
         let base = Instant::now();
-        let next = if v == 0 { base } else { base + Duration::from_secs(v) };
+        let next = (v > 0).then(|| base + Duration::from_secs(v));
         state.set_next_switch(next).await;
     }
 
@@ -885,16 +728,14 @@ async fn handle_set_config(
         old_value,
         new_value: value,
     });
-    
+
     tracing::info!("Config key '{}' updated and saved", key);
     Response::ok()
 }
 
 /// 重载配置
 async fn handle_reload_config(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
-    match lianwall_core::config::read(lianwall_core::config::ConfigReadInput {
-        path: None,
-    }) {
+    match lianwall_core::config::read(lianwall_core::config::ConfigReadInput { path: None }) {
         Ok(result) => {
             *state.config.write().await = result.config;
             // 磁盘配置为准,清除悬空的轮换暂停态
@@ -908,7 +749,10 @@ async fn handle_reload_config(state: &Arc<SharedState>, event_bus: &EventBus) ->
             });
             Response::ok()
         }
-        Err(e) => Response::error(ErrorCode::ConfigError, format!("Failed to reload config: {}", e)),
+        Err(e) => Response::error(
+            ErrorCode::ConfigError,
+            format!("Failed to reload config: {}", e),
+        ),
     }
 }
 
@@ -921,7 +765,10 @@ async fn handle_reload_hooks(state: &Arc<SharedState>) -> Response {
                 tracing::info!("Hooks reloaded: {} enabled", enabled);
                 Response::ok()
             }
-            Err(e) => Response::error(ErrorCode::ConfigError, format!("Failed to reload hooks: {}", e)),
+            Err(e) => Response::error(
+                ErrorCode::ConfigError,
+                format!("Failed to reload hooks: {}", e),
+            ),
         },
         None => Response::error(ErrorCode::InternalError, "Hook system not initialized"),
     }
@@ -935,48 +782,58 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
     let config = state.get_config().await;
     let state = Arc::clone(state);
     let event_bus = event_bus.clone();
-    
+
     // 在后台执行扫描
     tokio::spawn(async move {
         tracing::info!("Starting rescan...");
-        
+
         // 扫描视频目录
         let video_result = lianwall_core::wallpaper::scan_directory_async(
             config.paths.video_dir.clone(),
             true, // is_video
-        ).await;
-        
-        // 扫描图片目录  
+        )
+        .await;
+
+        // 扫描图片目录
         let image_result = lianwall_core::wallpaper::scan_directory_async(
             config.paths.image_dir.clone(),
             false, // is_video
-        ).await;
-        
+        )
+        .await;
+
         // 收集所有壁纸（用于时间点）
         let mut all_wallpapers = Vec::new();
-        let video_wallpapers = video_result.as_ref().map(|r| r.wallpapers.clone()).unwrap_or_default();
-        let image_wallpapers = image_result.as_ref().map(|r| r.wallpapers.clone()).unwrap_or_default();
+        let video_wallpapers = video_result
+            .as_ref()
+            .map(|r| r.wallpapers.clone())
+            .unwrap_or_default();
+        let image_wallpapers = image_result
+            .as_ref()
+            .map(|r| r.wallpapers.clone())
+            .unwrap_or_default();
         all_wallpapers.extend(video_wallpapers.clone());
         all_wallpapers.extend(image_wallpapers.clone());
-        
+
         // 保存原始扫描总数（过滤前）到 state，供 status 查询
         *state.scanned_counts.write().await = (video_wallpapers.len(), image_wallpapers.len());
-        
+
         // 更新时间点缓存（在过滤前收集）
         let time_points = lianwall_core::wallpaper::collect_time_points(&all_wallpapers);
         tracing::info!("Found {} time points after rescan", time_points.len());
         state.set_time_points(time_points).await;
-        
+
         // 根据当前时间过滤活跃壁纸
         let active_videos = lianwall_core::wallpaper::filter_active(&video_wallpapers);
         let active_images = lianwall_core::wallpaper::filter_active(&image_wallpapers);
-        
+
         tracing::info!(
             "Time filter: {}/{} videos active, {}/{} images active",
-            active_videos.len(), video_wallpapers.len(),
-            active_images.len(), image_wallpapers.len()
+            active_videos.len(),
+            video_wallpapers.len(),
+            active_images.len(),
+            image_wallpapers.len()
         );
-        
+
         // 更新视频空间（保留历史状态）
         {
             let active_videos_owned: Vec<_> = active_videos.into_iter().cloned().collect();
@@ -988,7 +845,7 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
                 0,
             );
         }
-        
+
         // 更新图片空间（保留历史状态）
         {
             let active_images_owned: Vec<_> = active_images.into_iter().cloned().collect();
@@ -1000,14 +857,14 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
                 0,
             );
         }
-        
+
         // 发布完成事件（分别发布视频和图片空间的更新）
         {
             let video_space = state.video_space.read().await;
             let total = video_space.items.len();
             let locked = video_space.items.iter().filter(|w| w.locked).count();
             let in_cooldown = video_space.cooldown_queue.len();
-            let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+            let available = video_space.ready_count();
             event_bus.publish(Event::SpaceUpdated {
                 reason: SpaceUpdateReason::Rescan,
                 mode: WallMode::Video,
@@ -1017,13 +874,13 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
                 in_cooldown,
             });
         }
-        
+
         {
             let image_space = state.image_space.read().await;
             let total = image_space.items.len();
             let locked = image_space.items.iter().filter(|w| w.locked).count();
             let in_cooldown = image_space.cooldown_queue.len();
-            let available = total.saturating_sub(locked).saturating_sub(in_cooldown);
+            let available = image_space.ready_count();
             event_bus.publish(Event::SpaceUpdated {
                 reason: SpaceUpdateReason::Rescan,
                 mode: WallMode::Image,
@@ -1033,11 +890,11 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
                 in_cooldown,
             });
         }
-        
+
         // 检查当前壁纸是否仍在空间中，如果不在则自动选择新壁纸
         let current_mode = *state.engine.mode.read().await;
         let current_path = state.engine.current.read().await.clone();
-        
+
         let current_valid = if let Some(ref path) = current_path {
             let space = if current_mode == WallMode::Video {
                 state.video_space.read().await
@@ -1048,7 +905,7 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
         } else {
             false
         };
-        
+
         if !current_valid && current_path.is_some() {
             // 当前壁纸不在新空间中，但不清除 engine.current
             // 这样屏幕会继续显示旧壁纸，等待下次 interval 或用户手动 next
@@ -1058,256 +915,33 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
             );
             // current_index 在 rebuild_space 中已经是 None 了（因为找不到该路径）
         }
-        
+
         let video_count = state.video_space.read().await.len();
         let image_count = state.image_space.read().await.len();
-        tracing::info!("Rescan complete: {} videos, {} images", video_count, image_count);
+        tracing::info!(
+            "Rescan complete: {} videos, {} images",
+            video_count,
+            image_count
+        );
     });
-    
+
     // 立即返回
     Response::ok()
 }
 
 /// 关闭 daemon
-async fn handle_shutdown(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
+async fn handle_shutdown(state: &Arc<SharedState>, _event_bus: &EventBus) -> Response {
     tracing::info!("Shutdown requested");
-    
-    // 发布关闭事件
-    event_bus.publish(Event::ShuttingDown);
-    
-    // 停止引擎进程
-    state.engine.swww_daemon.kill().await;
-    state.engine.mpvpaper.kill().await;
-    
+
+    // main owns the shared hook/persistence/engine cleanup path.
     // 触发关闭信号
     state.trigger_shutdown();
-    
+
     Response::ok()
 }
 
-/// 首帧检测超时
-///
-/// 新 mpvpaper 启动后,从其输出检测首帧渲染再杀旧引擎;
-/// 输出被禁用(--quiet 等)导致检测不到时,超时兜底。
-const FIRST_FRAME_TIMEOUT: Duration = Duration::from_millis(2000);
-
-/// mpv 输出行是否表明首帧已渲染(状态行 "V: ..." 或 VO 初始化行)
-fn is_first_frame_line(line: &str) -> bool {
-    line.contains("VO:") || line.contains("V: ")
-}
-
-/// 持续 drain mpvpaper 的输出管道
-///
-/// 必须有人读管道,否则 mpv 状态行写满缓冲区后 mpvpaper 阻塞。
-/// 检测到首帧行时通过 watch 通知一次。
-fn spawn_output_drain<T>(pipe: Option<T>, first_frame_tx: watch::Sender<bool>)
-where
-    T: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    let Some(pipe) = pipe else { return };
-    tokio::spawn(async move {
-        let mut lines = BufReader::new(pipe).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            if !*first_frame_tx.borrow() && is_first_frame_line(&line) {
-                let _ = first_frame_tx.send(true);
-                tracing::debug!("mpvpaper first frame detected: {}", line.trim());
-            }
-        }
-    });
-}
-
-/// 等待首帧渲染信号,超时兜底
-async fn wait_first_frame(first_frame_tx: &watch::Sender<bool>) -> bool {
-    let mut rx = first_frame_tx.subscribe();
-    tokio::time::timeout(FIRST_FRAME_TIMEOUT, rx.wait_for(|v| *v))
-        .await
-        .is_ok()
-}
-
-/// 应用壁纸
-///
-/// 注意：此函数会检查文件存在性，如果文件不存在会返回错误
-async fn apply_wallpaper(
-    state: &SharedState,
-    path: &PathBuf,
-    mode: WallMode,
-) -> anyhow::Result<()> {
-    // 检查文件是否存在
-    if !path.exists() {
-        anyhow::bail!("Wallpaper file not found: {:?}", path);
-    }
-    
-    let config = state.get_config().await;
-    
-    // 记录切换前的引擎状态，用于判断是否跨引擎切换
-    let was_swww_running = state.engine.swww_daemon.is_running().await;
-    let was_mpvpaper_running = state.engine.mpvpaper.is_running().await;
-    
-    match mode {
-        WallMode::Video => {
-            // 优先走 IPC 热切换:mpvpaper 常驻时通过 mpv IPC 发 loadfile,避免冷启动
-            let ipc_socket = &config.video_engine.ipc_socket;
-            if !ipc_socket.is_empty() && was_mpvpaper_running {
-                match ipc::loadfile(ipc_socket, path).await {
-                    Ok(()) => {
-                        tracing::info!("Switched video wallpaper via mpv IPC: {:?}", path);
-                        // 换片完成。若 swww 残留(异常情况),直接清理
-                        if was_swww_running {
-                            state.engine.swww_daemon.kill().await;
-                        }
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        tracing::warn!("mpv IPC loadfile failed, falling back to cold start: {}", e);
-                    }
-                }
-            }
-
-            // 启动 mpvpaper（先启动新引擎）
-            tracing::info!("Applying video wallpaper: {:?}", path);
-
-            let mut cmd = tokio::process::Command::new("mpvpaper");
-
-            // 添加 mpvpaper 自身参数
-            for arg in &config.video_engine.mpvpaper_args {
-                cmd.arg(arg);
-            }
-
-            // 添加 mpv 参数（通过 -o 传递）
-            let mut mpv_args = config.video_engine.mpv_args.clone();
-            // 注入 IPC socket,供后续热切换使用;用户已手动配置则不重复注入
-            if !ipc_socket.is_empty()
-                && !mpv_args.iter().any(|a| a.contains("input-ipc-server"))
-            {
-                mpv_args.push(format!("--input-ipc-server={}", ipc_socket));
-            }
-            // 注入过渡滤镜;用户已在 mpv_args 手动配置 vf 则不重复注入
-            if config.video_engine.transition == VideoTransition::Fade
-                && !mpv_args.iter().any(|a| a.contains("vf"))
-            {
-                mpv_args.push("--vf=lavfi=[fade=t=in:st=0:d=0.4]".to_string());
-            }
-            if !mpv_args.is_empty() {
-                let mpv_args_str = mpv_args.join(" ");
-                cmd.arg("-o").arg(&mpv_args_str);
-            }
-            
-            // 显示器和视频路径
-            cmd.arg(&config.video_engine.display);
-            cmd.arg(path);
-            
-            // 捕获输出:用于检测首帧渲染;drain task 持续读取,防止管道写满阻塞 mpvpaper
-            cmd.stdout(std::process::Stdio::piped());
-            cmd.stderr(std::process::Stdio::piped());
-
-            match cmd.spawn() {
-                Ok(mut child) => {
-                    let (first_frame_tx, _) = watch::channel(false);
-                    spawn_output_drain(child.stdout.take(), first_frame_tx.clone());
-                    spawn_output_drain(child.stderr.take(), first_frame_tx.clone());
-
-                    if was_mpvpaper_running {
-                        // 同引擎切换 (Video→Video):
-                        // 等新 mpvpaper 真正渲染首帧再杀旧的:
-                        // 过早杀会黑屏闪烁,过晚杀则双 4K 解码导致卡顿
-                        let old_child = state.engine.mpvpaper.take().await;
-                        state.engine.mpvpaper.set_without_kill(child).await;
-
-                        if !wait_first_frame(&first_frame_tx).await {
-                            tracing::debug!("First frame not detected within {:?}, killing old mpvpaper anyway", FIRST_FRAME_TIMEOUT);
-                        }
-
-                        if let Some(mut old) = old_child {
-                            let _ = old.kill().await;
-                            let _ = old.wait().await;
-                            tracing::debug!("Killed old mpvpaper after new one rendered first frame");
-                        }
-                    } else {
-                        // 无旧 mpvpaper,直接设置
-                        state.engine.mpvpaper.set_without_kill(child).await;
-                    }
-
-                    // 跨引擎切换：等 mpvpaper 渲染首帧后再停止 swww，避免黑屏闪烁
-                    if was_swww_running {
-                        wait_first_frame(&first_frame_tx).await;
-                        state.engine.swww_daemon.kill().await;
-                        tracing::debug!("Killed swww-daemon after mpvpaper rendered first frame");
-                    }
-                }
-                Err(e) => {
-                    anyhow::bail!("Failed to start mpvpaper: {}", e);
-                }
-            }
-        }
-        WallMode::Image => {
-            // 检测可用的图片引擎（awww 优先，降级到 swww）
-            let image_bin = detect_image_bin().await
-                .ok_or_else(|| anyhow::anyhow!("Neither awww nor legacy swww found"))?;
-            let daemon_bin = format!("{}-daemon", image_bin);
-
-            // 确保 daemon 运行（先启动新引擎）
-            if !state.engine.swww_daemon.is_running().await {
-                tracing::info!("Starting {}...", daemon_bin);
-
-                // 先杀死系统中可能存在的旧 daemon
-                let _ = tokio::process::Command::new("pkill")
-                    .arg("-x")
-                    .arg(&daemon_bin)
-                    .status()
-                    .await;
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-                // 启动新的 daemon
-                let child = tokio::process::Command::new(&daemon_bin)
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()?;
-
-                state.engine.swww_daemon.set(child).await;
-
-                // 等待 daemon 初始化
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-            }
-
-            // 设置壁纸
-            tracing::info!("Applying image wallpaper: {:?}", path);
-
-            let mut cmd = tokio::process::Command::new(&image_bin);
-            cmd.arg("img");
-
-            // 添加目标显示器
-            if !config.image_engine.outputs.is_empty() {
-                cmd.arg("--outputs").arg(&config.image_engine.outputs);
-            }
-
-            // 添加 swww/awww 参数
-            for arg in &config.image_engine.swww_args {
-                cmd.arg(arg);
-            }
-
-            // 图片路径
-            cmd.arg(path);
-
-            // 捕获 stderr
-            cmd.stderr(std::process::Stdio::piped());
-
-            let output = cmd.output().await?;
-
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                anyhow::bail!("{} img failed: {}", image_bin, stderr.trim());
-            }
-
-            // 跨引擎切换：img 成功后延迟停止 mpvpaper，确保合成器完成帧切换
-            if was_mpvpaper_running {
-                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                state.engine.mpvpaper.kill().await;
-                tracing::debug!("Killed mpvpaper after {} image applied and stabilized", image_bin);
-            }
-        }
-    }
-    
-    Ok(())
+async fn apply_wallpaper(state: &SharedState, path: &Path, mode: WallMode) -> anyhow::Result<()> {
+    crate::backend::apply(state, path, mode).await
 }
 
 /// 手动覆盖 VRAM 状态并立即生效
@@ -1316,75 +950,17 @@ async fn handle_vram_override(
     event_bus: &EventBus,
     action: VramOverrideAction,
 ) -> Response {
-    let selection = selection_config_from_state(state).await;
-    match action {
-        VramOverrideAction::Downgrade => {
-            *state.vram_override.write().await = Some(true);
-            let old_mode = *state.engine.mode.read().await;
-            if old_mode != WallMode::Image {
-                *state.engine.mode.write().await = WallMode::Image;
-                event_bus.publish(Event::ModeChanged {
-                    from: old_mode,
-                    to: WallMode::Image,
-                });
-                // 选取图片模式壁纸并应用
-                let path = {
-                    let mut space = state.image_space.write().await;
-                    let current = space.current_index
-                        .and_then(|i| space.items.get(i).map(|w| w.path.clone()));
-                    current.or_else(|| {
-                        select_next_with_config(&mut space, selection)
-                            .map(|output| space.items[output.index].path.clone())
-                    })
-                };
-                if let Some(p) = path {
-                    let _ = apply_wallpaper(state, &p, WallMode::Image).await;
-                    *state.engine.current.write().await = Some(p.clone());
-                    state.playback_history.write().await.push(p.clone());
-                    event_bus.publish(Event::WallpaperChanged {
-                        path: p,
-                        mode: WallMode::Image,
-                        trigger: WallpaperTrigger::VramDowngrade,
-                    });
-                }
-            }
-            tracing::warn!("VRAM manual override: forced downgrade to Image mode");
-        }
-        VramOverrideAction::Upgrade => {
-            *state.vram_override.write().await = Some(false);
-            let old_mode = *state.engine.mode.read().await;
-            if old_mode != WallMode::Video {
-                *state.engine.mode.write().await = WallMode::Video;
-                event_bus.publish(Event::ModeChanged {
-                    from: old_mode,
-                    to: WallMode::Video,
-                });
-                let path = {
-                    let mut space = state.video_space.write().await;
-                    let current = space.current_index
-                        .and_then(|i| space.items.get(i).map(|w| w.path.clone()));
-                    current.or_else(|| {
-                        select_next_with_config(&mut space, selection)
-                            .map(|output| space.items[output.index].path.clone())
-                    })
-                };
-                if let Some(p) = path {
-                    let _ = apply_wallpaper(state, &p, WallMode::Video).await;
-                    *state.engine.current.write().await = Some(p.clone());
-                    state.playback_history.write().await.push(p.clone());
-                    event_bus.publish(Event::WallpaperChanged {
-                        path: p,
-                        mode: WallMode::Video,
-                        trigger: WallpaperTrigger::VramUpgrade,
-                    });
-                }
-            }
-            tracing::info!("VRAM manual override: forced upgrade to Video mode");
-        }
+    let (mode, trigger, value) = match action {
         VramOverrideAction::Reset => {
             *state.vram_override.write().await = None;
-            tracing::info!("VRAM manual override cleared, resuming auto detection");
+            return Response::ok();
         }
+        VramOverrideAction::Downgrade => (WallMode::Image, WallpaperTrigger::VramDowngrade, true),
+        VramOverrideAction::Upgrade => (WallMode::Video, WallpaperTrigger::VramUpgrade, false),
+    };
+    let response = handle_set_mode_with_trigger(state, event_bus, mode, trigger).await;
+    if matches!(response, Response::Ok) {
+        *state.vram_override.write().await = Some(value);
     }
-    Response::ok()
+    response
 }

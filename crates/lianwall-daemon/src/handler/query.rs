@@ -4,12 +4,12 @@
 
 use std::sync::Arc;
 
-use lianwall_core::socket::{
-    Request, Response, StatusInfo, ConfigSnapshot, ConfigKeyInfo, ConfigConstraints,
-    SpaceSnapshot, WallpaperPoint, TimeScheduleInfo, ModeSchedule, WallpaperTimeSegment,
-    TimeRangeInfo, ErrorCode, PROTOCOL_VERSION, RotationStatusInfo,
-};
 use lianwall_core::config::WallMode;
+use lianwall_core::socket::{
+    ConfigConstraints, ConfigKeyInfo, ConfigSnapshot, ErrorCode, ModeSchedule, PROTOCOL_VERSION,
+    Request, Response, RotationStatusInfo, SpaceSnapshot, StatusInfo, TimeRangeInfo,
+    TimeScheduleInfo, WallpaperPoint, WallpaperTimeSegment,
+};
 use lianwall_core::wallpaper::{TimePoint, WallpaperSpace};
 
 use crate::state::SharedState;
@@ -21,17 +21,17 @@ pub async fn handle_query(state: &Arc<SharedState>, request: Request) -> Respons
             uptime_secs: state.uptime_secs(),
             protocol_version: PROTOCOL_VERSION,
         },
-        
+
         Request::GetStatus => get_status(state).await,
-        
+
         Request::GetConfig { key } => get_config(state, key).await,
-        
+
         Request::GetSpace { mode } => get_space(state, mode).await,
-        
+
         Request::GetTimeInfo => get_time_info(state).await,
 
         Request::GetRotationStatus => get_rotation_status(state).await,
-        
+
         // 其他请求不应该到这里
         _ => Response::error(ErrorCode::InvalidRequest, "Not a query request"),
     }
@@ -45,41 +45,41 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
 
     let mode = engine.mode;
     let summary = state.get_space_summary(mode).await;
-    
-    let current_filename = engine.current.as_ref().and_then(|p| {
-        p.file_name().map(|s| s.to_string_lossy().to_string())
-    });
-    
+
+    let current_filename = engine
+        .current
+        .as_ref()
+        .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()));
+
     let engine_name = if engine.mpvpaper_running {
         "mpvpaper"
     } else if engine.swww_daemon_running {
-        "awww"
+        engine.image_bin.as_deref().unwrap_or("awww")
     } else {
         "none"
     };
-    
-    let available_count = (summary.total - summary.locked_count)
-        .saturating_sub(summary.cooldown_len);
-    
+
+    let available_count = summary.available_count;
+
     // 获取原始扫描总数（过滤前）
     let (video_scanned, image_scanned) = *state.scanned_counts.read().await;
-    
+
     // 获取 VRAM 信息
     let (vram_used_mb, vram_total_mb, vram_degraded) = match &gpu_snapshot.vram_info {
         Some(info) => (info.used_mb, info.total_mb, gpu_snapshot.degraded),
         None => (0, 0, false),
     };
     let vram_override = *state.vram_override.read().await;
-    
+
     // 计算下一个时间点
     let now = lianwall_core::wallpaper::TimePoint::now();
     let next_tp = lianwall_core::wallpaper::next_key_point(&now, &time_points);
     let next_time_point = next_tp.map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
     let time_points_count = time_points.len();
-    
+
     // 获取下次切换的剩余秒数（真实倒计时）
     let next_switch_secs = state.next_switch_remaining_secs().await;
-    
+
     Response::Status(StatusInfo {
         mode,
         current: engine.current.clone(),
@@ -97,7 +97,7 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         protocol_version: PROTOCOL_VERSION,
         next_time_point,
         time_points_count,
-        next_switch_secs: Some(next_switch_secs),
+        next_switch_secs,
     })
 }
 
@@ -108,8 +108,13 @@ async fn get_rotation_status(state: &Arc<SharedState>) -> Response {
         WallMode::Video => *state.saved_video_interval.read().await,
         WallMode::Image => *state.saved_image_interval.read().await,
     };
+    let config = state.get_config().await;
+    let interval = match mode {
+        WallMode::Video => config.video_engine.interval,
+        WallMode::Image => config.image_engine.interval,
+    };
     Response::RotationStatus(RotationStatusInfo {
-        paused: saved.is_some(),
+        paused: interval == 0,
         mode,
         saved_interval: saved,
     })
@@ -118,54 +123,21 @@ async fn get_rotation_status(state: &Arc<SharedState>) -> Response {
 /// 获取配置
 async fn get_config(state: &Arc<SharedState>, key: Option<String>) -> Response {
     let config = state.get_config().await;
-    
+
     if let Some(key) = key {
         // 获取特定配置项
-        let value = match key.as_str() {
-            // paths
-            "paths.mode" => serde_json::to_value(&config.paths.mode).ok(),
-            "paths.video_dir" => serde_json::to_value(&config.paths.video_dir).ok(),
-            "paths.image_dir" => serde_json::to_value(&config.paths.image_dir).ok(),
-            // video_engine
-            "video_engine.interval" => serde_json::to_value(config.video_engine.interval).ok(),
-            "video_engine.display" => serde_json::to_value(&config.video_engine.display).ok(),
-            "video_engine.mpvpaper_args" => serde_json::to_value(&config.video_engine.mpvpaper_args).ok(),
-            "video_engine.mpv_args" => serde_json::to_value(&config.video_engine.mpv_args).ok(),
-            "video_engine.ipc_socket" => serde_json::to_value(&config.video_engine.ipc_socket).ok(),
-            "video_engine.transition" => serde_json::to_value(config.video_engine.transition).ok(),
-            // image_engine
-            "image_engine.interval" => serde_json::to_value(config.image_engine.interval).ok(),
-            "image_engine.outputs" => serde_json::to_value(&config.image_engine.outputs).ok(),
-            "image_engine.swww_args" => serde_json::to_value(&config.image_engine.swww_args).ok(),
-            // algorithm
-            "algorithm.strategy" => serde_json::to_value(&config.algorithm.strategy).ok(),
-            "algorithm.bias_lambda" => serde_json::to_value(config.algorithm.bias_lambda).ok(),
-            "algorithm.temperature" => serde_json::to_value(config.algorithm.temperature).ok(),
-            // vram
-            "vram.enabled" => serde_json::to_value(config.vram.enabled).ok(),
-            "vram.backend" => serde_json::to_value(&config.vram.backend).ok(),
-            "vram.custom_command" => serde_json::to_value(&config.vram.custom_command).ok(),
-            "vram.threshold_percent" => serde_json::to_value(config.vram.threshold_percent).ok(),
-            "vram.recovery_percent" => serde_json::to_value(config.vram.recovery_percent).ok(),
-            "vram.check_interval" => serde_json::to_value(config.vram.check_interval).ok(),
-            "vram.cooldown_seconds" => serde_json::to_value(config.vram.cooldown_seconds).ok(),
-            // daemon
-            "daemon.socket_path" => serde_json::to_value(&config.daemon.socket_path).ok(),
-            "daemon.pid_path" => serde_json::to_value(&config.daemon.pid_path).ok(),
-            "daemon.log_level" => serde_json::to_value(&config.daemon.log_level).ok(),
-            // 兼容旧的 key
-            "mode" => serde_json::to_value(&config.paths.mode).ok(),
-            "vram.threshold" => serde_json::to_value(config.vram.threshold_percent).ok(),
-            _ => None,
-        };
-        
+        let value = lianwall_core::config::get_value(&config, &key);
+
         match value {
             Some(v) => Response::Config(ConfigSnapshot {
                 key: Some(key),
                 value: v,
                 modifiable_keys: None,
             }),
-            None => Response::error(ErrorCode::InvalidRequest, format!("Unknown config key: {}", key)),
+            None => Response::error(
+                ErrorCode::InvalidRequest,
+                format!("Unknown config key: {}", key),
+            ),
         }
     } else {
         // 获取所有配置
@@ -187,15 +159,12 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
         ConfigKeyInfo {
             key: "paths.mode".to_string(),
             value_type: "string".to_string(),
-            description: "运行模式: Video (动态壁纸) 或 Image (静态壁纸)".to_string(),
+            description: "启动默认模式: Video 或 Image；当前会话使用 SetMode 切换".to_string(),
             default: serde_json::json!("Video"),
             constraints: Some(ConfigConstraints {
                 min: None,
                 max: None,
-                enum_values: Some(vec![
-                    "Video".to_string(),
-                    "Image".to_string(),
-                ]),
+                enum_values: Some(vec!["Video".to_string(), "Image".to_string()]),
                 pattern: None,
             }),
         },
@@ -213,7 +182,6 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
             default: serde_json::json!("~/Pictures/lianwall"),
             constraints: None,
         },
-        
         // ==================== video_engine ====================
         ConfigKeyInfo {
             key: "video_engine.interval".to_string(),
@@ -254,7 +222,6 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
             ]),
             constraints: None,
         },
-        
         // ==================== image_engine ====================
         ConfigKeyInfo {
             key: "image_engine.interval".to_string(),
@@ -276,9 +243,9 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
             constraints: None,
         },
         ConfigKeyInfo {
-            key: "image_engine.swww_args".to_string(),
+            key: "image_engine.awww_args".to_string(),
             value_type: "array".to_string(),
-            description: "透传给 awww img 的参数（内部键名保持 swww_args）".to_string(),
+            description: "透传给 awww img 的参数".to_string(),
             default: serde_json::json!([
                 "--transition-type=outer",
                 "--transition-duration=2.0",
@@ -288,7 +255,6 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
             ]),
             constraints: None,
         },
-
         // ==================== algorithm ====================
         ConfigKeyInfo {
             key: "algorithm.strategy".to_string(),
@@ -326,7 +292,6 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
                 pattern: None,
             }),
         },
-        
         // ==================== vram ====================
         ConfigKeyInfo {
             key: "vram.enabled".to_string(),
@@ -350,7 +315,9 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
         ConfigKeyInfo {
             key: "vram.custom_command".to_string(),
             value_type: "string".to_string(),
-            description: "自定义显存查询命令（backend=custom 时使用），stdout 需包含 used_mb=N 和 total_mb=N".to_string(),
+            description:
+                "自定义显存查询命令（backend=custom 时使用），stdout 需包含 used_mb=N 和 total_mb=N"
+                    .to_string(),
             default: serde_json::json!(""),
             constraints: None,
         },
@@ -402,7 +369,6 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
                 pattern: None,
             }),
         },
-        
         // ==================== daemon ====================
         ConfigKeyInfo {
             key: "daemon.socket_path".to_string(),
@@ -443,31 +409,38 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
 async fn get_space(state: &Arc<SharedState>, mode: Option<WallMode>) -> Response {
     let engine = state.get_engine_state().await;
     let mode = mode.unwrap_or(engine.mode);
-    
+
     let space = if mode == WallMode::Video {
         state.get_video_space().await
     } else {
         state.get_image_space().await
     };
-    
-    let items: Vec<WallpaperPoint> = space.items.iter().enumerate().map(|(i, w)| {
-        let filename = w.path.file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
-        let in_cooldown = space.cooldown_queue.contains(&i);
-        let is_current = space.current_index == Some(i);
-        
-        WallpaperPoint {
-            index: i,
-            filename,
-            path: w.path.clone(),
-            angle: w.angle,
-            locked: w.locked,
-            in_cooldown,
-            is_current,
-        }
-    }).collect();
-    
+
+    let items: Vec<WallpaperPoint> = space
+        .items
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let filename = w
+                .path
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let in_cooldown = space.cooldown_queue.contains(&i);
+            let is_current = space.current_index == Some(i);
+
+            WallpaperPoint {
+                index: i,
+                filename,
+                path: w.path.clone(),
+                angle: w.angle,
+                locked: w.locked,
+                in_cooldown,
+                is_current,
+            }
+        })
+        .collect();
+
     Response::Space(SpaceSnapshot {
         mode,
         items,
@@ -483,23 +456,33 @@ async fn get_time_info(state: &Arc<SharedState>) -> Response {
     let image_space = state.get_image_space().await;
     let time_points = state.get_time_points().await;
     let (video_scanned, image_scanned) = *state.scanned_counts.read().await;
-    
+
     let current_time = chrono::Local::now().format("%H:%M").to_string();
     let now = TimePoint::now();
-    
+
     // 构建时间点列表（排序后的字符串）
     let time_points_vec: Vec<String> = time_points
         .iter()
         .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute))
         .collect();
-    
+
     // 计算下一个时间点（复用 core 库函数）
     let next_time_point = lianwall_core::wallpaper::next_key_point(&now, &time_points)
         .map(|tp| format!("{:02}:{:02}", tp.hour, tp.minute));
-    
-    let video_schedule = build_mode_schedule(&video_space, &time_points_vec, &next_time_point, video_scanned);
-    let image_schedule = build_mode_schedule(&image_space, &time_points_vec, &next_time_point, image_scanned);
-    
+
+    let video_schedule = build_mode_schedule(
+        &video_space,
+        &time_points_vec,
+        &next_time_point,
+        video_scanned,
+    );
+    let image_schedule = build_mode_schedule(
+        &image_space,
+        &time_points_vec,
+        &next_time_point,
+        image_scanned,
+    );
+
     Response::TimeInfo(TimeScheduleInfo {
         current_time,
         video_schedule,
@@ -518,12 +501,14 @@ fn build_mode_schedule(
         .items
         .iter()
         .map(|item| {
-            let filename = item.path.file_name()
+            let filename = item
+                .path
+                .file_name()
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_default();
-            
+
             let all_day = item.time_constraints.is_empty();
-            
+
             let active_ranges: Vec<TimeRangeInfo> = if all_day {
                 vec![] // 全天可用时不返回具体范围
             } else {
@@ -536,7 +521,7 @@ fn build_mode_schedule(
                     })
                     .collect()
             };
-            
+
             WallpaperTimeSegment {
                 filename,
                 path: item.path.clone(),
@@ -545,7 +530,7 @@ fn build_mode_schedule(
             }
         })
         .collect();
-    
+
     ModeSchedule {
         scanned_count,
         active_count: space.items.iter().filter(|w| !w.locked).count(),

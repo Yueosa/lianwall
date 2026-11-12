@@ -44,7 +44,7 @@ fn expand_path_buf(path: &PathBuf) -> PathBuf {
 }
 
 /// 归一化配置中的路径（扩展 `~`）
-fn normalize_paths(config: &mut Config) {
+pub(super) fn normalize_paths(config: &mut Config) {
     config.paths.video_dir = expand_path_buf(&config.paths.video_dir);
     config.paths.image_dir = expand_path_buf(&config.paths.image_dir);
     config.daemon.socket_path = expand_path_buf(&config.daemon.socket_path);
@@ -67,7 +67,7 @@ fn save_config(path: &PathBuf, config: &Config) -> Result<(), ConfigError> {
         source: e,
     })?;
 
-    fs::write(path, content).map_err(|e| ConfigError::Io {
+    crate::filesystem::atomic_write(path, content).map_err(|e| ConfigError::Io {
         operation: "write".to_string(),
         path: path.clone(),
         source: e,
@@ -121,12 +121,25 @@ pub fn read(input: ConfigReadInput) -> Result<ConfigReadOutput, ConfigError> {
         source: e,
     })?;
 
-    let mut config: Config = toml::from_str(&content).map_err(|e| ConfigError::Parse {
-        path: path.clone(),
-        source: e,
-    })?;
+    let migrated = super::migration::prepare(&path, &content)?;
+    let mut config: Config =
+        toml::from_str(migrated.as_deref().unwrap_or(&content)).map_err(|e| {
+            ConfigError::Parse {
+                path: path.clone(),
+                source: e,
+            }
+        })?;
     normalize_paths(&mut config);
 
+    // Validate the whole document before touching disk. Read-only deployments remain
+    // usable in memory; later updates must still secure a backup before saving.
+    if let Some(migrated) = migrated {
+        if let Err(error) = super::migration::persist(&path, &content, &migrated) {
+            tracing::warn!(%error, "Using migrated configuration in memory; disk migration pending");
+        } else {
+            tracing::info!(path = %path.display(), "Migrated image_engine.swww_args to awww_args");
+        }
+    }
     Ok(ConfigReadOutput { path, config })
 }
 
@@ -147,6 +160,14 @@ pub fn update(input: ConfigUpdateInput) -> Result<ConfigUpdateOutput, ConfigErro
             path: path.clone(),
             source: e,
         })?;
+        if let Some(migrated) = super::migration::prepare(&path, &old_content)? {
+            // Do not silently erase legacy settings if the backup could not be secured.
+            let _: Config = toml::from_str(&migrated).map_err(|source| ConfigError::Parse {
+                path: path.clone(),
+                source,
+            })?;
+            super::migration::persist(&path, &old_content, &migrated)?;
+        }
         old_content != new_content
     } else {
         true

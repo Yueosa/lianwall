@@ -6,19 +6,19 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{anyhow, Context as _};
+use anyhow::{Context as _, anyhow};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 
 /// IPC 操作超时
-const IPC_TIMEOUT: Duration = Duration::from_secs(2);
+const IPC_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// loadfile 请求使用的 request_id（用于跳过 mpv 主动推送的 event 行）
 const LOADFILE_REQUEST_ID: u64 = 1;
 
 /// 向 mpv IPC socket 发送 loadfile 换片
 ///
-/// 返回 Ok(()) 表示 mpv 接受换片,Err 表示调用方应回退到冷启动路径
+/// 返回 Ok(()) 表示 mpv 接受命令并发出 file-loaded,Err 表示调用方应回退到冷启动路径
 pub async fn loadfile(socket_path: &str, video_path: &Path) -> anyhow::Result<()> {
     tokio::time::timeout(IPC_TIMEOUT, loadfile_inner(socket_path, video_path))
         .await
@@ -30,7 +30,7 @@ async fn loadfile_inner(socket_path: &str, video_path: &Path) -> anyhow::Result<
     let (reader, mut writer) = stream.into_split();
 
     let request = serde_json::json!({
-        "command": ["loadfile", video_path.to_string_lossy(), "replace"],
+        "command": ["loadfile", video_path.to_str().context("mpv IPC requires a UTF-8 path")?, "replace"],
         "request_id": LOADFILE_REQUEST_ID,
     });
     let mut payload = serde_json::to_vec(&request)?;
@@ -39,20 +39,60 @@ async fn loadfile_inner(socket_path: &str, video_path: &Path) -> anyhow::Result<
 
     // 逐行读响应,跳过 mpv 主动推送的 event 行,直到匹配 request_id
     let mut lines = BufReader::new(reader).lines();
+    let mut accepted = false;
+    let mut loaded = false;
     while let Some(line) = lines.next_line().await? {
         let Ok(resp) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
-        if resp.get("request_id").and_then(|v| v.as_u64()) != Some(LOADFILE_REQUEST_ID) {
-            continue;
+        match resp.get("event").and_then(|value| value.as_str()) {
+            Some("file-loaded") => loaded = true,
+            Some("end-file")
+                if resp.get("reason").and_then(|value| value.as_str()) == Some("error") =>
+            {
+                return Err(anyhow!(
+                    "mpv failed to load the requested wallpaper: {resp}"
+                ));
+            }
+            _ => (),
         }
-        return match resp.get("error").and_then(|v| v.as_str()) {
-            Some("success") => Ok(()),
-            other => Err(anyhow!("mpv loadfile failed: {:?}", other)),
-        };
+        if resp.get("request_id").and_then(|v| v.as_u64()) == Some(LOADFILE_REQUEST_ID) {
+            match resp.get("error").and_then(|v| v.as_str()) {
+                Some("success") => accepted = true,
+                other => return Err(anyhow!("mpv loadfile failed: {:?}", other)),
+            }
+        }
+        if accepted && loaded {
+            return Ok(());
+        }
     }
 
     Err(anyhow!("mpv IPC connection closed before response"))
+}
+
+/// A live mpv process may be idle after a decode/open failure. Require video parameters.
+pub async fn video_ready(socket_path: &Path) -> bool {
+    tokio::time::timeout(Duration::from_millis(250), async {
+        let stream = UnixStream::connect(socket_path).await?;
+        let (reader, mut writer) = stream.into_split();
+        writer
+            .write_all(b"{\"command\":[\"get_property\",\"video-params\"],\"request_id\":2}\n")
+            .await?;
+        let mut lines = BufReader::new(reader).lines();
+        while let Some(line) = lines.next_line().await? {
+            let value: serde_json::Value = serde_json::from_str(&line)?;
+            if value["request_id"] == 2 {
+                return Ok::<_, anyhow::Error>(
+                    value["error"] == "success"
+                        && value["data"]["w"].as_u64().is_some_and(|width| width > 0)
+                        && value["data"]["h"].as_u64().is_some_and(|height| height > 0),
+                );
+            }
+        }
+        Ok(false)
+    })
+    .await
+    .is_ok_and(|result| result.unwrap_or(false))
 }
 
 #[cfg(test)]
@@ -101,7 +141,7 @@ mod tests {
         spawn_fake_mpv(
             &sock,
             Some(r#"{"event":"property-change"}"#),
-            Some(r#"{"data":null,"request_id":1,"error":"success"}"#.to_string()),
+            Some("{\"data\":null,\"request_id\":1,\"error\":\"success\"}\n{\"event\":\"file-loaded\"}".to_string()),
         )
         .await;
         tokio::time::sleep(Duration::from_millis(50)).await;
@@ -141,8 +181,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_loadfile_acknowledgment_is_not_loaded_confirmation() {
+        let sock = temp_sock("ack-only");
+        let _ = std::fs::remove_file(&sock);
+        spawn_fake_mpv(
+            &sock,
+            None,
+            Some(r#"{"request_id":1,"error":"success"}"#.into()),
+        )
+        .await;
+        assert!(
+            loadfile(sock.to_str().unwrap(), Path::new("/tmp/a.mp4"))
+                .await
+                .is_err()
+        );
+        let _ = std::fs::remove_file(sock);
+    }
+
+    #[tokio::test]
+    async fn test_loadfile_reports_decode_failure_after_acceptance() {
+        let sock = temp_sock("decode-error");
+        let _ = std::fs::remove_file(&sock);
+        spawn_fake_mpv(&sock, None, Some("{\"request_id\":1,\"error\":\"success\"}\n{\"event\":\"end-file\",\"reason\":\"error\"}".into())).await;
+        assert!(
+            loadfile(sock.to_str().unwrap(), Path::new("/tmp/a.mp4"))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("failed to load")
+        );
+        let _ = std::fs::remove_file(sock);
+    }
+
+    #[tokio::test]
     async fn test_loadfile_socket_missing() {
-        let result = loadfile("/tmp/lianwall-ipc-test-nonexistent.sock", Path::new("/tmp/a.mp4")).await;
+        let result = loadfile(
+            "/tmp/lianwall-ipc-test-nonexistent.sock",
+            Path::new("/tmp/a.mp4"),
+        )
+        .await;
         assert!(result.is_err());
     }
 }

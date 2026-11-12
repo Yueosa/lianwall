@@ -20,95 +20,121 @@ use crate::client::{Client, ClientError};
 use crate::output::Formatter;
 
 /// 解析事件类型字符串
-pub fn parse_event_types(args: &[String]) -> Vec<EventType> {
-    if args.is_empty() || args.iter().any(|s| s.eq_ignore_ascii_case("all")) {
-        return vec![EventType::All];
-    }
-
-    args.iter()
-        .filter_map(|s| match s.to_lowercase().as_str() {
-            "wallpaper" | "wp" => Some(EventType::WallpaperChanged),
-            "status" | "st" => Some(EventType::StatusChanged),
-            "config" | "cfg" => Some(EventType::ConfigChanged),
-            "space" | "sp" => Some(EventType::SpaceUpdated),
-            "vram" | "gpu" => Some(EventType::VramChanged),
-            "time" | "tp" => Some(EventType::TimePointReached),
-            "scan" | "progress" => Some(EventType::ScanProgress),
-            "error" | "err" => Some(EventType::Error),
+pub fn parse_event_types(args: &[String]) -> Result<Vec<EventType>, ClientError> {
+    let mut events = Vec::new();
+    for argument in args {
+        let event = match argument.to_ascii_lowercase().as_str() {
+            "all" => EventType::All,
+            "wallpaper" | "wp" | "wallpaper_changed" => EventType::WallpaperChanged,
+            "status" | "st" | "status_changed" => EventType::StatusChanged,
+            "config" | "cfg" | "config_changed" => EventType::ConfigChanged,
+            "space" | "sp" | "space_updated" => EventType::SpaceUpdated,
+            "vram" | "gpu" | "vram_changed" => EventType::VramChanged,
+            "time" | "tp" | "time_point_reached" => EventType::TimePointReached,
+            "scan" | "progress" | "scan_progress" => EventType::ScanProgress,
+            "error" | "err" => EventType::Error,
             _ => {
-                eprintln!("Warning: unknown event type '{}', ignoring", s);
-                None
+                return Err(ClientError::Codec(format!(
+                    "Unknown event type: {argument}"
+                )));
             }
-        })
-        .collect()
+        };
+        if !events.contains(&event) {
+            events.push(event);
+        }
+    }
+    if events.is_empty() || events.contains(&EventType::All) {
+        return Ok(vec![EventType::All]);
+    }
+    Ok(events)
 }
 
-/// 运行订阅命令
+fn print_json(response: &Response) -> Result<(), ClientError> {
+    use std::io::Write;
+    let stdout = std::io::stdout();
+    let mut writer = stdout.lock();
+    serde_json::to_writer(&mut writer, response).map_err(|e| ClientError::Codec(e.to_string()))?;
+    writeln!(writer)?;
+    writer.flush()?;
+    Ok(())
+}
+
+/// NDJSON contains the existing protocol's Subscribed, Status and Event frames.
+/// Subscription setup remains bounded; once synchronized an idle stream may wait indefinitely.
 pub fn run_subscribe(
     fmt: &Formatter,
     socket_path: &Path,
     event_args: Vec<String>,
 ) -> Result<(), ClientError> {
-    let events = parse_event_types(&event_args);
-
-    if events.is_empty() {
-        fmt.print_error("No valid event types specified");
-        return Ok(());
-    }
-
-    fmt.print_info(&format!(
-        "Subscribing to events: {:?}",
-        events
-            .iter()
-            .map(|e| format!("{:?}", e))
-            .collect::<Vec<_>>()
-    ));
-
+    use std::time::{Duration, Instant};
+    let events = parse_event_types(&event_args)?;
     let mut client = Client::connect(socket_path)?;
-
-    // 发送订阅请求
-    let session_id = client.subscribe(events, true)?;
-    fmt.print_success(&format!("Subscribed (session: {})", session_id));
-
-    // 读取 immediate_sync 的初始状态
-    match client.receive_response() {
-        Ok(Response::Status(status)) => {
-            let mode_str = format!("{:?}", status.mode);
-            let current = status.current_filename.as_deref().unwrap_or("none");
-            fmt.print_info(&format!(
-                "Current: {} [{}] | {} wallpapers ({} available, {} locked)",
-                current, mode_str, status.total_wallpapers, status.available_count, status.locked_count
-            ));
-        }
-        Ok(Response::Event(event)) => {
-            // daemon 没发 sync 数据而是直接推事件了，正常打印
-            print_event(fmt, &event);
-        }
-        Ok(_) => {} // 其他同步响应，忽略
-        Err(e) => {
-            fmt.print_warning(&format!("Failed to read initial sync: {}", e));
-        }
+    let session_id = client.subscribe(events.clone(), true)?;
+    if fmt.is_json() {
+        print_json(&Response::Subscribed {
+            session_id,
+            subscribed_events: EventType::expand(&events),
+        })?;
+    } else {
+        fmt.print_success(&format!("Subscribed (session: {session_id})"));
     }
-
-    fmt.print_info("Waiting for events... (Ctrl+C to exit)");
-    println!();
-
-    // 持续接收事件
+    let deadline = Instant::now() + Duration::from_secs(10);
     loop {
-        match client.receive_event() {
-            Ok(event) => print_event(fmt, &event),
-            Err(ClientError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                fmt.print_warning("Connection closed by daemon");
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(ClientError::ConnectionTimeout);
+        }
+        client.set_read_timeout(Some(remaining))?;
+        match client.receive_response()? {
+            Response::Status(status) => {
+                if fmt.is_json() {
+                    print_json(&Response::Status(status))?;
+                } else {
+                    fmt.print_info(&format!(
+                        "Current: {} [{:?}]",
+                        status.current_filename.as_deref().unwrap_or("none"),
+                        status.mode
+                    ));
+                }
                 break;
             }
-            Err(e) => {
-                fmt.print_error(&format!("Error receiving event: {}", e));
-                break;
+            Response::Event(event) => {
+                if fmt.is_json() {
+                    print_json(&Response::Event(event))?;
+                } else {
+                    print_event(fmt, &event);
+                }
             }
+            Response::Error { code, message } => {
+                return Err(ClientError::DaemonError { code, message });
+            }
+            other => return Err(ClientError::UnexpectedResponse(format!("{other:?}"))),
         }
     }
-
-    Ok(())
+    client.set_read_timeout(None)?;
+    if !fmt.is_json() {
+        fmt.print_info("Waiting for events... (Ctrl+C to exit)");
+    }
+    loop {
+        match client.receive_response()? {
+            Response::Event(event) => {
+                if fmt.is_json() {
+                    print_json(&Response::Event(event))?;
+                } else {
+                    print_event(fmt, &event);
+                }
+            }
+            Response::Status(status) => {
+                if fmt.is_json() {
+                    print_json(&Response::Status(status))?;
+                }
+            }
+            Response::Error { code, message } => {
+                return Err(ClientError::DaemonError { code, message });
+            }
+            other => return Err(ClientError::UnexpectedResponse(format!("{other:?}"))),
+        }
+    }
 }
 
 /// 格式化打印事件
@@ -135,10 +161,7 @@ fn print_event(fmt: &Formatter, event: &Event) {
         }
 
         Event::StatusChanged { changes } => {
-            println!(
-                "{} 📊 StatusChanged",
-                fmt.dim(&format!("[{}]", timestamp))
-            );
+            println!("{} 📊 StatusChanged", fmt.dim(&format!("[{}]", timestamp)));
             for change in changes {
                 println!("    {:?}", change);
             }
@@ -150,10 +173,7 @@ fn print_event(fmt: &Formatter, event: &Event) {
             old_value,
             new_value,
         } => {
-            println!(
-                "{} ⚙️  ConfigChanged",
-                fmt.dim(&format!("[{}]", timestamp))
-            );
+            println!("{} ⚙️  ConfigChanged", fmt.dim(&format!("[{}]", timestamp)));
             println!("    Key:      {}", key);
             println!("    Old:      {}", old_value);
             println!("    New:      {}", new_value);
@@ -165,10 +185,7 @@ fn print_event(fmt: &Formatter, event: &Event) {
             reason,
             summary,
         } => {
-            println!(
-                "{} 🔄 SpaceUpdated",
-                fmt.dim(&format!("[{}]", timestamp))
-            );
+            println!("{} 🔄 SpaceUpdated", fmt.dim(&format!("[{}]", timestamp)));
             println!("    Mode:      {:?}", mode);
             println!("    Reason:    {:?}", reason);
             println!(
@@ -184,10 +201,7 @@ fn print_event(fmt: &Formatter, event: &Event) {
             total_mb,
             free_percent,
         } => {
-            println!(
-                "{} 💾 VramChanged",
-                fmt.dim(&format!("[{}]", timestamp))
-            );
+            println!("{} 💾 VramChanged", fmt.dim(&format!("[{}]", timestamp)));
             println!("    Action:    {:?}", action);
             println!(
                 "    Usage:     {}/{} MB ({:.1}% free)",
@@ -226,10 +240,7 @@ fn print_event(fmt: &Formatter, event: &Event) {
             files_found,
             completed,
         } => {
-            println!(
-                "{} 📂 ScanProgress",
-                fmt.dim(&format!("[{}]", timestamp))
-            );
+            println!("{} 📂 ScanProgress", fmt.dim(&format!("[{}]", timestamp)));
             println!("    Mode:      {:?}", mode);
             println!("    Dirs:      {}", dirs_scanned);
             println!("    Files:     {}", files_found);

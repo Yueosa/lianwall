@@ -1,7 +1,7 @@
 //! 命令处理器
 //!
 //! 每个 CLI 命令对应一个 handle_* 函数。
-//! 
+//!
 //! 模块结构:
 //! - `lifecycle` - 生命周期命令 (start, stop, restart)
 //! - `wallpaper` - 壁纸控制命令 (next, prev, switch, set, mode)
@@ -87,22 +87,26 @@ impl From<lianwall_core::config::ConfigError> for HandlerError {
 }
 
 /// 获取 socket 路径
-pub(crate) fn get_socket_path() -> PathBuf {
-    // 从配置文件读取，如果读取失败则使用默认值
+pub(crate) fn get_socket_path() -> Result<PathBuf> {
     match lianwall_core::config::read(lianwall_core::config::ConfigReadInput { path: None }) {
-        Ok(output) => output.config.daemon.socket_path,
-        Err(_) => PathBuf::from("/tmp/lianwall.sock"),
+        Ok(output) => Ok(output.config.daemon.socket_path),
+        Err(lianwall_core::config::ConfigError::Io { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Ok(PathBuf::from("/tmp/lianwall.sock"))
+        }
+        Err(error) => Err(error.into()),
     }
 }
 
-/// 检查 daemon 是否在运行
-pub(crate) fn is_daemon_running() -> bool {
-    client::is_running(&get_socket_path())
+/// 检查 daemon 是否在运行；无效配置不得静默连接另一个默认 socket。
+pub(crate) fn is_daemon_running() -> Result<bool> {
+    Ok(client::is_running(&get_socket_path()?))
 }
 
 /// 连接到 daemon
 pub(crate) fn connect() -> Result<Client> {
-    Ok(Client::connect(&get_socket_path())?)
+    Ok(Client::connect(&get_socket_path()?)?)
 }
 
 /// 规范化路径（相对路径转绝对路径）

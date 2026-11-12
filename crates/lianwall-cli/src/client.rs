@@ -41,6 +41,7 @@
 
 #![allow(dead_code)] // 预留 API，供 GUI/脚本使用
 
+use std::collections::VecDeque;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -48,9 +49,9 @@ use std::time::Duration;
 
 use lianwall_core::config::WallMode;
 use lianwall_core::socket::{
-    ConfigSnapshot, ErrorCode, Event, EventType, Request, Response, SpaceSnapshot,
-    StatusInfo, TimeScheduleInfo, HookInfo, VramOverrideAction, RotationStatusInfo,
-    extract_request_id, request_frame,
+    ConfigSnapshot, ErrorCode, Event, EventType, HookInfo, Request, Response, RotationStatusInfo,
+    SpaceSnapshot, StatusInfo, TimeScheduleInfo, VramOverrideAction, extract_request_id,
+    request_frame,
 };
 
 /// 客户端错误
@@ -110,6 +111,8 @@ pub struct Client {
     reader: BufReader<UnixStream>,
     writer: UnixStream,
     next_id: u64,
+    read_buffer: Vec<u8>,
+    queued_pushes: VecDeque<Response>,
 }
 
 impl Client {
@@ -130,7 +133,13 @@ impl Client {
         let writer = stream.try_clone()?;
         let reader = BufReader::new(stream);
 
-        Ok(Self { reader, writer, next_id: 0 })
+        Ok(Self {
+            reader,
+            writer,
+            next_id: 0,
+            read_buffer: Vec::new(),
+            queued_pushes: VecDeque::new(),
+        })
     }
 
     /// 发送请求并接收响应（行分隔 JSON 协议，响应按请求 id 匹配）
@@ -142,29 +151,41 @@ impl Client {
         writeln!(self.writer, "{}", json)?;
         self.writer.flush()?;
 
-        // 循环读行，直到拿到 id 匹配的响应；推送帧（Event、id=0）跳过
         loop {
-            let mut line = String::new();
-            self.reader.read_line(&mut line)?;
-
-            let raw: serde_json::Value = serde_json::from_str(line.trim())
-                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
-            if extract_request_id(&raw) != id {
+            let (response_id, response) = self.read_frame()?;
+            if response_id != id {
+                if response_id == 0 {
+                    if self.queued_pushes.len() >= 1024 {
+                        return Err(ClientError::Codec(
+                            "Push buffer overflow; reconnect and resynchronize".into(),
+                        ));
+                    }
+                    self.queued_pushes.push_back(response);
+                }
                 continue;
             }
-            let resp: Response = serde_json::from_value(raw)
-                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
-
-            // 检查错误响应
-            if let Response::Error { code, message } = &resp {
-                return Err(ClientError::DaemonError {
-                    code: code.clone(),
-                    message: message.clone(),
-                });
+            if let Response::Error { code, message } = response {
+                return Err(ClientError::DaemonError { code, message });
             }
-
-            return Ok(resp);
+            return Ok(response);
         }
+    }
+
+    fn read_frame(&mut self) -> Result<(u64, Response), ClientError> {
+        // Retain partial frames across socket read timeouts (directory scan polling).
+        if self.reader.read_until(b'\n', &mut self.read_buffer)? == 0 {
+            return Err(ClientError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "Connection closed by daemon",
+            )));
+        }
+        let bytes = std::mem::take(&mut self.read_buffer);
+        let raw: serde_json::Value = serde_json::from_slice(&bytes)
+            .map_err(|e| ClientError::Codec(format!("Deserialize error: {e}")))?;
+        let id = extract_request_id(&raw);
+        let response = serde_json::from_value(raw)
+            .map_err(|e| ClientError::Codec(format!("Deserialize error: {e}")))?;
+        Ok((id, response))
     }
 
     // ========================================================================
@@ -292,11 +313,7 @@ impl Client {
     ///
     /// # 注意
     /// 修改会立即生效并持久化到配置文件
-    pub fn set_config(
-        &mut self,
-        key: String,
-        value: serde_json::Value,
-    ) -> Result<(), ClientError> {
+    pub fn set_config(&mut self, key: String, value: serde_json::Value) -> Result<(), ClientError> {
         self.request(Request::SetConfig { key, value })?;
         Ok(())
     }
@@ -416,42 +433,35 @@ impl Client {
     /// 如果收到同步响应（如 immediate_sync 的 Status），会自动跳过并继续等待。
     pub fn receive_event(&mut self) -> Result<Event, ClientError> {
         loop {
-            let mut line = String::new();
-            self.reader.read_line(&mut line)?;
-
-            let raw: serde_json::Value = serde_json::from_str(line.trim())
-                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
-            // 响应帧（id>0）不属于事件流，跳过
-            if extract_request_id(&raw) != 0 {
-                continue;
-            }
-            let resp: Response = serde_json::from_value(raw)
-                .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
-
-            match resp {
-                Response::Event(event) => return Ok(event),
-                Response::Error { code, message } => return Err(ClientError::DaemonError { code, message }),
-                // immediate_sync 同步响应：跳过，继续等待真正的事件
-                Response::Status(_) | Response::Space(_) | Response::Config(_) | Response::TimeInfo(_) => {
+            let response = if let Some(response) = self.queued_pushes.pop_front() {
+                response
+            } else {
+                let (id, response) = self.read_frame()?;
+                if id != 0 {
                     continue;
                 }
+                response
+            };
+            match response {
+                Response::Event(event) => return Ok(event),
+                Response::Error { code, message } => {
+                    return Err(ClientError::DaemonError { code, message });
+                }
+                Response::Status(_)
+                | Response::Space(_)
+                | Response::Config(_)
+                | Response::TimeInfo(_) => continue,
                 other => return Err(unexpected_response(&other)),
             }
         }
     }
 
-    /// 接收原始响应（阻塞）
-    ///
-    /// 与 `receive_event` 不同，返回完整的 Response，不会跳过同步响应。
-    /// 用于需要处理 immediate_sync 数据的场景。
+    /// Receive a raw frame, including pushes that arrived before a command acknowledgment.
     pub fn receive_response(&mut self) -> Result<Response, ClientError> {
-        let mut line = String::new();
-        self.reader.read_line(&mut line)?;
-        
-        let resp: Response = serde_json::from_str(line.trim())
-            .map_err(|e| ClientError::Codec(format!("Deserialize error: {}", e)))?;
-        
-        Ok(resp)
+        if let Some(response) = self.queued_pushes.pop_front() {
+            return Ok(response);
+        }
+        self.read_frame().map(|(_, response)| response)
     }
 
     /// 设置读取超时
@@ -489,4 +499,39 @@ pub fn is_running(socket_path: &Path) -> bool {
 
 fn unexpected_response(resp: &Response) -> ClientError {
     ClientError::UnexpectedResponse(format!("{:?}", resp))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::net::UnixListener;
+
+    #[test]
+    fn partial_utf8_frame_survives_a_read_timeout() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("socket");
+        let listener = UnixListener::bind(&path).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let frame = "{\"id\":0,\"type\":\"Event\",\"payload\":{\"event\":\"Error\",\"data\":{\"code\":\"internal_error\",\"message\":\"中文\",\"recoverable\":true}}}\n";
+            let split = frame.find('中').unwrap() + 1;
+            stream.write_all(&frame.as_bytes()[..split]).unwrap();
+            std::thread::sleep(Duration::from_millis(150));
+            stream.write_all(&frame.as_bytes()[split..]).unwrap();
+        });
+        let mut client = Client::connect(&path).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_millis(30)))
+            .unwrap();
+        assert!(
+            matches!(client.receive_event(), Err(ClientError::Io(error)) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut))
+        );
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        assert!(
+            matches!(client.receive_event().unwrap(), Event::Error { message, .. } if message == "中文")
+        );
+        server.join().unwrap();
+    }
 }

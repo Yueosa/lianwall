@@ -1,12 +1,12 @@
 //! 向量空间构建与重建
 
-use rand::prelude::*;
 use rand::distributions::Uniform;
+use rand::prelude::*;
 use std::collections::VecDeque;
 use std::f64::consts::TAU;
 
-use super::r#struct::{ModeData, PersistedRecord, WallpaperRecord, WallpaperSpace};
 use super::scanner::ScannedWallpaper;
+use super::r#struct::{ModeData, PersistedRecord, WallpaperRecord, WallpaperSpace};
 
 /// 构建新的向量空间
 ///
@@ -99,10 +99,13 @@ pub fn rebuild_space(
                 item.last_played = old_record.last_played;
             }
         }
-        
+
         // 恢复当前壁纸索引
         if let Some(ref current_path) = p.current_path {
-            space.current_index = space.items.iter().position(|item| &item.path == current_path);
+            space.current_index = space
+                .items
+                .iter()
+                .position(|item| &item.path == current_path);
         }
     }
 
@@ -112,10 +115,11 @@ pub fn rebuild_space(
 /// 从 WallpaperSpace 导出为持久化格式
 pub fn export_to_persisted(space: &WallpaperSpace) -> ModeData {
     // 获取当前壁纸路径
-    let current_path = space.current_index
+    let current_path = space
+        .current_index
         .and_then(|idx| space.items.get(idx))
         .map(|item| item.path.clone());
-    
+
     ModeData {
         pointer: space.pointer,
         selector_nonce: space.selector_nonce,
@@ -209,11 +213,8 @@ mod tests {
         assert_eq!(space.pointer, 1.5);
         assert_eq!(space.selector_nonce, 7);
 
-        let by_path: std::collections::HashMap<_, _> = space
-            .items
-            .iter()
-            .map(|item| (&item.path, item))
-            .collect();
+        let by_path: std::collections::HashMap<_, _> =
+            space.items.iter().map(|item| (&item.path, item)).collect();
 
         let item1 = by_path[&PathBuf::from("/test/1.jpg")];
         assert!(item1.locked);
@@ -229,7 +230,9 @@ mod tests {
         assert_eq!(item0.last_played, None);
 
         // current_index 指向 persisted 的 current_path
-        let current = space.current_index.expect("current_index should be restored");
+        let current = space
+            .current_index
+            .expect("current_index should be restored");
         assert_eq!(space.items[current].path, PathBuf::from("/test/3.jpg"));
     }
 

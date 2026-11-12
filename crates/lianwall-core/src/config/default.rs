@@ -10,7 +10,7 @@ pub const DEFAULT_CONFIG_TOML: &str = r#"# ===================================
 
 # === 路径与模式 ===
 [paths]
-# 运行模式: Video (动态壁纸) 或 Image (静态壁纸)
+# 启动默认模式: Video (动态壁纸) 或 Image (静态壁纸)，当前会话使用 lianwall mode 切换
 mode = "Video"
 
 # 动态壁纸目录（支持 ~ 展开）
@@ -66,10 +66,9 @@ mpv_args = [
     "--panscan=1.0"
 ]
 
-# === 静态壁纸引擎 (swww/awww) ===
-# 请注意, swww包已改名为 awww
-# 官方文档: https://github.com/LGFae/swww (awww)
-# swww (awww) 是一个高效的 Wayland 壁纸设置工具，支持平滑过渡动画
+# === 静态壁纸引擎 (awww) ===
+# 官方文档: https://codeberg.org/LGFae/awww
+# awww 是一个高效的 Wayland 壁纸设置工具，支持平滑过渡动画
 [image_engine]
 # 壁纸切换间隔（秒）
 # 范围: 10 - 86400（10秒 ~ 24小时）
@@ -78,10 +77,10 @@ interval = 600
 # 目标显示器
 # - 空字符串 = 所有已连接的显示器
 # - 逗号分隔多个显示器如 "eDP-1,HDMI-A-1"
-# 可通过 `swww/awww query` 查看显示器名称
+# 可通过 `awww query` 查看显示器名称
 outputs = ""
 
-# 透传给 swww/awww img 的参数
+# 透传给 awww img 的参数
 # 过渡效果类型 (--transition-type):
 #   none, simple, fade, left, right, top, bottom,
 #   wipe, wave, grow, center, any, outer, random
@@ -90,9 +89,9 @@ outputs = ""
 #   --transition-fps        过渡帧率
 #   --transition-step       过渡步长
 #   --resize                缩放模式: crop, fit, no
-# 详见: swww/awww img --help
+# 详见: awww img --help
 # 注: 默认使用 outer(从边缘向内推进); fade 在深色壁纸之间过渡不明显
-swww_args = [
+awww_args = [
     "--transition-type=outer",
     "--transition-duration=2.0",
     "--transition-fps=60",

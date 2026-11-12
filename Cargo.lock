@@ -396,7 +396,7 @@ checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "lianwall-cli"
-version = "5.5.3"
+version = "5.6.0"
 dependencies = [
  "atty",
  "chrono",
@@ -405,15 +405,17 @@ dependencies = [
  "lianwall-core",
  "serde",
  "serde_json",
+ "tempfile",
  "toml",
 ]
 
 [[package]]
 name = "lianwall-core"
-version = "5.5.3"
+version = "5.6.0"
 dependencies = [
  "chrono",
  "dirs",
+ "libc",
  "num_cpus",
  "rand",
  "rayon",
@@ -423,19 +425,23 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "toml_edit",
  "tracing",
  "walkdir",
 ]
 
 [[package]]
 name = "lianwall-daemon"
-version = "5.5.3"
+version = "5.6.0"
 dependencies = [
  "anyhow",
  "chrono",
  "lianwall-core",
+ "libc",
  "serde",
  "serde_json",
+ "socket2",
+ "tempfile",
  "thiserror",
  "tokio",
  "toml",

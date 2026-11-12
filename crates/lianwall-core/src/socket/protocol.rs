@@ -233,10 +233,7 @@ pub enum Response {
     Ok,
 
     /// 错误
-    Error {
-        code: ErrorCode,
-        message: String,
-    },
+    Error { code: ErrorCode, message: String },
 
     /// 心跳响应
     Pong {
@@ -632,7 +629,8 @@ pub struct RotationStatusInfo {
 
 /// 状态信息（GetStatus 响应）
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StatusInfo {    /// 当前模式
+pub struct StatusInfo {
+    /// 当前模式
     pub mode: WallMode,
 
     /// 当前壁纸路径
@@ -903,7 +901,9 @@ mod tests {
         assert!(json.contains(r#""cmd":"Ping""#));
 
         // Command with data
-        let req = Request::SetMode { mode: WallMode::Video };
+        let req = Request::SetMode {
+            mode: WallMode::Video,
+        };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains(r#""cmd":"SetMode""#));
         assert!(json.contains(r#""mode":"Video""#));
@@ -927,7 +927,12 @@ mod tests {
         // 使用 internally tagged，字段直接展平
         let json = r#"{"cmd":"GetSpace","mode":"Video"}"#;
         let req: Request = serde_json::from_str(json).unwrap();
-        assert!(matches!(req, Request::GetSpace { mode: Some(WallMode::Video) }));
+        assert!(matches!(
+            req,
+            Request::GetSpace {
+                mode: Some(WallMode::Video)
+            }
+        ));
 
         // 无 mode 字段时使用默认值
         let json = r#"{"cmd":"GetSpace"}"#;
@@ -975,7 +980,7 @@ mod tests {
     fn test_event_type_expand() {
         let types = vec![EventType::All];
         let expanded = EventType::expand(&types);
-        assert_eq!(expanded.len(), 8);  // 包含 ScanProgress
+        assert_eq!(expanded.len(), 8); // 包含 ScanProgress
         assert!(expanded.contains(&EventType::WallpaperChanged));
         assert!(expanded.contains(&EventType::ScanProgress));
         assert!(!expanded.contains(&EventType::All));
@@ -994,7 +999,12 @@ mod tests {
 
         let json = r#"{"id":1,"cmd":"GetSpace","mode":"Video"}"#;
         let req: Request = serde_json::from_str(json).unwrap();
-        assert!(matches!(req, Request::GetSpace { mode: Some(WallMode::Video) }));
+        assert!(matches!(
+            req,
+            Request::GetSpace {
+                mode: Some(WallMode::Video)
+            }
+        ));
     }
 
     #[test]

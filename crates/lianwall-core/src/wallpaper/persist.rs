@@ -28,11 +28,10 @@ pub fn load_weights() -> Result<WeightsFile, WallpaperError> {
         source: e,
     })?;
 
-    let file: WeightsFile =
-        serde_json::from_str(&content).map_err(|e| WallpaperError::Parse {
-            path: path.clone(),
-            source: e,
-        })?;
+    let file: WeightsFile = serde_json::from_str(&content).map_err(|e| WallpaperError::Parse {
+        path: path.clone(),
+        source: e,
+    })?;
 
     Ok(file)
 }
@@ -50,13 +49,12 @@ pub fn save_weights(file: &WeightsFile) -> Result<(), WallpaperError> {
         })?;
     }
 
-    let content =
-        serde_json::to_string_pretty(file).map_err(|e| WallpaperError::Serialize {
-            path: path.clone(),
-            source: e,
-        })?;
+    let content = serde_json::to_string_pretty(file).map_err(|e| WallpaperError::Serialize {
+        path: path.clone(),
+        source: e,
+    })?;
 
-    fs::write(&path, content).map_err(|e| WallpaperError::Io {
+    crate::filesystem::atomic_write(&path, content).map_err(|e| WallpaperError::Io {
         operation: "write".to_string(),
         path: path.clone(),
         source: e,

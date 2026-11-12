@@ -14,10 +14,33 @@ use handlers::HandlerError;
 use output::{Formatter, TerminalCaps};
 
 fn main() {
-    let cli = Cli::parse();
+    let args: Vec<_> = std::env::args_os().collect();
+    let json_requested = args
+        .iter()
+        .skip(1)
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == "--json");
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(error) if json_requested && error.use_stderr() => {
+            println!(
+                "{}",
+                serde_json::json!({"success": false, "error": error.to_string()})
+            );
+            std::process::exit(error.exit_code());
+        }
+        Err(error) => error.exit(),
+    };
 
     // 无参数时显示帮助
     if cli.command.is_none() {
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::json!({"success": false, "error": "A command is required"})
+            );
+            std::process::exit(1);
+        }
         use clap::CommandFactory;
         Cli::command().print_help().unwrap();
         println!();
@@ -62,16 +85,15 @@ fn main() {
         // Rotation
         Command::Rotation { action } => handlers::handle_rotation(&fmt, action),
         // 订阅（调试）
-        Command::Subscribe { events } => {
-            let socket_path = get_socket_path();
+        Command::Subscribe { events } => handlers::get_socket_path().and_then(|socket_path| {
             subscribe::run_subscribe(&fmt, &socket_path, events).map_err(|e| e.into())
-        }
+        }),
     };
 
     // 处理错误
     if let Err(e) = result {
         if cli.json {
-            eprintln!(
+            println!(
                 "{}",
                 serde_json::json!({
                     "success": false,
@@ -88,13 +110,5 @@ fn main() {
             _ => 1,
         };
         std::process::exit(exit_code);
-    }
-}
-
-/// 获取 socket 路径
-fn get_socket_path() -> std::path::PathBuf {
-    match lianwall_core::config::read(lianwall_core::config::ConfigReadInput { path: None }) {
-        Ok(output) => output.config.daemon.socket_path,
-        Err(_) => std::path::PathBuf::from("/tmp/lianwall.sock"),
     }
 }

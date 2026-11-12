@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 use walkdir::WalkDir;
 
 use super::error::WallpaperError;
-use super::time_range::{parse_time_dir, TimePoint, TimeRange};
+use super::time_range::{TimePoint, TimeRange, parse_time_dir};
 
 /// 单个扫描到的壁纸
 #[derive(Debug, Clone)]
@@ -121,7 +121,7 @@ struct IntermediateResult {
 }
 
 /// 判断是否为隐藏文件/目录
-/// 
+///
 /// 注意：只检查文件名是否以 `.` 开头，不检查父目录
 fn is_hidden(entry: &walkdir::DirEntry) -> bool {
     // 深度为 0 表示根目录本身，不应该被过滤
@@ -146,7 +146,10 @@ fn has_valid_extension(path: &Path, extensions: &[&str]) -> bool {
 /// 从路径解析时间约束
 ///
 /// 遍历路径的所有父目录，检查每个目录名是否为时间范围
-fn parse_time_constraints_from_path(path: &Path, root: &Path) -> (Vec<TimeRange>, BTreeSet<TimePoint>) {
+fn parse_time_constraints_from_path(
+    path: &Path,
+    root: &Path,
+) -> (Vec<TimeRange>, BTreeSet<TimePoint>) {
     let mut constraints = Vec::new();
     let mut time_points = BTreeSet::new();
 
@@ -370,7 +373,8 @@ fn scan_streaming_impl(
                     dirs_scanned += 1;
                     // 每 10 个目录发送一次进度
                     if dirs_scanned % 10 == 0 {
-                        let _ = progress_tx.blocking_send(ScanProgress::new(dirs_scanned, files_found));
+                        let _ =
+                            progress_tx.blocking_send(ScanProgress::new(dirs_scanned, files_found));
                     }
                     continue;
                 }
@@ -418,13 +422,14 @@ pub async fn scan_directory_async(
 ) -> Result<ScanResult, WallpaperError> {
     let dir_clone = dir.clone();
 
-    let result: Result<ScanResult, WallpaperError> = tokio::task::spawn_blocking(move || scan_with_rayon(&dir_clone, is_video))
-        .await
-        .map_err(|e: tokio::task::JoinError| WallpaperError::Io {
-            operation: "spawn_blocking".to_string(),
-            path: dir.clone(),
-            source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
-        })?;
+    let result: Result<ScanResult, WallpaperError> =
+        tokio::task::spawn_blocking(move || scan_with_rayon(&dir_clone, is_video))
+            .await
+            .map_err(|e: tokio::task::JoinError| WallpaperError::Io {
+                operation: "spawn_blocking".to_string(),
+                path: dir.clone(),
+                source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+            })?;
 
     result
 }
@@ -468,16 +473,16 @@ mod tests {
 
     fn create_test_dir() -> TempDir {
         let dir = TempDir::new().unwrap();
-        
+
         // 创建一些测试文件
         fs::write(dir.path().join("test1.jpg"), "").unwrap();
         fs::write(dir.path().join("test2.png"), "").unwrap();
-        
+
         // 创建时间目录（格式: HH-HH 表示时间范围）
-        let time_dir = dir.path().join("08-18");  // 08:00 - 18:00
+        let time_dir = dir.path().join("08-18"); // 08:00 - 18:00
         fs::create_dir(&time_dir).unwrap();
         fs::write(time_dir.join("morning.jpg"), "").unwrap();
-        
+
         dir
     }
 
@@ -485,7 +490,7 @@ mod tests {
     fn test_scan_with_rayon() {
         let dir = create_test_dir();
         let result = scan_with_rayon(dir.path(), false);
-        
+
         // 即使在 /tmp 下扫描，也应该能找到文件
         assert!(result.is_ok(), "扫描应该成功: {:?}", result.err());
         let scan_result = result.unwrap();
@@ -496,11 +501,11 @@ mod tests {
     fn test_scan_with_rayon_progress() {
         let dir = create_test_dir();
         let mut progress_count = 0;
-        
+
         let result = scan_with_rayon_progress(dir.path(), false, |_| {
             progress_count += 1;
         });
-        
+
         assert!(result.is_ok(), "扫描应该成功: {:?}", result.err());
         // 进度回调至少会在完成时调用一次
         assert!(progress_count >= 1, "进度回调至少应该调用一次");
@@ -510,7 +515,10 @@ mod tests {
     fn test_has_valid_extension() {
         assert!(has_valid_extension(Path::new("test.jpg"), IMAGE_EXTENSIONS));
         assert!(has_valid_extension(Path::new("test.PNG"), IMAGE_EXTENSIONS));
-        assert!(!has_valid_extension(Path::new("test.txt"), IMAGE_EXTENSIONS));
+        assert!(!has_valid_extension(
+            Path::new("test.txt"),
+            IMAGE_EXTENSIONS
+        ));
         assert!(has_valid_extension(Path::new("test.mp4"), VIDEO_EXTENSIONS));
     }
 
@@ -522,12 +530,12 @@ mod tests {
         fs::write(&hidden_file, "").unwrap();
         let normal_file = dir.path().join("normal_file");
         fs::write(&normal_file, "").unwrap();
-        
+
         let entries: Vec<_> = WalkDir::new(dir.path())
             .into_iter()
             .filter_map(|e| e.ok())
             .collect();
-        
+
         // 验证 is_hidden 函数正确识别隐藏文件
         for entry in &entries {
             let name = entry.file_name().to_string_lossy();
@@ -544,7 +552,7 @@ mod tests {
     async fn test_scan_directory_async() {
         let dir = create_test_dir();
         let result = scan_directory_async(dir.path().to_path_buf(), false).await;
-        
+
         assert!(result.is_ok(), "异步扫描应该成功: {:?}", result.err());
         let scan_result = result.unwrap();
         assert_eq!(scan_result.wallpapers.len(), 3, "应该找到 3 个壁纸");
@@ -555,13 +563,13 @@ mod tests {
         // 使用实际的文件系统路径进行测试
         // 时间目录格式: HH-HH 或 HHMM-HHMM（用 - 分隔时间）
         let dir = TempDir::new().unwrap();
-        let time_dir = dir.path().join("08-18");  // 08:00 - 18:00
+        let time_dir = dir.path().join("08-18"); // 08:00 - 18:00
         fs::create_dir(&time_dir).unwrap();
         let test_file = time_dir.join("test.jpg");
         fs::write(&test_file, "").unwrap();
-        
+
         let (constraints, time_points) = parse_time_constraints_from_path(&test_file, dir.path());
-        
+
         assert_eq!(constraints.len(), 1, "应该有 1 个时间约束");
         assert!(!time_points.is_empty(), "应该有时间点");
     }

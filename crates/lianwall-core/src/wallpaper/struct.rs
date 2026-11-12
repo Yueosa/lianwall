@@ -42,6 +42,16 @@ impl WallpaperSpace {
         self.items.len()
     }
 
+    /// Unlocked entries outside cooldown, before the selector's cooldown fallback.
+    pub fn ready_count(&self) -> usize {
+        let cooldown: std::collections::HashSet<_> = self.cooldown_queue.iter().copied().collect();
+        self.items
+            .iter()
+            .enumerate()
+            .filter(|(index, item)| !item.locked && !cooldown.contains(index))
+            .count()
+    }
+
     /// 是否为空
     pub fn is_empty(&self) -> bool {
         self.items.is_empty()
@@ -102,4 +112,30 @@ pub struct PersistedRecord {
     /// 上次播放时间
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_played: Option<u64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ready_count_does_not_double_subtract_locked_cooldown() {
+        let items = (0..3)
+            .map(|index| WallpaperRecord {
+                path: format!("/{index}.jpg").into(),
+                angle: 0.0,
+                locked: index == 0,
+                last_played: None,
+                time_constraints: vec![],
+            })
+            .collect();
+        let space = WallpaperSpace {
+            items,
+            pointer: 0.0,
+            selector_nonce: 0,
+            cooldown_queue: VecDeque::from([0, 1, 1, 999]),
+            current_index: None,
+        };
+        assert_eq!(space.available_count(), 2);
+        assert_eq!(space.ready_count(), 1);
+    }
 }

@@ -35,18 +35,18 @@ pub mod messages {
     pub const RELOADING: &str = "Reloading";
     pub const RESCANNING: &str = "Rescanning";
     pub const WAITING: &str = "Waiting";
-    pub const SCAN_HINT_LINE1: &str = "(daemon not responding, large wallpaper directory may take longer to scan)";
-    pub const SCAN_HINT_LINE2: &str = "(press Ctrl+C to exit waiting, scan continues in background)";
-    pub const TIMEOUT_WARNING: &str = "Timeout waiting for scan completion";
-    pub const SCAN_BACKGROUND_HINT: &str = "Scan continues in background, use 'lianwall status' to check";
-    
+    pub const SCAN_HINT_LINE1: &str =
+        "(daemon not responding, large wallpaper directory may take longer to scan)";
+    pub const SCAN_HINT_LINE2: &str =
+        "(press Ctrl+C to exit waiting, scan continues in background)";
+
     // ==================== status ====================
     pub const DAEMON_RUNNING: &str = "lianwall daemon running";
     pub const DAEMON_NOT_RUNNING: &str = "Daemon is not running. Start it with: lianwall start";
-    
+
     // ==================== common ====================
     pub const CANCELLED: &str = "Cancelled";
-    
+
     // ==================== error messages ====================
     // These correspond to ErrorCode enum from lianwall_core::socket::ErrorCode
     pub const ERR_NOT_FOUND: &str = "Not found";
@@ -407,7 +407,7 @@ pub fn format_error_code(code: &lianwall_core::socket::ErrorCode, detail: &str) 
         ErrorCode::NotSubscribed => messages::ERR_NOT_SUBSCRIBED,
         ErrorCode::Unknown => messages::ERR_UNKNOWN,
     };
-    
+
     if detail.is_empty() {
         prefix.to_string()
     } else {
@@ -436,11 +436,17 @@ mod tests {
 
     #[test]
     fn test_formatter_icons() {
-        let caps = TerminalCaps { color: false, emoji: true };
+        let caps = TerminalCaps {
+            color: false,
+            emoji: true,
+        };
         let fmt = Formatter::new(caps, false);
         assert_eq!(fmt.icon_ok(), "✓");
 
-        let caps = TerminalCaps { color: false, emoji: false };
+        let caps = TerminalCaps {
+            color: false,
+            emoji: false,
+        };
         let fmt = Formatter::new(caps, false);
         assert_eq!(fmt.icon_ok(), "[OK]");
     }

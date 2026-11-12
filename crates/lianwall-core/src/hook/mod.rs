@@ -10,7 +10,7 @@
 mod config;
 mod runner;
 
-pub use config::{HookConfig, HookEntry, HookEvent, DEFAULT_HOOKS_TOML};
+pub use config::{DEFAULT_HOOKS_TOML, HookConfig, HookEntry, HookEvent};
 pub use runner::run_hook;
 
 use std::path::PathBuf;
@@ -46,7 +46,7 @@ pub fn load_or_create_hooks() -> HookConfig {
         let _ = std::fs::create_dir_all(parent);
     }
 
-    if let Err(e) = std::fs::write(&path, DEFAULT_HOOKS_TOML) {
+    if let Err(e) = crate::filesystem::atomic_write(&path, DEFAULT_HOOKS_TOML) {
         tracing::warn!("Failed to create default hooks.toml: {}", e);
     } else {
         tracing::info!("Created default hooks.toml at {:?}", path);
@@ -63,9 +63,8 @@ pub fn reload_hooks() -> Result<HookConfig, String> {
         return Err(format!("hooks.toml not found: {:?}", path));
     }
 
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| format!("Failed to read hooks.toml: {}", e))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read hooks.toml: {}", e))?;
 
-    toml::from_str::<HookConfig>(&content)
-        .map_err(|e| format!("Failed to parse hooks.toml: {}", e))
+    toml::from_str::<HookConfig>(&content).map_err(|e| format!("Failed to parse hooks.toml: {}", e))
 }
