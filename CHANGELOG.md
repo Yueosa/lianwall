@@ -2,10 +2,18 @@
 
 所有版本的变更记录。
 
+## [6.0.0](changelogs/CHANGELOG-6.0.0.md) — 2026-11-15
+
+- 内置Vulkan图片/视频引擎、自动硬解/软件回退与跨媒体GPU淡化；awww/mpvpaper改为可选后端。
+- daemon统一引擎诊断、输出发现、收藏/统计、显存测试和服务日志；CLI与JSON接口同步扩展。
+- 新配置默认内置引擎，旧配置保留原后端；首次运行必须选择明确的单个目标输出。
+- 配套GUI2.0.0；已验证Hyprland/NVIDIA单输出SDR，具体ABI、迁移与限制见完整日志。
+
 ## 已发布版本
 
 | 版本 | 日期 | 主要变化 |
 |------|------|----------|
+| [6.0.0](changelogs/CHANGELOG-6.0.0.md) | 2026-11-15 | 内置图片/视频引擎、GPU过渡、收藏与诊断接口 |
 | [5.6.0](changelogs/CHANGELOG-5.6.0.md) | 2026-11-12 | 外部引擎事务切换、通信与状态收敛、JSON/hook、原子文件与配置迁移 |
 | [5.5.3](changelogs/CHANGELOG-5.5.3.md) | 2026-10-07 | 轮换状态竞态修复(GUI 倒计时卡死)、mpvpaper 首帧检测切换、daemon 日志修复 |
 | [5.5.2](changelogs/CHANGELOG-5.5.2.md) | 2026-10-07 | mpvpaper 常驻 IPC 换片、切换动画优化、性能修复、Socket 协议 v3、暂停轮换 |

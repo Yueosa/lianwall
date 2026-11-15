@@ -88,7 +88,7 @@ lianwall --json status
 | `mode` | `"Video" \| "Image"` | 当前壁纸模式 |
 | `current` | `string \| null` | 当前壁纸完整路径 |
 | `current_filename` | `string \| null` | 当前壁纸文件名 |
-| `engine` | `string` | 当前引擎名称 |
+| `engine` | `string` | 当前活跃后端；开发版原生图片/视频功能可返回 `native`，停止后返回 `none` |
 | `total_wallpapers` | `number` | 时间过滤后的活跃壁纸总数 |
 | `locked_count` | `number` | 锁定数量 |
 | `available_count` | `number` | 可用数量（未锁定且不在冷却中） |
@@ -753,3 +753,55 @@ print("退出码:", process.wait())
 - `reload/rescan` 的超时不再返回成功退出码或 `status=timeout`，统一使用错误结构。
 - `start --foreground` 会接管终端输出，不能与 `--json` 混用；后台 start 支持 JSON。
 - `--help/--version` 属于 CLI 元信息，仍使用原有人类可读输出；`--json` 不带业务命令返回 JSON 错误。
+
+
+### `lianwall engine --json`：引擎发现与实际解码信息
+
+新增独立命令，通过GetEngineInfo返回payload对象；不改变`status --json`的字段。
+例如`configured_decode="auto"`而`native.decoder="software"`表示实际软件解码，
+`native.fallback_reason`提供回退原因；不能仅从`engine="native"`推断硬解。
+`native.phase="preparing"`时pending包含目标，current保留原生已确认源。
+未创建原生所有者时native为null；图片的decoder及requested_decode为null。
+能力发现、采样计数及错误语义见DAEMON-API的GetEngineInfo说明。
+旧daemon不识别请求时沿用CLI标准JSON错误及非零退出码，不生成虚假能力结果。
+
+
+### `lianwall outputs --json` 与诊断事件流
+
+`outputs --json`返回GetOutputs的payload：available、protocols、outputs、truncated和error。
+尺寸为模式像素，刷新率单位毫赫兹；integer_scale不是分数缩放的实际逻辑比例。
+发现不可用也是有效查询结果（available=false，退出码0），不要只检查退出码来判断能否选择输出。
+
+`lianwall subscribe engine --json`输出NDJSON：Subscribed、Status、EngineInfo初始快照，
+随后是EngineChanged事件完整runtime。控制revision用于丢弃旧/重复快照；重连后必须重新建立基线。
+`subscribe all`保留旧8类事件集合，`subscribe all engine`显式追加诊断，不向旧脚本注入新枚举。
+流断开/事件丢失导致断开仍以JSON错误及非零退出码结束，由调用方重连同步。
+
+
+## 收藏与使用统计（6.0 开发中）
+
+```bash
+lianwall library --json
+lianwall library --offset 128 --limit 128 --json
+lianwall favorite '/wallpapers/forest.jpg' --json
+lianwall favorite '/wallpapers/forest.jpg' --remove --json
+lianwall subscribe library --json
+```
+
+`library` 一次输出一个分页对象，包含 `schema_version`、`revision`、`entries`、`total`、`next_offset`、`persistence_error`。每项为 `path`、`favorite`、`added_at`（Unix秒）、`last_used`（Unix秒或null）、`play_count`、`display_seconds`。默认/最大每页128项，CLI拒绝1–128以外的limit；`next_offset=null`表示结束。多页revision变化时应从头读取，重连后重置revision基线。
+
+`favorite` 解析为规范化绝对路径，缺失文件允许使用索引中保留的绝对路径。只修改收藏、不修改轮换锁定；成功输出 `{"success":true}`，失败沿用 `{"success":false,"error":"..."}` 与非零退出码。`subscribe library` 显式订阅 `LibraryChanged` 事件，既有 `subscribe all` 内容不变。
+
+统计从首次发现/成功切换开始，视频循环及同图重新应用不增加次数；驻留秒数不是观看时长。daemon停止期间不计时，定期与正常关闭保存。资料索引不随缩略图清理而删除；移动文件不自动搬迁旧条目。详见 [Daemon API](DAEMON-API.md#收藏与使用统计60-开发中)。
+
+
+## 显存读取测试与服务日志（6.0 开发中）
+
+```bash
+lianwall vram test --json
+lianwall logs --level warn --limit 128 --json
+```
+
+`vram test`只测试已保存读取配置，不改变监控、壁纸模式或暂停状态。返回一个`VramTest` payload对象，包含`schema_version`、`backend`、`success`、读数、命令输出、退出码、超时/截断标记、耗时与error。查询成功但无可用后端、命令失败或数据无效时，**退出码仍为0，脚本需检查对象的`success`字段**；这是一次诊断结果，不能等同于成功读数。连接/协议错误沿用非零退出码与既有错误对象。GUI另支持测试未保存命令。
+
+`logs`返回一个`Logs` payload对象，字段包括`schema_version`、`entries`、`path`、`persistence_error`、`dropped_disk_entries`、`active_filter`和`environment_override`。每条entry为`sequence/timestamp/level/line`；时间为UTC RFC3339，记录从旧到新。`--level`为最低严重程度，`--limit`为1–128，默认128。只读取最近内存快照，不能用它恢复过滤掉的消息或假定完整历史。持久日志路径、轮转限制和`RUST_LOG`优先规则见[Daemon API](DAEMON-API.md)。

@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-5.6.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-6.0.0-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
@@ -12,7 +12,7 @@
 
 awww/mpvpaper 需要合成器提供相应协议；不再承诺“全 Wayland / Linux / BSD 可用”。
 其他合成器、发行版和显卡组合属于未经验证环境，欢迎反馈，但不承诺逐个平台适配。
-5.6.0 继续使用外部引擎；自研后端规划为后续 6.0.0，不属于本版。
+6.0.0 默认包含内置图片/视频引擎；awww/mpvpaper为可选后端。请配套GUI2.0.0，升级与兼容性见[发行说明](changelogs/CHANGELOG-6.0.0.md)。
 
 | 文档 | 说明 |
 |------|------|
@@ -29,7 +29,7 @@ awww/mpvpaper 需要合成器提供相应协议；不再承诺“全 Wayland / L
 > - 支持 **prev / next** 浏览器式前进/后退导航（播放历史）
 > - **时间段目录**：通过文件夹命名控制壁纸在特定时间出现
 > - **守护进程架构**：CLI 与 Daemon 分离，Unix Socket 通信
-> - 支持 **动态壁纸**（视频/mpvpaper）和 **静态壁纸**（图片/awww）
+> - 支持 **动态壁纸**（内置视频或mpvpaper）和 **静态壁纸**（内置图片或awww）
 > - 模式切换时自动播放新壁纸，无需手动 next
   - 显存监控：游戏高占用时自动降级为静态壁纸，支持 NVIDIA / AMD / 自定义脚本（Intel 等）
 
@@ -55,8 +55,9 @@ awww/mpvpaper 需要合成器提供相应协议；不再承诺“全 Wayland / L
 
 | 依赖 | 用途 | 安装 (Arch Linux) | 必需 |
 |------|------|------|------|
-| [mpvpaper](https://github.com/GhostNaN/mpvpaper) | 动态壁纸引擎 | `paru -S mpvpaper` | ✓ |
-| [awww](https://codeberg.org/LGFae/awww) | 静态壁纸引擎 | `paru -S awww` | ✓ |
+| [mpvpaper](https://github.com/GhostNaN/mpvpaper) | 可选外部视频后端 | `paru -S mpvpaper` | ✗ |
+| [awww](https://codeberg.org/LGFae/awww) | 可选外部图片后端 | `paru -S awww` | ✗ |
+| Vulkan/Wayland/libplacebo/FFmpeg/lcms2 | 内置引擎运行库；需要兼容Vulkan驱动 | 见AUR依赖 | ✓ |
 | nvidia-smi | NVIDIA 显存检测 | 随驱动安装 | ✗ |
 | rocm-smi | AMD 显存检测 | `pacman -S rocm-smi-lib` | ✗ |
 | 自定义脚本 | Intel 等其他 GPU 显存检测 | 用户自行编写 | ✗ |
@@ -93,7 +94,7 @@ curl -fsSL https://raw.githubusercontent.com/Yueosa/lianwall/main/install.sh | b
 paru -S lianwall-bin   # 自动安装 lianwalld-bin 依赖
 ```
 
-在 **AUR 安装** 将会自动安装所有依赖 `lianwalld` -> `awww` + `mpvpaper`
+AUR会安装内置引擎运行库；只有选择外部后端时才需要额外安装awww或mpvpaper。
 
 ---
 
@@ -430,6 +431,29 @@ LianWall 在 `~/.cache/lianwall/` 存储运行时数据：
 
 ---
 
+### 收藏与使用统计（6.0）
+
+收藏及累计驻留统计由daemon保存在 `$XDG_DATA_HOME/lianwall/library.json`（默认 `~/.local/share/lianwall/library.json`），不放在缩略图文件名中。清理缩略图不会删除收藏。
+
+```bash
+lianwall favorite '/path/to/wallpaper.jpg'          # 收藏已扫描的壁纸
+lianwall favorite '/path/to/wallpaper.jpg' --remove # 取消收藏
+lianwall library --json                            # 分页查询收藏与统计
+```
+
+收藏不影响自动轮换；排除轮换仍使用lock。切换次数只计成功且不同路径的应用，不计视频循环；驻留时长并非用户观看时长。首次发现时间不等于文件创建时间。移动/重命名视作新条目，旧资料保留。每60秒及正常关闭保存当前计时；强制终止可能损失最近计时。索引损坏时保留原文件并报告错误，不覆盖已有资料。
+
+### 显存测试与日志（6.0）
+
+```bash
+lianwall vram test --json              # 单次测试保存的读取配置，不切换壁纸
+lianwall logs --level warn --limit 128 # 查看最近警告和错误
+```
+
+服务日志保存于`$XDG_STATE_HOME/lianwall/daemon.jsonl`（默认`~/.local/state/lianwall/daemon.jsonl`），每份最多2MiB并保留上一份轮转文件。GUI支持按级别查看、打开日志目录与导出当前记录。日志级别修改即时生效；显式`RUST_LOG`优先，界面会显示实际过滤器。当前接口提供daemon日志，尚不收集GUI自身Qt日志。
+
+显存命令限制3秒，并限制捕获输出；GUI可在保存前测试命令。测试不改变监控/手动覆盖和轮换状态。后台监控不再重复查询或阻塞异步线程；监控启停、命令和间隔修改无需重启。
+
 ## 🔧 故障排除
 
 ### Daemon 无法启动
@@ -504,9 +528,9 @@ LianWall License — 详见 [LICENSE](LICENSE) 文件
 恢复时停止 daemon，将备份复制回原配置；下次读取会再次迁移。CLI/GUI/API 不再接受旧键，
 调用脚本需同步更新；GUI 与 daemon 应配套升级。此项不改变外部引擎进程兼容策略。
 
-### 5.6.0 外部引擎边界
+### 外部引擎边界
 
-请配套使用 GUI 1.6.0。awww 与 awww-daemon 必须成对存在于 PATH；检测不再依赖 `which`。
+请配套使用GUI2.0.0与daemon6.0.0。awww 与 awww-daemon 必须成对存在于 PATH；检测不再依赖 `which`。
 现代 awww 使用本 daemon 独占命名空间（需支持 `--namespace`），不再按进程名全局 pkill。
 legacy swww 仍可检测回退，但共享端点已有外部 daemon 时明确拒绝接管；使用前请自行停止它。
 其他壁纸程序可能遮挡本程序表面，调试时请先排除同屏竞争。
@@ -520,3 +544,24 @@ mpvpaper 以前台进程运行，请勿透传 `--fork/-f`。每个 `mpv_args` �
 只清理本 daemon 的进程组及核对 inode 后的 IPC socket，不删除同名用户文件。
 
 调试本程序的图片后端时，使用 `awww query --namespace lianwall-<daemon进程PID>`；不带 namespace 的 query 查询的是外部默认实例。运行状态优先使用 `lianwall --json status`。
+
+### 6.0 内置引擎与首次配置
+
+正式构建默认包含native-image（图片与视频）。旧配置保留原有awww/mpvpaper选择；新建配置使用native与decode=auto。首次运行在GUI引擎页分别选择图片和视频的明确单个输出，或：
+
+```bash
+lianwall outputs
+lianwall config set video_engine.display HDMI-A-1
+lianwall config set image_engine.outputs HDMI-A-1
+lianwall next
+```
+
+请将HDMI-A-1替换为本机输出名。内置引擎不接受空值、*或逗号分隔多输出；未配置时daemon仍可连接，但应用壁纸会报告配置错误。旧版升级需先停止旧daemon，不能只换GUI。
+
+支持静音循环、软件/Vulkan解码、图片与视频交叉淡化。auto仅在首帧准备失败时回退软件；实际解码/错误/输出通过`lianwall engine --json`或GUI查看。外部参数只作用于对应外部后端。
+
+已验证作者本机Hyprland/NVIDIA、单输出SDR，不承诺所有Wayland合成器。多输出、HDR、音频不在内置后端本版支持范围。其他环境可自行选择外部后端，但不代表已验证兼容。
+
+源码构建需要C编译器、pkg-config、wayland-scanner、wayland-protocols与Wayland/Vulkan/libplacebo/FFmpeg/lcms2开发文件。正式`./build.sh`输出`build/6.0.0/`；非系统Vulkan头文件可用`VULKAN_HEADERS=/path/to/include`。`LIANWALL_NATIVE_IMAGE=0 ./build.sh`生成外部专用包，配置需选择awww/mpvpaper。
+
+当前x86_64发行二进制要求GLIBC≥2.39、libplacebo.so.360、FFmpeg9（avformat/avcodec63、avutil61、swscale10）以及Vulkan loader、Wayland、lcms2。其他ABI请源码构建。详细升级规则与测试范围见[6.0.0日志](changelogs/CHANGELOG-6.0.0.md)。
