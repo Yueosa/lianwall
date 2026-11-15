@@ -41,10 +41,16 @@ const VIDEO_EXTENSIONS: &[&str] = &[
     "mp4", "mkv", "webm", "avi", "mov", "flv", "wmv", "m4v", "3gp", "ogv", "ts", "m2ts",
 ];
 
-/// swww 支持的图片文件扩展名
+/// 图片候选扩展名；具体格式和色彩支持由所选后端验证。
 const IMAGE_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif", "pnm", "tga", "farbfeld",
+    "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif", "pnm", "ppm", "pgm", "pbm", "pam",
+    "tga", "farbfeld",
 ];
+
+/// Keep direct SetWallpaper classification consistent with scanned video candidates.
+pub fn is_video_path(path: &Path) -> bool {
+    has_valid_extension(path, VIDEO_EXTENSIONS)
+}
 
 /// 并行扫描配置
 #[derive(Debug, Clone)]
@@ -484,6 +490,18 @@ mod tests {
         fs::write(time_dir.join("morning.jpg"), "").unwrap();
 
         dir
+    }
+
+    #[test]
+    fn direct_media_classification_matches_scanning() {
+        for extension in VIDEO_EXTENSIONS {
+            assert!(is_video_path(Path::new(&format!("wall.{extension}"))));
+        }
+        for extension in IMAGE_EXTENSIONS {
+            assert!(!is_video_path(Path::new(&format!("wall.{extension}"))));
+        }
+        assert!(is_video_path(Path::new("wall.M2TS")));
+        assert!(!is_video_path(Path::new("wall.GIF")));
     }
 
     #[test]

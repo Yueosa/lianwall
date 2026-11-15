@@ -28,6 +28,7 @@ socket2 = "0.6"
 tempfile = "3.16"
 
 # Serialization (for protocol)
+dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
@@ -36,3 +37,10 @@ chrono.workspace = true
 
 [dev-dependencies]
 toml.workspace = true
+
+[features]
+default = ["native-image"]
+native-image = ["dep:cc"]
+
+[build-dependencies]
+cc = { version = "1", optional = true }

@@ -34,9 +34,15 @@ pub enum WallMode {
     Image,
 }
 
-/// 动态壁纸引擎配置 (mpvpaper)
+/// 动态壁纸引擎配置（默认 mpvpaper，可选原生）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VideoEngineConfig {
+    #[serde(default)]
+    pub backend: VideoBackend,
+    #[serde(default)]
+    pub fit: ImageFit,
+    #[serde(default)]
+    pub decode: VideoDecode,
     /// 切换间隔（秒）
     pub interval: u64,
     /// 目标显示器（"*" = 所有显示器，或指定如 "eDP-1"）
@@ -55,6 +61,27 @@ pub struct VideoEngineConfig {
     /// 视频切换过渡
     #[serde(default)]
     pub transition: VideoTransition,
+    /// Native GPU crossfade duration; external mpvpaper retains its own filter.
+    #[serde(default = "image_transition_ms")]
+    pub transition_ms: u32,
+    #[serde(default = "image_transition_fps")]
+    pub transition_fps: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoBackend {
+    #[default]
+    Mpvpaper,
+    Native,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum VideoDecode {
+    #[default]
+    Software,
+    Vulkan,
+    Auto,
 }
 
 /// 视频切换过渡类型
@@ -64,13 +91,51 @@ pub enum VideoTransition {
     /// 硬切换
     #[default]
     None,
-    /// 新视频淡入 0.4 秒
+    /// mpvpaper 新视频淡入0.4秒；原生后端按 transition_ms 进行 GPU 交叉淡化
     Fade,
 }
 
-/// 静态壁纸引擎配置 (awww)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageBackend {
+    #[default]
+    Awww,
+    Native,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageFit {
+    #[default]
+    Crop,
+    Fit,
+}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageTransition {
+    None,
+    #[default]
+    Fade,
+}
+fn image_transition_ms() -> u32 {
+    400
+}
+fn image_transition_fps() -> u32 {
+    60
+}
+
+/// 静态壁纸引擎配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageEngineConfig {
+    #[serde(default)]
+    pub backend: ImageBackend,
+    #[serde(default)]
+    pub fit: ImageFit,
+    #[serde(default)]
+    pub transition: ImageTransition,
+    #[serde(default = "image_transition_ms")]
+    pub transition_ms: u32,
+    #[serde(default = "image_transition_fps")]
+    pub transition_fps: u32,
     /// 切换间隔（秒）
     pub interval: u64,
     /// 目标显示器（空字符串 = 所有显示器，或逗号分隔如 "eDP-1,HDMI-A-1"）

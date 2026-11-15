@@ -82,6 +82,15 @@ pub async fn handle_command(
             handle_prev(state, event_bus, trigger).await
         }
 
+        Request::SetFavorite { path, favorite } => {
+            match state.library.favorite(&path, favorite).await {
+                Ok(()) => {
+                    event_bus.publish(Event::LibraryChanged { path, favorite });
+                    Response::ok()
+                }
+                Err(error) => Response::error(ErrorCode::InternalError, error),
+            }
+        }
         Request::SetWallpaper { path } => {
             handle_set_wallpaper(state, event_bus, path, WallpaperTrigger::ManualSet).await
         }
@@ -251,6 +260,7 @@ async fn handle_next(
         // 更新模式和当前壁纸
         *state.engine.mode.write().await = detected_mode;
         *state.engine.current.write().await = Some(path.clone());
+        state.library.activate(&path).await;
         sync_space_current_index(state, detected_mode, &path).await;
 
         publish_mode_changed_if_needed(event_bus, mode, detected_mode);
@@ -300,6 +310,7 @@ async fn handle_next(
 
     // 更新当前壁纸
     *state.engine.current.write().await = Some(path.clone());
+    state.library.activate(&path).await;
 
     // 发布事件
     event_bus.publish(Event::WallpaperChanged {
@@ -348,6 +359,7 @@ async fn handle_prev(
     // 更新模式和当前壁纸
     *state.engine.mode.write().await = detected_mode;
     *state.engine.current.write().await = Some(path.clone());
+    state.library.activate(&path).await;
     sync_space_current_index(state, detected_mode, &path).await;
 
     publish_mode_changed_if_needed(event_bus, old_mode, detected_mode);
@@ -364,13 +376,7 @@ async fn handle_prev(
 
 /// 从文件扩展名检测壁纸模式
 fn detect_mode(path: &Path) -> WallMode {
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(|s| s.to_lowercase())
-        .unwrap_or_default();
-
-    if matches!(ext.as_str(), "mp4" | "webm" | "mkv" | "avi" | "mov" | "gif") {
+    if lianwall_core::wallpaper::is_video_path(path) {
         WallMode::Video
     } else {
         WallMode::Image
@@ -403,6 +409,7 @@ async fn handle_set_wallpaper(
     // 更新模式和当前壁纸
     *state.engine.mode.write().await = mode;
     *state.engine.current.write().await = Some(path.clone());
+    state.library.activate(&path).await;
     sync_space_current_index(state, mode, &path).await;
 
     publish_mode_changed_if_needed(event_bus, old_mode, mode);
@@ -510,6 +517,7 @@ async fn handle_set_mode_with_trigger(
     state.playback_history.write().await.push(path.clone());
 
     *state.engine.current.write().await = Some(path.clone());
+    state.library.activate(&path).await;
 
     // 发布模式变更 + 壁纸切换事件
     event_bus.publish(Event::ModeChanged {
@@ -699,7 +707,13 @@ async fn handle_set_config(
         );
     }
     // Commit only after persistence succeeds; errors leave memory and events unchanged.
+    let log_level = candidate.daemon.log_level.clone();
     state.set_config(candidate).await;
+    if key == "daemon.log_level" {
+        if let Err(error) = state.logs.set_level(&log_level) {
+            tracing::error!(%error,"Saved log level could not be applied to the active subscriber");
+        }
+    }
     if key == "video_engine.interval" {
         *state.saved_video_interval.write().await = None;
     } else if key == "image_engine.interval" {
@@ -737,6 +751,9 @@ async fn handle_set_config(
 async fn handle_reload_config(state: &Arc<SharedState>, event_bus: &EventBus) -> Response {
     match lianwall_core::config::read(lianwall_core::config::ConfigReadInput { path: None }) {
         Ok(result) => {
+            if let Err(error) = state.logs.set_level(&result.config.daemon.log_level) {
+                return Response::error(ErrorCode::ConfigError, error);
+            }
             *state.config.write().await = result.config;
             // 磁盘配置为准,清除悬空的轮换暂停态
             *state.saved_video_interval.write().await = None;
@@ -813,6 +830,10 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
             .unwrap_or_default();
         all_wallpapers.extend(video_wallpapers.clone());
         all_wallpapers.extend(image_wallpapers.clone());
+        state
+            .library
+            .discover(all_wallpapers.iter().map(|item| item.path.clone()))
+            .await;
 
         // 保存原始扫描总数（过滤前）到 state，供 status 查询
         *state.scanned_counts.write().await = (video_wallpapers.len(), image_wallpapers.len());

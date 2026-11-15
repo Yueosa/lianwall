@@ -81,6 +81,9 @@ impl Fixture {
         }
         let mut config: lianwall_core::config::Config =
             toml::from_str(lianwall_core::config::DEFAULT_CONFIG_TOML).unwrap();
+        config.video_engine.backend = lianwall_core::config::VideoBackend::Mpvpaper;
+        config.image_engine.backend = lianwall_core::config::ImageBackend::Awww;
+        config.video_engine.transition = lianwall_core::config::VideoTransition::None;
         config.paths.video_dir = dir.path().join("videos");
         config.paths.image_dir = dir.path().join("images");
         fs::create_dir(&config.paths.video_dir).unwrap();
@@ -102,6 +105,8 @@ impl Fixture {
             .env("HOME", dir.path())
             .env("XDG_CONFIG_HOME", dir.path().join("config"))
             .env("XDG_CACHE_HOME", dir.path().join("cache"))
+            .env("XDG_DATA_HOME", dir.path().join("data"))
+            .env("XDG_STATE_HOME", dir.path().join("state"))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -202,13 +207,30 @@ fn failed_video_preserves_engine_history_and_selection_then_shuts_down_owned_gro
     fs::remove_file(fixture.dir.path().join("fail-image")).unwrap();
     assert_eq!(fixture.request(json!({"cmd":"Prev"}))["type"], "Ok");
     assert_eq!(fixture.status()["current"], json!(image));
+    let library_before = fixture.request(json!({"cmd":"GetLibrary"}));
     fixture.file("fail-video");
     assert_eq!(fixture.request(json!({"cmd":"Next"}))["type"], "Error");
+    let library_after = fixture.request(json!({"cmd":"GetLibrary"}));
+    assert_eq!(
+        library_before["payload"]["revision"], library_after["payload"]["revision"],
+        "failed engine applications must not commit usage"
+    );
     assert_eq!(fixture.status()["current"], json!(image));
     assert_eq!(fixture.status()["engine"], "awww");
     fs::remove_file(fixture.dir.path().join("fail-video")).unwrap();
     assert_eq!(fixture.request(json!({"cmd":"Next"}))["type"], "Ok");
     assert_eq!(fixture.status()["current"], json!(video));
+    let library = fixture.request(json!({"cmd":"GetLibrary"}));
+    let video_metadata = library["payload"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["path"] == json!(video))
+        .unwrap();
+    assert_eq!(
+        video_metadata["play_count"], 2,
+        "returning to a previous wallpaper counts once"
+    );
     // A failed selection must not change the space's current index/timestamps/cooldown.
     fixture.file("videos/select.mp4");
     assert_eq!(fixture.request(json!({"cmd":"Rescan"}))["type"], "Ok");

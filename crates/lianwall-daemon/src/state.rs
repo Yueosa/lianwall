@@ -249,6 +249,7 @@ impl ManagedProcess {
 /// 引擎状态快照（用于查询响应）
 #[derive(Debug, Clone)]
 pub struct EngineSnapshot {
+    pub native_running: bool,
     pub mode: WallMode,
     pub current: Option<PathBuf>,
     pub swww_daemon_running: bool,
@@ -258,6 +259,10 @@ pub struct EngineSnapshot {
 
 /// 引擎状态（异步安全版本）
 pub struct AsyncEngineState {
+    /// Separate opt-in stream; no GPU worker or process is created by subscribing.
+    pub native_updates: broadcast::Sender<lianwall_core::socket::NativeRuntime>,
+    #[cfg(feature = "native-image")]
+    pub native: Mutex<Option<Arc<crate::native::NativeEngine>>>,
     /// 当前模式
     pub mode: RwLock<WallMode>,
     /// 当前壁纸路径
@@ -274,6 +279,9 @@ impl AsyncEngineState {
     /// 创建新的引擎状态
     pub fn new(mode: WallMode) -> Self {
         Self {
+            native_updates: broadcast::channel(64).0,
+            #[cfg(feature = "native-image")]
+            native: Mutex::new(None),
             mode: RwLock::new(mode),
             current: RwLock::new(None),
             swww_daemon: ManagedProcess::new("image-daemon"),
@@ -286,6 +294,20 @@ impl AsyncEngineState {
     /// 转换为快照（用于序列化）
     pub async fn snapshot(&self) -> EngineSnapshot {
         EngineSnapshot {
+            native_running: {
+                #[cfg(feature = "native-image")]
+                {
+                    self.native
+                        .lock()
+                        .await
+                        .as_ref()
+                        .is_some_and(|engine| engine.is_active())
+                }
+                #[cfg(not(feature = "native-image"))]
+                {
+                    false
+                }
+            },
             mode: *self.mode.read().await,
             current: self.current.read().await.clone(),
             swww_daemon_running: self.swww_daemon.is_running().await,
@@ -297,6 +319,9 @@ impl AsyncEngineState {
 
 /// Daemon 共享状态
 pub struct SharedState {
+    pub logs: crate::logging::LogStore,
+    pub vram_probe_permit: Arc<tokio::sync::Semaphore>,
+    pub library: crate::library::LibraryStore,
     /// 配置
     pub config: RwLock<Config>,
 
@@ -379,6 +404,9 @@ impl SharedState {
         };
 
         let state = Arc::new(Self {
+            logs: crate::logging::LogStore::default(),
+            vram_probe_permit: Arc::new(tokio::sync::Semaphore::new(1)),
+            library: crate::library::LibraryStore::default(),
             config: RwLock::new(config),
             video_space: RwLock::new(video_space),
             image_space: RwLock::new(image_space),

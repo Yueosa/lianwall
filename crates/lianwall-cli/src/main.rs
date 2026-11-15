@@ -63,6 +63,11 @@ fn main() {
         Command::Restart => handlers::handle_restart(&fmt),
         // 状态查询
         Command::Status => handlers::handle_status(&fmt),
+        Command::Engine => handlers::handle_engine(&fmt),
+        Command::Outputs => handlers::handle_outputs(&fmt),
+        Command::Logs { level, limit } => handlers::handle_logs(&fmt, level, limit.into()),
+        Command::Library { offset, limit } => handlers::handle_library(&fmt, offset, limit.into()),
+        Command::Favorite { path, remove } => handlers::handle_favorite(&fmt, path, !remove),
         Command::Space { video, image } => handlers::handle_space(&fmt, video, image),
         Command::Time => handlers::handle_time(&fmt),
         // 壁纸控制

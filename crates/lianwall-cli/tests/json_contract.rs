@@ -345,3 +345,199 @@ fn legacy_image_config_migrates_and_cli_only_accepts_new_key() {
     let error: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert!(error.to_string().contains("Both"));
 }
+
+#[test]
+fn engine_json_uses_a_separate_query_and_reports_actual_decoder() {
+    use lianwall_core::{
+        config::{ImageBackend, VideoBackend, VideoDecode},
+        socket::{DecoderKind, EngineInfo, NativePhase, NativeRuntime},
+    };
+    let fixture = Fixture::new();
+    let listener = fixture.listener();
+    let server = std::thread::spawn(move || {
+        let (mut reader, mut writer) = accept(&listener);
+        let frame = request(&mut reader);
+        assert_eq!(frame["cmd"], "GetEngineInfo");
+        let payload = EngineInfo {
+            schema_version: 1,
+            configured_image: ImageBackend::Native,
+            configured_video: VideoBackend::Native,
+            configured_decode: VideoDecode::Auto,
+            active_backend: "native".into(),
+            backends: vec![],
+            native: Some(NativeRuntime {
+                phase: NativePhase::Running,
+                requested_decode: Some(VideoDecode::Auto),
+                decoder: Some(DecoderKind::Software),
+                fallback_reason: Some("unsupported profile".into()),
+                ..Default::default()
+            }),
+        };
+        send(
+            &mut writer,
+            json!({"id":frame["id"], "type":"EngineInfo", "payload":payload}),
+        );
+    });
+    let result = fixture.json(&["engine", "--json"]);
+    server.join().unwrap();
+    assert_eq!(result["schema_version"], 1);
+    assert_eq!(result["native"]["decoder"], "software");
+    assert_eq!(result["native"]["requested_decode"], "auto");
+    assert_eq!(result["native"]["fallback_reason"], "unsupported profile");
+    assert!(
+        result.get("type").is_none(),
+        "CLI JSON returns the payload, not the socket envelope"
+    );
+}
+
+#[test]
+fn outputs_json_represents_unavailable_discovery_without_fake_entries() {
+    let fixture = Fixture::new();
+    let listener = fixture.listener();
+    let server = std::thread::spawn(move || {
+        let (mut reader, mut writer) = accept(&listener);
+        let frame = request(&mut reader);
+        assert_eq!(frame["cmd"], "GetOutputs");
+        send(
+            &mut writer,
+            json!({"id":frame["id"], "type":"Outputs", "payload": {
+            "schema_version":1,"available":false,"truncated":false,"outputs":[],
+            "protocols":{"compositor":false,"layer_shell":false,"viewporter":false,"fractional_scale":false,"presentation_time":false},
+            "error":"No Wayland session"}}),
+        );
+    });
+    let value = fixture.json(&["outputs", "--json"]);
+    server.join().unwrap();
+    assert_eq!(value["available"], false);
+    assert_eq!(value["outputs"], json!([]));
+    assert!(value["error"].is_string());
+}
+
+#[test]
+fn engine_subscription_keeps_initial_snapshot_and_revision_as_ndjson() {
+    use lianwall_core::{
+        config::{ImageBackend, VideoBackend, VideoDecode},
+        socket::{EngineInfo, Event, NativeRuntime},
+    };
+    let fixture = Fixture::new();
+    let listener = fixture.listener();
+    let server = std::thread::spawn(move || {
+        let (mut reader, mut writer) = accept(&listener);
+        let subscribe = request(&mut reader);
+        assert_eq!(subscribe["events"], json!(["engine_changed"]));
+        send(
+            &mut writer,
+            json!({"id":subscribe["id"], "type":"Subscribed", "payload":{"session_id":"engine-test","subscribed_events":["engine_changed"]}}),
+        );
+        send(
+            &mut writer,
+            json!({"id":0,"type":"Status","payload":status()}),
+        );
+        let info = EngineInfo {
+            schema_version: 1,
+            configured_image: ImageBackend::Awww,
+            configured_video: VideoBackend::Mpvpaper,
+            configured_decode: VideoDecode::Software,
+            active_backend: "none".into(),
+            backends: vec![],
+            native: None,
+        };
+        send(
+            &mut writer,
+            json!({"id":0,"type":"EngineInfo","payload":info}),
+        );
+        let event = Event::EngineChanged {
+            runtime: NativeRuntime {
+                revision: 7,
+                ..Default::default()
+            },
+        };
+        send(&mut writer, json!({"id":0,"type":"Event","payload":event}));
+    });
+    let output = fixture.output(&["subscribe", "engine", "--json"]);
+    server.join().unwrap();
+    assert!(!output.status.success()); // EOF still reports stream failure, allowing reconnect.
+    assert!(output.stderr.is_empty());
+    let frames: Vec<Value> = String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    assert_eq!(frames[2]["type"], "EngineInfo");
+    assert_eq!(frames[3]["payload"]["event"], "EngineChanged");
+    assert_eq!(frames[3]["payload"]["data"]["runtime"]["revision"], 7);
+    assert_eq!(frames[4]["success"], false);
+}
+
+#[test]
+fn library_and_favorite_json_contracts_preserve_paging_and_explicit_state() {
+    let fixture = Fixture::new();
+    let listener = fixture.listener();
+    let server = std::thread::spawn(move || {
+        let (mut reader, mut writer) = accept(&listener);
+        let query = request(&mut reader);
+        assert_eq!(query["cmd"], "GetLibrary");
+        assert_eq!(query["offset"], 128);
+        assert_eq!(query["limit"], 64);
+        send(
+            &mut writer,
+            json!({"id":query["id"],"type":"Library","payload":{"schema_version":1,"revision":5,"entries":[],"total":128,"next_offset":null,"persistence_error":null}}),
+        );
+        let (mut reader, mut writer) = accept(&listener);
+        let mutation = request(&mut reader);
+        assert_eq!(mutation["cmd"], "SetFavorite");
+        assert_eq!(mutation["favorite"], false);
+        assert!(
+            mutation["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("missing # 图片.jpg")
+        );
+        send(&mut writer, json!({"id":mutation["id"],"type":"Ok"}));
+    });
+    let page = fixture.json(&["library", "--offset", "128", "--limit", "64", "--json"]);
+    assert_eq!(page["schema_version"], 1);
+    assert!(page["next_offset"].is_null());
+    assert_eq!(
+        fixture.json(&["favorite", "missing # 图片.jpg", "--remove", "--json"])["success"],
+        true
+    );
+    server.join().unwrap();
+    let output = fixture.output(&["library", "--limit", "129", "--json"]);
+    assert!(!output.status.success());
+    assert_eq!(
+        serde_json::from_slice::<Value>(&output.stdout).unwrap()["success"],
+        false
+    );
+}
+
+#[test]
+fn diagnostics_json_preserves_negative_probe_results_and_log_metadata() {
+    let fixture = Fixture::new();
+    let listener = fixture.listener();
+    let server = std::thread::spawn(move || {
+        let (mut reader, mut writer) = accept(&listener);
+        let probe = request(&mut reader);
+        assert_eq!(probe["cmd"], "TestVram");
+        send(
+            &mut writer,
+            json!({"id":probe["id"],"type":"VramTest","payload":{"schema_version":1,"backend":"none","success":false,"total_mb":null,"used_mb":null,"free_mb":null,"free_percent":null,"stdout":"","stderr":"","exit_code":null,"timed_out":false,"truncated":false,"elapsed_ms":0,"error":"No backend"}}),
+        );
+        let (mut reader, mut writer) = accept(&listener);
+        let logs = request(&mut reader);
+        assert_eq!(logs["cmd"], "GetLogs");
+        assert_eq!(logs["level"], "warn");
+        assert_eq!(logs["limit"], 10);
+        send(
+            &mut writer,
+            json!({"id":logs["id"],"type":"Logs","payload":{"schema_version":1,"entries":[],"path":null,"persistence_error":"Read only filesystem","dropped_disk_entries":2,"active_filter":"lianwall_daemon=info","environment_override":true}}),
+        );
+    });
+    let report = fixture.json(&["vram", "test", "--json"]);
+    assert_eq!(report["success"], false);
+    assert_eq!(report["error"], "No backend");
+    let logs = fixture.json(&["logs", "--level", "warn", "--limit", "10", "--json"]);
+    assert_eq!(logs["dropped_disk_entries"], 2);
+    assert_eq!(logs["environment_override"], true);
+    server.join().unwrap();
+}

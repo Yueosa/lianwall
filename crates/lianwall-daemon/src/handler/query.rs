@@ -23,6 +23,25 @@ pub async fn handle_query(state: &Arc<SharedState>, request: Request) -> Respons
         },
 
         Request::GetStatus => get_status(state).await,
+        Request::GetEngineInfo => super::engine::get_engine_info(state).await,
+        Request::TestVram { backend, command } => {
+            super::diagnostics::test_vram(state, backend, command).await
+        }
+        Request::GetLogs { level, limit } => {
+            let level = level.as_deref().filter(|level| !level.is_empty());
+            if level.is_some_and(|level| !crate::logging::valid_level(level)) {
+                Response::error(
+                    ErrorCode::InvalidRequest,
+                    "Expected trace/debug/info/warn/error or no level",
+                )
+            } else {
+                Response::Logs(state.logs.snapshot(level, limit))
+            }
+        }
+        Request::GetLibrary { offset, limit } => {
+            Response::Library(state.library.snapshot(offset, limit).await)
+        }
+        Request::GetOutputs => super::engine::get_outputs().await,
 
         Request::GetConfig { key } => get_config(state, key).await,
 
@@ -51,7 +70,9 @@ async fn get_status(state: &Arc<SharedState>) -> Response {
         .as_ref()
         .and_then(|p| p.file_name().map(|s| s.to_string_lossy().to_string()));
 
-    let engine_name = if engine.mpvpaper_running {
+    let engine_name = if engine.native_running {
+        "native"
+    } else if engine.mpvpaper_running {
         "mpvpaper"
     } else if engine.swww_daemon_running {
         engine.image_bin.as_deref().unwrap_or("awww")
@@ -184,6 +205,44 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
         },
         // ==================== video_engine ====================
         ConfigKeyInfo {
+            key: "video_engine.decode".into(),
+            value_type: "enum".into(),
+            description:
+                "原生解码策略：软件、必须Vulkan硬解、首帧失败时回退软件；实际选择写入daemon日志"
+                    .into(),
+            default: serde_json::json!("software"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["software".into(), "vulkan".into(), "auto".into()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "video_engine.backend".into(),
+            value_type: "enum".into(),
+            description: "视频后端；native 可选软件/Vulkan解码，需要明确的单个 display".into(),
+            default: serde_json::json!("mpvpaper"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["mpvpaper".into(), "native".into()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "video_engine.fit".into(),
+            value_type: "enum".into(),
+            description: "原生视频缩放".into(),
+            default: serde_json::json!("crop"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["crop".into(), "fit".into()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
             key: "video_engine.interval".to_string(),
             value_type: "integer".to_string(),
             description: "动态壁纸切换间隔（秒）".to_string(),
@@ -254,6 +313,102 @@ fn get_modifiable_keys() -> Vec<ConfigKeyInfo> {
                 "--resize=crop"
             ]),
             constraints: None,
+        },
+        ConfigKeyInfo {
+            key: "image_engine.backend".into(),
+            value_type: "enum".into(),
+            description: "图片后端；native 需要实验性编译功能及明确的单个输出".into(),
+            default: serde_json::json!("awww"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["awww".to_string(), "native".to_string()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "image_engine.fit".into(),
+            value_type: "enum".into(),
+            description: "原生后端图片缩放".into(),
+            default: serde_json::json!("crop"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["crop".to_string(), "fit".to_string()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "video_engine.transition".into(),
+            value_type: "enum".into(),
+            description: "视频切换动画；原生后端支持跨媒体 GPU 淡化".into(),
+            default: serde_json::json!("none"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["none".to_string(), "fade".to_string()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "image_engine.transition".into(),
+            value_type: "enum".into(),
+            description: "原生后端切换动画".into(),
+            default: serde_json::json!("fade"),
+            constraints: Some(ConfigConstraints {
+                min: None,
+                max: None,
+                enum_values: Some(vec!["none".to_string(), "fade".to_string()]),
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "image_engine.transition_ms".into(),
+            value_type: "integer".into(),
+            description: "原生切换动画时长（毫秒）".into(),
+            default: serde_json::json!(400),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(0)),
+                max: Some(serde_json::json!(2000)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "image_engine.transition_fps".into(),
+            value_type: "integer".into(),
+            description: "原生切换动画帧率上限".into(),
+            default: serde_json::json!(60),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(1)),
+                max: Some(serde_json::json!(120)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "video_engine.transition_ms".into(),
+            value_type: "integer".into(),
+            description: "原生切换动画时长（毫秒）".into(),
+            default: serde_json::json!(400),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(0)),
+                max: Some(serde_json::json!(2000)),
+                enum_values: None,
+                pattern: None,
+            }),
+        },
+        ConfigKeyInfo {
+            key: "video_engine.transition_fps".into(),
+            value_type: "integer".into(),
+            description: "原生切换动画帧率上限".into(),
+            default: serde_json::json!(60),
+            constraints: Some(ConfigConstraints {
+                min: Some(serde_json::json!(1)),
+                max: Some(serde_json::json!(120)),
+                enum_values: None,
+                pattern: None,
+            }),
         },
         // ==================== algorithm ====================
         ConfigKeyInfo {

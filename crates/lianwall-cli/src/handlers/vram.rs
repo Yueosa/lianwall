@@ -15,6 +15,21 @@ use super::{Result, connect};
 /// 处理 vram 子命令
 pub fn handle_vram(fmt: &Formatter, action: VramAction) -> Result<()> {
     match action {
+        VramAction::Test => {
+            let report = connect()?.test_vram()?;
+            if fmt.is_json() {
+                println!("{}", serde_json::to_string_pretty(&report).unwrap());
+            } else if report.success {
+                fmt.print_success(&format!(
+                    "{}: {} / {} MB used",
+                    report.backend,
+                    report.used_mb.unwrap_or(0),
+                    report.total_mb.unwrap_or(0)
+                ));
+            } else {
+                fmt.print_warning(&report.error.unwrap_or_else(|| "GPU test failed".into()));
+            }
+        }
         VramAction::Downgrade => {
             let mut client = connect()?;
             client.vram_override(VramOverrideAction::Downgrade)?;

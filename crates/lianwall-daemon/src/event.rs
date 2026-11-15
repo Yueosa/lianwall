@@ -16,19 +16,23 @@ use lianwall_core::socket::WallpaperTrigger;
 /// 事件类型
 #[derive(Debug, Clone)]
 pub enum Event {
+    LibraryChanged {
+        path: PathBuf,
+        favorite: bool,
+    },
     /// 壁纸已切换
     WallpaperChanged {
         path: PathBuf,
         mode: WallMode,
         trigger: WallpaperTrigger,
     },
-    
+
     /// 模式已变更
     ModeChanged {
         from: WallMode,
         to: WallMode,
     },
-    
+
     /// 壁纸空间已更新
     SpaceUpdated {
         reason: SpaceUpdateReason,
@@ -38,7 +42,7 @@ pub enum Event {
         locked: usize,
         in_cooldown: usize,
     },
-    
+
     /// 扫描进度
     ScanProgress {
         mode: WallMode,
@@ -46,7 +50,7 @@ pub enum Event {
         files_found: usize,
         current_dir: PathBuf,
     },
-    
+
     /// 配置已变更
     ConfigChanged {
         /// 配置键（"all" 表示整体重载）
@@ -56,22 +60,22 @@ pub enum Event {
         /// 新值（重载时为 null）
         new_value: serde_json::Value,
     },
-    
+
     /// 引擎状态变更
     EngineStateChanged {
         swww_running: bool,
         mpvpaper_running: bool,
     },
-    
+
     /// GPU 状态更新
     GpuStateUpdated {
         action: VramAction,
         vram_info: Option<VramInfo>,
     },
-    
+
     /// 调度期限已更新（内部通知，订阅 status 的客户端会收到权威 Status 快照）
     SchedulerTick,
-    
+
     /// 时间点到达（触发重建向量空间）
     TimePointReached {
         /// 当前时间点 "HH:MM"
@@ -79,12 +83,12 @@ pub enum Event {
         /// 下一个时间点 "HH:MM"（可能为 None）
         next_time: Option<String>,
     },
-    
+
     /// 错误事件
     Error {
         message: String,
     },
-    
+
     /// 即将关闭
     ShuttingDown,
 }
@@ -116,7 +120,7 @@ impl EventBus {
         let (sender, _) = broadcast::channel(capacity);
         Self { sender }
     }
-    
+
     /// 发布事件
     ///
     /// 如果没有订阅者，事件会被静默丢弃
@@ -124,12 +128,12 @@ impl EventBus {
         // 忽略发送失败（没有接收者）
         let _ = self.sender.send(event);
     }
-    
+
     /// 订阅事件
     pub fn subscribe(&self) -> broadcast::Receiver<Event> {
         self.sender.subscribe()
     }
-    
+
     /// 获取当前订阅者数量
     pub fn subscriber_count(&self) -> usize {
         self.sender.receiver_count()
@@ -145,47 +149,47 @@ impl Default for EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[tokio::test]
     async fn test_publish_subscribe() {
         let bus = EventBus::new(16);
         let mut rx = bus.subscribe();
-        
+
         bus.publish(Event::ConfigChanged {
             key: "test".to_string(),
             old_value: serde_json::Value::Null,
             new_value: serde_json::Value::Null,
         });
-        
+
         match rx.recv().await {
             Ok(Event::ConfigChanged { .. }) => {}
             other => panic!("Unexpected event: {:?}", other),
         }
     }
-    
+
     #[tokio::test]
     async fn test_multiple_subscribers() {
         let bus = EventBus::new(16);
         let mut rx1 = bus.subscribe();
         let mut rx2 = bus.subscribe();
-        
+
         assert_eq!(bus.subscriber_count(), 2);
-        
+
         bus.publish(Event::ConfigChanged {
             key: "test".to_string(),
             old_value: serde_json::Value::Null,
             new_value: serde_json::Value::Null,
         });
-        
+
         // 两个订阅者都应收到
         assert!(matches!(rx1.recv().await, Ok(Event::ConfigChanged { .. })));
         assert!(matches!(rx2.recv().await, Ok(Event::ConfigChanged { .. })));
     }
-    
+
     #[tokio::test]
     async fn test_no_subscriber() {
         let bus = EventBus::new(16);
-        
+
         // 没有订阅者时发布不应 panic
         bus.publish(Event::ConfigChanged {
             key: "test".to_string(),

@@ -167,7 +167,8 @@ if [[ ":$PATH:" != *":${INSTALL_DIR}:"* ]]; then
 fi
 
 # 检查依赖
-echo "Checking dependencies..."
+echo "Built-in engine requires compatible Vulkan/Wayland, libplacebo, FFmpeg and lcms2 runtime libraries."
+echo "Checking optional external backends..."
 MISSING_DEPS=""
 
 if ! command -v awww &> /dev/null && ! command -v swww &> /dev/null; then
@@ -180,8 +181,8 @@ fi
 
 if [[ -n "$MISSING_DEPS" ]]; then
     warn "Missing optional dependencies:${MISSING_DEPS}"
-    echo "  - awww (or swww): required for image wallpapers"
-    echo "  - mpvpaper: required for video wallpapers"
+    echo "  - awww (or swww): only required for the external image backend"
+    echo "  - mpvpaper: only required for the external video backend"
     echo ""
 fi
 

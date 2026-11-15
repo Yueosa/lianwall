@@ -116,6 +116,9 @@ fn has_option(arguments: &[String], name: &str) -> bool {
 
 async fn video(state: &SharedState, path: &Path) -> anyhow::Result<()> {
     let config = state.get_config().await.video_engine;
+    if config.backend == lianwall_core::config::VideoBackend::Native {
+        return native_video(state, path).await;
+    }
     if config.mpvpaper_args.iter().any(|arg| {
         arg == "--fork"
             || (!arg.starts_with("--") && arg.starts_with('-') && arg[1..].contains('f'))
@@ -178,6 +181,7 @@ async fn video(state: &SharedState, path: &Path) -> anyhow::Result<()> {
             && state.engine.mpvpaper.is_running().await
             && crate::ipc::loadfile(&config.ipc_socket, path).await.is_ok()
         {
+            hide_native(state).await;
             state.engine.swww_daemon.kill().await;
             return Ok(());
         }
@@ -240,11 +244,61 @@ async fn video(state: &SharedState, path: &Path) -> anyhow::Result<()> {
     if persistent_socket.is_none() {
         cleanup_ipc(state).await;
     }
+    hide_native(state).await;
     state.engine.swww_daemon.kill().await;
     Ok(())
 }
 
-async fn image(state: &SharedState, path: &Path) -> anyhow::Result<()> {
+async fn native_video(state: &SharedState, path: &Path) -> anyhow::Result<()> {
+    #[cfg(not(feature = "native-image"))]
+    {
+        let _ = (state, path);
+        bail!(
+            "Native video support is not compiled in; use --features native-image or select video_engine.backend=mpvpaper"
+        );
+    }
+    #[cfg(feature = "native-image")]
+    {
+        use lianwall_core::config::{ImageFit, VideoTransition};
+        let config = state.get_config().await.video_engine;
+        let engine = {
+            let mut guard = state.engine.native.lock().await;
+            if guard.is_none() {
+                *guard = Some(Arc::new(crate::native::NativeEngine::with_updates(
+                    state.engine.native_updates.clone(),
+                )?));
+            }
+            guard.as_ref().unwrap().clone()
+        };
+        let stats = engine
+            .show_video_with_options(
+                path,
+                &config.display,
+                crate::native::Options {
+                    fit: i32::from(config.fit == ImageFit::Fit),
+                    duration_ms: if config.transition == VideoTransition::None {
+                        0
+                    } else {
+                        i32::try_from(config.transition_ms)?
+                    },
+                    fps: i32::try_from(config.transition_fps)?,
+                },
+                match config.decode {
+                    lianwall_core::config::VideoDecode::Software => 0,
+                    lianwall_core::config::VideoDecode::Vulkan => 1,
+                    lianwall_core::config::VideoDecode::Auto => 2,
+                },
+            )
+            .await?;
+        tracing::debug!(?stats, "Native video first frame presented");
+        state.engine.swww_daemon.kill().await;
+        state.engine.mpvpaper.kill().await;
+        cleanup_ipc(state).await;
+        Ok(())
+    }
+}
+
+async fn external_image(state: &SharedState, path: &Path) -> anyhow::Result<()> {
     let config = state.get_config().await.image_engine;
     if config.awww_args.iter().any(|arg| {
         matches!(arg.as_str(), "--all" | "-a" | "--namespace" | "-n")
@@ -323,9 +377,78 @@ async fn image(state: &SharedState, path: &Path) -> anyhow::Result<()> {
         state.engine.swww_daemon.set(process).await;
         *state.engine.image_bin.write().await = Some(bin);
     }
+    hide_native(state).await;
     state.engine.mpvpaper.kill().await;
     cleanup_ipc(state).await;
     Ok(())
+}
+
+async fn hide_native(state: &SharedState) {
+    #[cfg(not(feature = "native-image"))]
+    let _ = state;
+    #[cfg(feature = "native-image")]
+    {
+        let native = state.engine.native.lock().await.as_ref().cloned();
+        if let Some(engine) = native
+            && let Err(error) = engine.hide().await
+        {
+            tracing::debug!(%error, "Native renderer already stopped");
+        }
+    }
+}
+
+async fn image(state: &SharedState, path: &Path) -> anyhow::Result<()> {
+    use lianwall_core::config::ImageBackend;
+    let config = state.get_config().await.image_engine;
+    if config.backend == ImageBackend::Awww {
+        return external_image(state, path).await;
+    }
+    #[cfg(not(feature = "native-image"))]
+    bail!(
+        "Native image support is not compiled in; build lianwalld with --features native-image or select image_engine.backend=awww"
+    );
+    #[cfg(feature = "native-image")]
+    {
+        use lianwall_core::config::{ImageFit, ImageTransition};
+        let engine = {
+            let mut guard = state.engine.native.lock().await;
+            if guard.is_none() {
+                *guard = Some(Arc::new(crate::native::NativeEngine::with_updates(
+                    state.engine.native_updates.clone(),
+                )?));
+            }
+            guard.as_ref().unwrap().clone()
+        };
+        let stats = engine
+            .show(
+                path,
+                &config.outputs,
+                crate::native::Options {
+                    fit: i32::from(config.fit == ImageFit::Fit),
+                    duration_ms: if config.transition == ImageTransition::None {
+                        0
+                    } else {
+                        i32::try_from(config.transition_ms)?
+                    },
+                    fps: i32::try_from(config.transition_fps)?,
+                },
+            )
+            .await?;
+        tracing::debug!(?stats, "Native image submitted");
+        state.engine.swww_daemon.kill().await;
+        state.engine.mpvpaper.kill().await;
+        cleanup_ipc(state).await;
+        Ok(())
+    }
+}
+
+pub async fn shutdown_native(state: &SharedState) {
+    #[cfg(not(feature = "native-image"))]
+    let _ = state;
+    #[cfg(feature = "native-image")]
+    if let Some(engine) = state.engine.native.lock().await.take() {
+        engine.shutdown().await;
+    }
 }
 
 pub async fn apply(state: &SharedState, path: &Path, mode: WallMode) -> anyhow::Result<()> {

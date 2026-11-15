@@ -19,19 +19,25 @@ video_dir = "~/Videos/lianwall"
 # 静态壁纸目录（支持 ~ 展开）
 image_dir = "~/Pictures/lianwall"
 
-# === 动态壁纸引擎 (mpvpaper) ===
+# === 动态壁纸引擎 ===
 # 官方文档: https://github.com/GhostNaN/mpvpaper
 # mpvpaper 是基于 mpv 的 Wayland 动态壁纸播放器
 [video_engine]
+# 新配置默认内置引擎；外部后端可选 mpvpaper。旧配置不强制迁移后端。
+backend = "native"
+fit = "crop"
+# 原生视频解码: software / vulkan（必须硬解）/ auto（首帧失败时回退软件）
+decode = "auto"
 # 壁纸切换间隔（秒）
 # 范围: 10 - 86400（10秒 ~ 24小时）
 interval = 600
 
 # 目标显示器
-# - "*" = 所有已连接的显示器
+# - 内置引擎必须填写一个输出名；首次运行请在 GUI 引擎页选择，或运行 lianwall outputs
+# - 仅 mpvpaper 支持 "*" = 所有已连接的显示器
 # - 指定显示器名称如 "eDP-1"、"HDMI-A-1"
 # 可通过 `wlr-randr` 或 `hyprctl monitors` 查看显示器名称
-display = "*"
+display = ""
 
 # mpv IPC socket 路径
 # 默认空 = 禁用: 每次切换 kill+spawn 新进程（刻意设计，规避 mpvpaper 长时间运行的内存增长）
@@ -39,8 +45,11 @@ display = "*"
 ipc_socket = ""
 
 # 视频切换过渡 ("none" = 硬切换；"fade" = 新视频淡入 0.4 秒)
-# 注意: fade 需要回读解码帧，与 --hwdec=auto 硬解同用可能掉帧，请按机器性能开启
-transition = "none"
+# mpvpaper: fade 使用 mpv 滤镜，可能影响硬解性能；native: 同设备 GPU 交叉淡化
+transition = "fade"
+# 仅原生后端使用；进入视频时采用以下时长/帧率，进入图片时采用 image_engine 的设置
+transition_ms = 400
+transition_fps = 60
 
 # 透传给 mpvpaper 的参数
 # 常用选项:
@@ -66,16 +75,24 @@ mpv_args = [
     "--panscan=1.0"
 ]
 
-# === 静态壁纸引擎 (awww) ===
+# === 静态壁纸引擎 ===
 # 官方文档: https://codeberg.org/LGFae/awww
 # awww 是一个高效的 Wayland 壁纸设置工具，支持平滑过渡动画
 [image_engine]
+# 内置引擎必须选择单个输出；外部后端可选 awww。
+backend = "native"
+# Native renderer options; awww uses awww_args below.
+fit = "crop"
+transition = "fade"
+transition_ms = 400
+transition_fps = 60
 # 壁纸切换间隔（秒）
 # 范围: 10 - 86400（10秒 ~ 24小时）
 interval = 600
 
 # 目标显示器
-# - 空字符串 = 所有已连接的显示器
+# - 内置引擎请填写单个输出名；留空时等待用户配置
+# - 仅 awww 支持空字符串 = 所有已连接的显示器
 # - 逗号分隔多个显示器如 "eDP-1,HDMI-A-1"
 # 可通过 `awww query` 查看显示器名称
 outputs = ""

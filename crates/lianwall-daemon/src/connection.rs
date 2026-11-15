@@ -38,6 +38,7 @@ struct ConnectionState {
     /// 事件接收器
     event_rx: Option<broadcast::Receiver<Event>>,
     /// Response waiters are owned by the connection and aborted on disconnect.
+    native_rx: Option<broadcast::Receiver<lianwall_core::socket::NativeRuntime>>,
     pending_commands: JoinSet<PendingResponse>,
     next_legacy_request: u64,
     next_legacy_response: u64,
@@ -49,6 +50,7 @@ struct PendingResponse {
     legacy_order: Option<u64>,
     response: Response,
     immediate_sync: bool,
+    engine_sync: bool,
 }
 
 impl PendingResponse {
@@ -58,6 +60,7 @@ impl PendingResponse {
             legacy_order,
             response,
             immediate_sync: false,
+            engine_sync: false,
         }
     }
 }
@@ -79,6 +82,7 @@ pub async fn handle(
         subscribed: false,
         subscribed_events: HashSet::new(),
         event_rx: None,
+        native_rx: None,
         pending_commands: JoinSet::new(),
         next_legacy_request: 0,
         next_legacy_response: 0,
@@ -114,6 +118,17 @@ pub async fn handle(
                     deliver_response(&mut writer, &state, &mut conn_state, result?).await?;
                 }
             }
+            result = receive_native_event(&mut conn_state.native_rx), if conn_state.subscribed => {
+                match result {
+                    Ok(runtime) => send_response(&mut writer, 0, &Response::Event(
+                        lianwall_core::socket::Event::EngineChanged { runtime })).await?,
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Connection #{} lagged {} native diagnostics; resynchronization required", id, n);
+                        break;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                }
+            }
             result = receive_event(&mut conn_state.event_rx), if conn_state.subscribed => {
                 match result {
                     Ok(event) => {
@@ -140,6 +155,15 @@ pub async fn handle(
     // JoinSet aborts pending response waiters when the connection is dropped.
     // Commands already queued keep running: a disconnected client is not cancellation.
     Ok(())
+}
+
+async fn receive_native_event(
+    receiver: &mut Option<broadcast::Receiver<lianwall_core::socket::NativeRuntime>>,
+) -> Result<lianwall_core::socket::NativeRuntime, broadcast::error::RecvError> {
+    match receiver {
+        Some(receiver) => receiver.recv().await,
+        None => std::future::pending().await,
+    }
 }
 
 async fn receive_event(
@@ -209,10 +233,31 @@ async fn process_request(
         }),
 
         Request::GetStatus
+        | Request::GetLogs { .. }
+        | Request::GetLibrary { .. }
+        | Request::GetEngineInfo
         | Request::GetConfig { .. }
         | Request::GetSpace { .. }
         | Request::GetTimeInfo
         | Request::GetRotationStatus => Some(handler::handle_query(state, request).await),
+
+        // Registry discovery can wait on a compositor. Keep this connection's
+        // reads/events responsive and preserve the usual tagged/legacy ordering.
+        Request::GetOutputs | Request::TestVram { .. } => {
+            if conn_state.pending_commands.len() >= MAX_PENDING_COMMANDS {
+                return Some(PendingResponse::new(
+                    id,
+                    legacy_order,
+                    Response::error(ErrorCode::InternalError, "Too many pending requests"),
+                ));
+            }
+            let state = state.clone();
+            conn_state.pending_commands.spawn(async move {
+                let response = handler::handle_query(&state, request).await;
+                PendingResponse::new(id, legacy_order, response)
+            });
+            None
+        }
 
         // ListHooks: 直接读取 HookHandle
         Request::ListHooks => {
@@ -252,6 +297,10 @@ async fn process_request(
 
             conn_state.subscribed = true;
             conn_state.event_rx = Some(event_bus.subscribe());
+            conn_state.native_rx = conn_state
+                .subscribed_events
+                .contains(&EventType::EngineChanged)
+                .then(|| state.engine.native_updates.subscribe());
 
             // 保存 immediate_sync 标志，稍后处理
             sync_requested = *immediate_sync;
@@ -265,6 +314,7 @@ async fn process_request(
         Request::Unsubscribe => {
             conn_state.subscribed = false;
             conn_state.event_rx = None;
+            conn_state.native_rx = None;
             Some(Response::Unsubscribed)
         }
 
@@ -333,6 +383,10 @@ async fn process_request(
         legacy_order,
         response,
         immediate_sync: sync_requested,
+        engine_sync: sync_requested
+            && conn_state
+                .subscribed_events
+                .contains(&EventType::EngineChanged),
     })
 }
 
@@ -371,6 +425,10 @@ async fn write_pending_response(
     if response.immediate_sync {
         let status = handler::handle_query(state, Request::GetStatus).await;
         send_response(writer, 0, &status).await?;
+    }
+    if response.engine_sync {
+        let engine = handler::handle_query(state, Request::GetEngineInfo).await;
+        send_response(writer, 0, &engine).await?;
     }
     Ok(())
 }
@@ -441,7 +499,7 @@ fn is_wallpaper_mutation(request: &Request) -> bool {
 /// 非壁纸命令的回执等待上限（壁纸类走 wait_wallpaper_command）
 fn get_request_timeout_by_name(cmd_name: &str) -> Duration {
     match cmd_name {
-        "Ping" | "GetStatus" | "GetConfig" => Duration::from_secs(2),
+        "Ping" | "GetStatus" | "GetEngineInfo" | "GetConfig" => Duration::from_secs(2),
         "GetSpace" | "GetTimeInfo" => Duration::from_secs(5),
         "Lock" | "Unlock" | "ToggleLock" | "ListHooks" => Duration::from_secs(2),
         "SetConfig" | "ReloadConfig" | "ReloadHooks" | "Subscribe" | "Unsubscribe" => {
@@ -456,6 +514,7 @@ fn get_request_timeout_by_name(cmd_name: &str) -> Duration {
 /// 将内部事件映射到 EventType（用于订阅过滤）
 fn event_to_type(event: &Event) -> EventType {
     match event {
+        Event::LibraryChanged { .. } => EventType::LibraryChanged,
         Event::WallpaperChanged { .. } => EventType::WallpaperChanged,
         Event::ModeChanged { .. } => EventType::StatusChanged,
         Event::EngineStateChanged { .. } => EventType::StatusChanged,
@@ -477,6 +536,12 @@ fn event_to_response(event: &Event) -> Option<Response> {
     };
 
     match event {
+        Event::LibraryChanged { path, favorite } => {
+            Some(Response::Event(SocketEvent::LibraryChanged {
+                path: path.clone(),
+                favorite: *favorite,
+            }))
+        }
         Event::WallpaperChanged {
             path,
             mode,
@@ -770,18 +835,29 @@ mod tests {
         mpsc::Receiver<CommandMsg>,
         tokio::task::JoinHandle<anyhow::Result<()>>,
     ) {
+        let (client, bus, receiver, task, _) = fixture_state().await;
+        (client, bus, receiver, task)
+    }
+
+    async fn fixture_state() -> (
+        Client,
+        EventBus,
+        mpsc::Receiver<CommandMsg>,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+        Arc<SharedState>,
+    ) {
         let config = toml::from_str(lianwall_core::config::DEFAULT_CONFIG_TOML).unwrap();
         let state = SharedState::init(config).await.unwrap();
         let event_bus = EventBus::new(16);
         let (tx, rx) = mpsc::channel(4);
         let (client, server) = UnixStream::pair().unwrap();
-        let task = tokio::spawn(handle(1, server, state, event_bus.clone(), tx));
+        let task = tokio::spawn(handle(1, server, state.clone(), event_bus.clone(), tx));
         let (reader, writer) = client.into_split();
         let client = Client {
             reader: BufReader::new(reader).lines(),
             writer,
         };
-        (client, event_bus, rx, task)
+        (client, event_bus, rx, task, state)
     }
 
     #[tokio::test]
@@ -995,6 +1071,69 @@ mod tests {
         assert!(
             line.is_none(),
             "lagged clients must not silently receive an incomplete stream"
+        );
+        task.await.unwrap().unwrap();
+    }
+    #[tokio::test]
+    async fn engine_subscription_sync_unsubscribe_and_resubscribe_are_ordered() {
+        use lianwall_core::socket::{NativePhase, NativeRuntime};
+        let (mut client, _bus, _commands, task, state) = fixture_state().await;
+        client.send("{\"id\":1,\"cmd\":\"Subscribe\",\"events\":[\"engine_changed\"],\"immediate_sync\":true}\n").await;
+        assert_eq!(client.receive().await["type"], "Subscribed");
+        assert_eq!(client.receive().await["type"], "Status");
+        let initial = client.receive().await;
+        assert_eq!(initial["type"], "EngineInfo");
+        assert!(initial["payload"]["native"].is_null());
+        state
+            .engine
+            .native_updates
+            .send(NativeRuntime {
+                revision: 1,
+                phase: NativePhase::Preparing,
+                ..Default::default()
+            })
+            .unwrap();
+        let event = client.receive().await;
+        assert_eq!(event["id"], 0);
+        assert_eq!(event["payload"]["event"], "EngineChanged");
+        assert_eq!(event["payload"]["data"]["runtime"]["revision"], 1);
+        client.send("{\"id\":2,\"cmd\":\"Unsubscribe\"}\n").await;
+        assert_eq!(client.receive().await["type"], "Unsubscribed");
+        assert!(
+            state
+                .engine
+                .native_updates
+                .send(NativeRuntime::default())
+                .is_err()
+        );
+        client.send("{\"id\":3,\"cmd\":\"Subscribe\",\"events\":[\"engine_changed\"],\"immediate_sync\":false}\n{\"id\":4,\"cmd\":\"Ping\"}\n").await;
+        assert_eq!(client.receive().await["type"], "Subscribed");
+        assert_eq!(client.receive().await["type"], "Pong");
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn lagged_engine_stream_closes_for_resynchronization() {
+        use lianwall_core::socket::NativeRuntime;
+        let (mut client, _bus, _commands, task, state) = fixture_state().await;
+        client.send("{\"id\":1,\"cmd\":\"Subscribe\",\"events\":[\"engine_changed\"],\"immediate_sync\":false}\n").await;
+        assert_eq!(client.receive().await["type"], "Subscribed");
+        for revision in 0..100 {
+            state
+                .engine
+                .native_updates
+                .send(NativeRuntime {
+                    revision,
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), client.reader.next_line())
+                .await
+                .unwrap()
+                .unwrap()
+                .is_none()
         );
         task.await.unwrap().unwrap();
     }

@@ -253,3 +253,150 @@ fn print_mode_schedule(fmt: &Formatter, schedule: &lianwall_core::socket::ModeSc
         println!("  Time-constrained wallpapers: {}", constrained.len());
     }
 }
+
+/// Structured engine introspection is separate from the stable status JSON.
+pub fn handle_engine(fmt: &Formatter) -> Result<()> {
+    let info = connect()?.engine_info()?;
+    if fmt.is_json() {
+        println!("{}", serde_json::to_string_pretty(&info).unwrap());
+        return Ok(());
+    }
+    fmt.print_kv("Active backend", &info.active_backend);
+    fmt.print_kv("Configured image", &format!("{:?}", info.configured_image));
+    fmt.print_kv("Configured video", &format!("{:?}", info.configured_video));
+    fmt.print_kv("Decode policy", &format!("{:?}", info.configured_decode));
+    for backend in &info.backends {
+        fmt.print_kv(
+            &backend.id,
+            &format!(
+                "{} ({})",
+                if backend.available {
+                    "discovered"
+                } else {
+                    "unavailable"
+                },
+                backend.availability_basis
+            ),
+        );
+    }
+    if let Some(native) = &info.native {
+        fmt.print_separator("Native runtime");
+        fmt.print_kv("Phase", &format!("{:?}", native.phase));
+        if let Some(path) = &native.current {
+            fmt.print_kv("Current", &path.display().to_string());
+        }
+        if let Some(output) = &native.output {
+            fmt.print_kv("Output", output);
+        }
+        if let Some(pending) = &native.pending {
+            fmt.print_kv("Preparing", &pending.path.display().to_string());
+        }
+        if let Some(decoder) = native.decoder {
+            fmt.print_kv("Actual decoder", &format!("{decoder:?}"));
+        }
+        if let Some(reason) = &native.fallback_reason {
+            fmt.print_kv("Fallback", reason);
+        }
+        if let Some(error) = &native.last_error {
+            fmt.print_kv("Last error", error);
+        }
+        fmt.print_kv("Video frames", &native.statistics.video_frames.to_string());
+        fmt.print_kv("Dropped", &native.statistics.video_dropped.to_string());
+    }
+    println!("Discovery does not guarantee compositor, codec or hardware support.");
+    Ok(())
+}
+
+/// Discovery failures remain explicit data in JSON (available=false and error).
+pub fn handle_outputs(fmt: &Formatter) -> Result<()> {
+    let info = connect()?.outputs()?;
+    if fmt.is_json() {
+        println!("{}", serde_json::to_string_pretty(&info).unwrap());
+    } else {
+        for output in &info.outputs {
+            fmt.print_kv(
+                output.name.as_deref().unwrap_or("(unnamed)"),
+                &format!(
+                    "{}×{} mode pixels, scale {}, native selectable: {}",
+                    output.width.unwrap_or(0),
+                    output.height.unwrap_or(0),
+                    output.integer_scale,
+                    output.native_selectable
+                ),
+            );
+            if let Some(description) = &output.description {
+                println!("    {description}");
+            }
+        }
+        if let Some(error) = &info.error {
+            fmt.print_info(error);
+        }
+        if info.truncated {
+            fmt.print_info("Output list exceeds the 32-output discovery limit");
+        }
+    }
+    Ok(())
+}
+
+/// Each page is one JSON document, with next_offset for bounded clients.
+pub fn handle_library(fmt: &Formatter, offset: usize, limit: usize) -> Result<()> {
+    let data = connect()?.library(offset, limit)?;
+    if fmt.is_json() {
+        println!("{}", serde_json::to_string_pretty(&data).unwrap());
+    } else {
+        for entry in &data.entries {
+            println!(
+                "{} {}  plays={}  residency={}s",
+                if entry.favorite { "★" } else { "·" },
+                entry.path.display(),
+                entry.play_count,
+                entry.display_seconds
+            );
+        }
+        if let Some(next) = data.next_offset {
+            println!("Next page: lianwall library --offset {next}");
+        }
+        if let Some(error) = data.persistence_error {
+            eprintln!("Library persistence: {error}");
+        }
+    }
+    Ok(())
+}
+
+pub fn handle_favorite(fmt: &Formatter, path: std::path::PathBuf, favorite: bool) -> Result<()> {
+    // Match the scanner's canonical absolute identities while permitting retained missing paths.
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map_err(|e| super::HandlerError::Other(e.to_string()))?
+            .join(path)
+    };
+    let path = std::fs::canonicalize(&absolute).unwrap_or(absolute);
+    connect()?.favorite(path, favorite)?;
+    if fmt.is_json() {
+        println!("{}", serde_json::json!({"success":true}));
+    } else {
+        fmt.print_success(if favorite {
+            "Wallpaper favorited"
+        } else {
+            "Favorite removed"
+        });
+    }
+    Ok(())
+}
+
+pub fn handle_logs(fmt: &Formatter, level: Option<String>, limit: usize) -> Result<()> {
+    let data = connect()?.logs(level, limit)?;
+    if fmt.is_json() {
+        println!("{}", serde_json::to_string_pretty(&data).unwrap());
+    } else {
+        for entry in data.entries {
+            println!("{} {}", entry.timestamp, entry.line);
+        }
+        if let Some(error) = data.persistence_error {
+            eprintln!("Log persistence: {error}");
+        }
+    }
+    Ok(())
+}

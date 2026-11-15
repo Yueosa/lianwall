@@ -38,6 +38,12 @@
 //! - [`protocol`] - 协议定义（请求、响应、事件、帧辅助函数）
 //! - [`error`] - 错误类型
 
+pub mod diagnostics;
+pub use diagnostics::*;
+pub mod library;
+pub use library::*;
+pub mod engine;
+pub use engine::*;
 pub mod error;
 pub mod protocol;
 

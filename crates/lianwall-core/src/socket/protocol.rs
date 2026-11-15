@@ -85,6 +85,38 @@ pub enum Request {
     /// 获取完整状态
     GetStatus,
 
+    /// Engine capabilities and cached runtime diagnostics.
+    GetEngineInfo,
+
+    /// Read-only output discovery in the daemon Wayland session.
+    GetOutputs,
+
+    /// Bounded, read-only GPU query using saved settings or an unsaved draft.
+    TestVram {
+        #[serde(default)]
+        backend: Option<crate::config::VramBackend>,
+        #[serde(default)]
+        command: Option<String>,
+    },
+    /// Recent bounded service logs, filtered by minimum severity.
+    GetLogs {
+        #[serde(default)]
+        level: Option<String>,
+        #[serde(default = "default_library_limit")]
+        limit: usize,
+    },
+
+    /// Paginated user metadata (including retained missing paths).
+    GetLibrary {
+        #[serde(default)]
+        offset: usize,
+        #[serde(default = "default_library_limit")]
+        limit: usize,
+    },
+
+    /// Explicit idempotent favorite assignment; does not alter rotation locks.
+    SetFavorite { path: PathBuf, favorite: bool },
+
     /// 获取向量空间快照
     /// - `mode`: None = 当前模式, Some = 指定模式
     GetSpace {
@@ -185,6 +217,10 @@ pub enum Request {
     Unsubscribe,
 }
 
+fn default_library_limit() -> usize {
+    128
+}
+
 impl Request {
     /// 获取命令名称（用于日志）
     pub fn name(&self) -> &'static str {
@@ -192,6 +228,12 @@ impl Request {
             // Query
             Request::Ping => "Ping",
             Request::GetStatus => "GetStatus",
+            Request::GetEngineInfo => "GetEngineInfo",
+            Request::GetOutputs => "GetOutputs",
+            Request::TestVram { .. } => "TestVram",
+            Request::GetLogs { .. } => "GetLogs",
+            Request::GetLibrary { .. } => "GetLibrary",
+            Request::SetFavorite { .. } => "SetFavorite",
             Request::GetSpace { .. } => "GetSpace",
             Request::GetTimeInfo => "GetTimeInfo",
             Request::GetConfig { .. } => "GetConfig",
@@ -233,7 +275,10 @@ pub enum Response {
     Ok,
 
     /// 错误
-    Error { code: ErrorCode, message: String },
+    Error {
+        code: ErrorCode,
+        message: String,
+    },
 
     /// 心跳响应
     Pong {
@@ -246,6 +291,14 @@ pub enum Response {
     // ==================== 数据响应 ====================
     /// 状态信息
     Status(StatusInfo),
+
+    EngineInfo(super::engine::EngineInfo),
+
+    Outputs(super::engine::OutputSnapshot),
+
+    Library(super::library::LibrarySnapshot),
+    VramTest(crate::gpu::VramProbe),
+    Logs(super::diagnostics::LogSnapshot),
 
     /// 向量空间快照
     Space(SpaceSnapshot),
@@ -399,6 +452,10 @@ pub enum EventType {
     ScanProgress,
     /// 错误发生
     Error,
+    /// Opt-in native owner diagnostics (excluded from legacy All).
+    EngineChanged,
+    /// Opt-in persistent metadata assignment (excluded from legacy All).
+    LibraryChanged,
     /// 全部事件
     All,
 }
@@ -407,7 +464,7 @@ impl EventType {
     /// 展开 All 为所有具体事件类型
     pub fn expand(types: &[EventType]) -> Vec<EventType> {
         if types.contains(&EventType::All) {
-            vec![
+            let mut expanded = vec![
                 EventType::WallpaperChanged,
                 EventType::StatusChanged,
                 EventType::ConfigChanged,
@@ -416,7 +473,14 @@ impl EventType {
                 EventType::TimePointReached,
                 EventType::ScanProgress,
                 EventType::Error,
-            ]
+            ];
+            if types.contains(&EventType::EngineChanged) {
+                expanded.push(EventType::EngineChanged);
+            }
+            if types.contains(&EventType::LibraryChanged) {
+                expanded.push(EventType::LibraryChanged);
+            }
+            expanded
         } else {
             types.to_vec()
         }
@@ -442,6 +506,14 @@ pub enum Event {
         /// 触发原因
         trigger: WallpaperTrigger,
     },
+
+    /// Complete cached native owner snapshot; revision orders this stream.
+    EngineChanged {
+        runtime: super::engine::NativeRuntime,
+    },
+
+    /// A durable favorite assignment; clients may refresh paginated metadata.
+    LibraryChanged { path: PathBuf, favorite: bool },
 
     /// 状态变化
     StatusChanged {
@@ -518,6 +590,8 @@ impl Event {
         match self {
             Event::WallpaperChanged { .. } => EventType::WallpaperChanged,
             Event::StatusChanged { .. } => EventType::StatusChanged,
+            Event::EngineChanged { .. } => EventType::EngineChanged,
+            Event::LibraryChanged { .. } => EventType::LibraryChanged,
             Event::ConfigChanged { .. } => EventType::ConfigChanged,
             Event::SpaceUpdated { .. } => EventType::SpaceUpdated,
             Event::VramChanged { .. } => EventType::VramChanged,
@@ -532,6 +606,8 @@ impl Event {
         match self {
             Event::WallpaperChanged { .. } => "WallpaperChanged",
             Event::StatusChanged { .. } => "StatusChanged",
+            Event::EngineChanged { .. } => "EngineChanged",
+            Event::LibraryChanged { .. } => "LibraryChanged",
             Event::ConfigChanged { .. } => "ConfigChanged",
             Event::SpaceUpdated { .. } => "SpaceUpdated",
             Event::VramChanged { .. } => "VramChanged",
@@ -980,7 +1056,17 @@ mod tests {
     fn test_event_type_expand() {
         let types = vec![EventType::All];
         let expanded = EventType::expand(&types);
-        assert_eq!(expanded.len(), 8); // 包含 ScanProgress
+        assert_eq!(expanded.len(), 8); // Legacy All remains stable for old consumers.
+        assert!(!expanded.contains(&EventType::EngineChanged));
+        assert!(!expanded.contains(&EventType::LibraryChanged));
+        assert!(
+            EventType::expand(&[EventType::All, EventType::LibraryChanged])
+                .contains(&EventType::LibraryChanged)
+        );
+        assert!(
+            EventType::expand(&[EventType::All, EventType::EngineChanged])
+                .contains(&EventType::EngineChanged)
+        );
         assert!(expanded.contains(&EventType::WallpaperChanged));
         assert!(expanded.contains(&EventType::ScanProgress));
         assert!(!expanded.contains(&EventType::All));

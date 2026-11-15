@@ -31,35 +31,15 @@ use lianwall_daemon::{command, event::EventBus, hook, scheduler, server, state::
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 初始化日志
-    // 注意:handler/scheduler 等模块在 lib crate (lianwall_daemon) 里,
-    // 过滤器必须同时覆盖 bin (lianwalld) 和 lib (lianwall_daemon),否则只输出启动日志
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| {
-                "lianwalld=info,lianwall_daemon=info,lianwall_core=info".into()
-            }),
-        )
-        .init();
-
-    tracing::info!("LianWall Daemon v{} starting...", env!("CARGO_PKG_VERSION"));
-
     // Register before opening the server, so shutdown during startup is also captured.
     let mut sigint = signal(SignalKind::interrupt())?;
     let mut sigterm = signal(SignalKind::terminate())?;
 
     // 加载配置（不存在则自动创建默认配置）
     let config = match lianwall_core::config::create(ConfigCreateInput { path: None }) {
-        Ok(result) => {
-            if result.created {
-                tracing::info!("Config not found, created default at {:?}", result.path);
-            } else {
-                tracing::info!("Config loaded from {:?}", result.path);
-            }
-            result.config
-        }
+        Ok(result) => result.config,
         Err(e) => {
-            tracing::error!("Failed to load/create config: {}", e);
+            eprintln!("Failed to load/create config: {e}");
             return Err(anyhow::anyhow!("Config load failed: {}", e));
         }
     };
@@ -70,7 +50,33 @@ async fn main() -> anyhow::Result<()> {
 
     // 初始化共享状态
     let state = SharedState::init(config.clone()).await?;
+    if let Some(directory) = dirs::state_dir() {
+        state.logs.open(directory.join("lianwall/daemon.jsonl"));
+    }
+    lianwall_daemon::logging::init(&state.logs, &config.daemon.log_level)?;
+    tracing::info!(
+        "LianWall Daemon v{} starting; configuration ready",
+        env!("CARGO_PKG_VERSION")
+    );
     tracing::info!("SharedState initialized");
+    if let Some(directory) = dirs::data_local_dir() {
+        state
+            .library
+            .open(directory.join("lianwall/library.json"))
+            .await;
+    }
+    let library_state = state.clone();
+    let mut library_shutdown = state.shutdown_receiver();
+    let library_checkpoint = tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(60));
+        timer.tick().await;
+        loop {
+            tokio::select! {
+                _ = library_shutdown.recv() => break,
+                _ = timer.tick() => library_state.library.checkpoint().await,
+            }
+        }
+    });
     let mut shutdown_rx = state.shutdown_receiver();
 
     // 创建事件总线
@@ -108,6 +114,16 @@ async fn main() -> anyhow::Result<()> {
             vec![]
         }
     };
+
+    state
+        .library
+        .discover(
+            video_wallpapers
+                .iter()
+                .chain(image_wallpapers.iter())
+                .map(|item| item.path.clone()),
+        )
+        .await;
 
     // 收集时间点（在过滤前收集，保留所有时间点信息）
     let mut all_wallpapers_for_time = video_wallpapers.clone();
@@ -185,7 +201,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Server Task
     let server_handle = tokio::spawn(async move {
-        if let Err(e) = server::run_bound(bound_socket, state_clone, event_bus_clone, cmd_tx_clone).await {
+        if let Err(e) =
+            server::run_bound(bound_socket, state_clone, event_bus_clone, cmd_tx_clone).await
+        {
             tracing::error!("Server error: {}", e);
         }
     });
@@ -204,17 +222,14 @@ async fn main() -> anyhow::Result<()> {
         scheduler::run(state_clone, event_bus_clone, cmd_tx).await;
     });
 
-    // GPU Monitor Task (optional)
-    let gpu_handle = if config.vram.enabled {
-        let state_clone = Arc::clone(&state);
-        let event_bus_clone = event_bus.clone();
-        let cmd_tx_clone = cmd_queue.sender();
-        Some(tokio::spawn(async move {
-            scheduler::gpu_monitor(state_clone, event_bus_clone, cmd_tx_clone).await;
-        }))
-    } else {
-        None
-    };
+    // Keep a cheap idle task so enabling monitoring from the GUI takes effect
+    // without restarting the daemon. Disabled monitoring never executes commands.
+    let state_clone = Arc::clone(&state);
+    let event_bus_clone = event_bus.clone();
+    let cmd_tx_clone = cmd_queue.sender();
+    let gpu_handle = Some(tokio::spawn(async move {
+        scheduler::gpu_monitor(state_clone, event_bus_clone, cmd_tx_clone).await;
+    }));
 
     tracing::info!("All tasks started, daemon is ready");
 
@@ -297,6 +312,9 @@ async fn main() -> anyhow::Result<()> {
     event_bus.publish(lianwall_daemon::event::Event::ShuttingDown);
     hook_handle.shutdown().await;
 
+    let _ = library_checkpoint.await;
+    state.library.checkpoint().await;
+
     // 保存状态到持久化文件
     {
         use lianwall_core::wallpaper::{WeightsFile, export_to_persisted, save_weights};
@@ -320,6 +338,8 @@ async fn main() -> anyhow::Result<()> {
     // 触发关闭（通知所有 task）
     state.trigger_shutdown();
 
+    lianwall_daemon::backend::shutdown_native(&state).await;
+
     // 停止引擎进程
     state.engine.swww_daemon.kill().await;
     state.engine.mpvpaper.kill().await;
@@ -338,6 +358,7 @@ async fn main() -> anyhow::Result<()> {
     .await;
 
     tracing::info!("Daemon stopped");
+    state.logs.flush().await;
 
     Ok(())
 }

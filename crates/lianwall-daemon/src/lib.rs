@@ -16,3 +16,13 @@ pub mod state;
 pub use command::CommandQueue;
 pub use event::EventBus;
 pub use state::SharedState;
+
+#[cfg(feature = "native-image")]
+pub mod native;
+
+#[cfg(feature = "native-image")]
+mod outputs;
+
+pub mod library;
+
+pub mod logging;

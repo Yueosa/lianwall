@@ -64,6 +64,26 @@ pub fn set_value(config: &mut Config, key: &str, value: Value) -> Result<Value, 
     let mut candidate: Config =
         serde_json::from_value(document).map_err(|e| format!("Invalid {key}: {e}"))?;
     match key {
+        "image_engine.transition_ms" | "video_engine.transition_ms"
+            if (if section == "video_engine" {
+                candidate.video_engine.transition_ms
+            } else {
+                candidate.image_engine.transition_ms
+            }) > 2000 =>
+        {
+            return Err("transition_ms must be between 0 and 2000".into());
+        }
+        "image_engine.transition_fps" | "video_engine.transition_fps"
+            if !(1..=120).contains(
+                &(if section == "video_engine" {
+                    candidate.video_engine.transition_fps
+                } else {
+                    candidate.image_engine.transition_fps
+                }),
+            ) =>
+        {
+            return Err("transition_fps must be between 1 and 120".into());
+        }
         "video_engine.interval" | "image_engine.interval" => {
             let n = if section == "video_engine" {
                 candidate.video_engine.interval
@@ -118,6 +138,29 @@ mod tests {
         let mut config = toml::from_str(super::super::DEFAULT_CONFIG_TOML).unwrap();
         normalize_paths(&mut config);
         config
+    }
+
+    #[test]
+    fn native_options_reject_invalid_values_without_mutation() {
+        let mut config = config();
+        for (key, value) in [
+            ("image_engine.backend", serde_json::json!("unknown")),
+            ("video_engine.backend", serde_json::json!("unknown")),
+            ("video_engine.fit", serde_json::json!("stretch")),
+            ("video_engine.decode", serde_json::json!("cuda")),
+            ("image_engine.fit", serde_json::json!("stretch")),
+            ("image_engine.transition", serde_json::json!("unknown")),
+            ("image_engine.transition_ms", serde_json::json!(2001)),
+            ("video_engine.transition_ms", serde_json::json!(2001)),
+            ("video_engine.transition_fps", serde_json::json!(0)),
+            ("video_engine.transition_fps", serde_json::json!(121)),
+            ("image_engine.transition_fps", serde_json::json!(0)),
+            ("image_engine.transition_fps", serde_json::json!(121)),
+        ] {
+            let before = serde_json::to_value(&config).unwrap();
+            assert!(set_value(&mut config, key, value).is_err());
+            assert_eq!(serde_json::to_value(&config).unwrap(), before);
+        }
     }
 
     #[test]

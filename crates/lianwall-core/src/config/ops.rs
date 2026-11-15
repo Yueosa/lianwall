@@ -214,6 +214,20 @@ mod tests {
     }
 
     #[test]
+    fn test_new_config_uses_native_but_legacy_missing_backends_stay_external() {
+        use super::super::{ImageBackend, VideoBackend, VideoDecode};
+        let new: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert_eq!(new.image_engine.backend, ImageBackend::Native);
+        assert_eq!(new.video_engine.backend, VideoBackend::Native);
+        assert_eq!(new.video_engine.decode, VideoDecode::Auto);
+        assert!(new.video_engine.display.is_empty());
+        let legacy = DEFAULT_CONFIG_TOML.replace("backend = \"native\"", "");
+        let legacy: Config = toml::from_str(&legacy).unwrap();
+        assert_eq!(legacy.image_engine.backend, ImageBackend::Awww);
+        assert_eq!(legacy.video_engine.backend, VideoBackend::Mpvpaper);
+    }
+
+    #[test]
     fn test_default_config_parse() {
         let config: Result<Config, _> = toml::from_str(DEFAULT_CONFIG_TOML);
         assert!(config.is_ok(), "Default config should parse successfully");

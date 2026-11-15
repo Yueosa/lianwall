@@ -203,6 +203,60 @@ impl Client {
     /// 获取 daemon 状态信息
     ///
     /// 包含：当前模式、当前壁纸、引擎状态、VRAM 状态、壁纸统计等
+    pub fn test_vram(&mut self) -> Result<lianwall_core::gpu::VramProbe, ClientError> {
+        match self.request(Request::TestVram {
+            backend: None,
+            command: None,
+        })? {
+            Response::VramTest(info) => Ok(info),
+            other => Err(unexpected_response(&other)),
+        }
+    }
+    pub fn logs(
+        &mut self,
+        level: Option<String>,
+        limit: usize,
+    ) -> Result<lianwall_core::socket::LogSnapshot, ClientError> {
+        match self.request(Request::GetLogs { level, limit })? {
+            Response::Logs(info) => Ok(info),
+            other => Err(unexpected_response(&other)),
+        }
+    }
+
+    pub fn library(
+        &mut self,
+        offset: usize,
+        limit: usize,
+    ) -> Result<lianwall_core::socket::LibrarySnapshot, ClientError> {
+        match self.request(Request::GetLibrary { offset, limit })? {
+            Response::Library(info) => Ok(info),
+            other => Err(ClientError::UnexpectedResponse(format!("{:?}", other))),
+        }
+    }
+
+    pub fn favorite(&mut self, path: PathBuf, favorite: bool) -> Result<(), ClientError> {
+        match self.request(Request::SetFavorite { path, favorite })? {
+            Response::Ok => Ok(()),
+            other => Err(ClientError::UnexpectedResponse(format!("{:?}", other))),
+        }
+    }
+
+    pub fn outputs(&mut self) -> Result<lianwall_core::socket::OutputSnapshot, ClientError> {
+        match self.request(Request::GetOutputs)? {
+            Response::Outputs(info) => Ok(info),
+            other => Err(unexpected_response(&other)),
+        }
+    }
+
+    pub fn engine_info(
+        &mut self,
+    ) -> Result<lianwall_core::socket::engine::EngineInfo, ClientError> {
+        match self.request(Request::GetEngineInfo)? {
+            Response::EngineInfo(info) => Ok(info),
+            other => Err(unexpected_response(&other)),
+        }
+    }
+
     pub fn status(&mut self) -> Result<StatusInfo, ClientError> {
         match self.request(Request::GetStatus)? {
             Response::Status(info) => Ok(info),
@@ -448,6 +502,7 @@ impl Client {
                     return Err(ClientError::DaemonError { code, message });
                 }
                 Response::Status(_)
+                | Response::EngineInfo(_)
                 | Response::Space(_)
                 | Response::Config(_)
                 | Response::TimeInfo(_) => continue,

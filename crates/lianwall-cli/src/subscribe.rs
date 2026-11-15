@@ -26,6 +26,8 @@ pub fn parse_event_types(args: &[String]) -> Result<Vec<EventType>, ClientError>
         let event = match argument.to_ascii_lowercase().as_str() {
             "all" => EventType::All,
             "wallpaper" | "wp" | "wallpaper_changed" => EventType::WallpaperChanged,
+            "engine" | "engine_changed" => EventType::EngineChanged,
+            "library" | "library_changed" => EventType::LibraryChanged,
             "status" | "st" | "status_changed" => EventType::StatusChanged,
             "config" | "cfg" | "config_changed" => EventType::ConfigChanged,
             "space" | "sp" | "space_updated" => EventType::SpaceUpdated,
@@ -43,7 +45,7 @@ pub fn parse_event_types(args: &[String]) -> Result<Vec<EventType>, ClientError>
             events.push(event);
         }
     }
-    if events.is_empty() || events.contains(&EventType::All) {
+    if events.is_empty() {
         return Ok(vec![EventType::All]);
     }
     Ok(events)
@@ -98,6 +100,13 @@ pub fn run_subscribe(
                 }
                 break;
             }
+            Response::EngineInfo(info) => {
+                if fmt.is_json() {
+                    print_json(&Response::EngineInfo(info))?;
+                } else {
+                    fmt.print_info(&format!("Engine: {}", info.active_backend));
+                }
+            }
             Response::Event(event) => {
                 if fmt.is_json() {
                     print_json(&Response::Event(event))?;
@@ -117,6 +126,13 @@ pub fn run_subscribe(
     }
     loop {
         match client.receive_response()? {
+            Response::EngineInfo(info) => {
+                if fmt.is_json() {
+                    print_json(&Response::EngineInfo(info))?;
+                } else {
+                    fmt.print_info(&format!("Engine: {}", info.active_backend));
+                }
+            }
             Response::Event(event) => {
                 if fmt.is_json() {
                     print_json(&Response::Event(event))?;
@@ -142,6 +158,10 @@ fn print_event(fmt: &Formatter, event: &Event) {
     let timestamp = chrono::Local::now().format("%H:%M:%S");
 
     match event {
+        Event::LibraryChanged { path, favorite } => fmt.print_info(&format!(
+            "LibraryChanged {} favorite={favorite}",
+            path.display()
+        )),
         Event::WallpaperChanged {
             path,
             filename,
@@ -160,6 +180,24 @@ fn print_event(fmt: &Formatter, event: &Event) {
             println!();
         }
 
+        Event::EngineChanged { runtime } => {
+            println!(
+                "{} EngineChanged revision={} phase={:?} decoder={:?}",
+                fmt.dim(&format!("[{timestamp}]")),
+                runtime.revision,
+                runtime.phase,
+                runtime.decoder
+            );
+            if let Some(pending) = &runtime.pending {
+                println!("    Preparing: {}", pending.path.display());
+            }
+            if let Some(reason) = &runtime.fallback_reason {
+                println!("    Fallback: {reason}");
+            }
+            if let Some(error) = &runtime.last_error {
+                println!("    Error: {error}");
+            }
+        }
         Event::StatusChanged { changes } => {
             println!("{} 📊 StatusChanged", fmt.dim(&format!("[{}]", timestamp)));
             for change in changes {

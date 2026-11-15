@@ -328,135 +328,131 @@ pub async fn gpu_monitor(
     event_bus: EventBus,
     cmd_tx: mpsc::Sender<CommandMsg>,
 ) {
+    use lianwall_core::gpu::{GpuBackend, VramAction, VramState};
     tracing::info!("GPU monitor started");
-
     let mut shutdown_rx = state.shutdown_receiver();
-
-    // 从配置获取检查间隔
-    let config = state.get_config().await;
-    let check_interval = config.vram.check_interval;
-    let mut timer = interval(Duration::from_secs(check_interval));
-
-    // 初始化 VramState（根据配置选择后端）
-    {
-        let vram_state = lianwall_core::gpu::init_with_config(&config.vram);
-        tracing::info!("GPU backend detected: {:?}", vram_state.backend);
-        *state.gpu_state.write().await = Some(vram_state);
-    }
-
-    // 验证自定义后端配置
-    if config.vram.backend == lianwall_core::config::VramBackend::Custom {
-        if config.vram.custom_command.trim().is_empty() {
-            tracing::error!(
-                "vram.custom_command is empty while backend=custom, disabling GPU monitor"
-            );
-            return;
-        }
-        let backend = lianwall_core::gpu::GpuBackend::Custom {
-            command: config.vram.custom_command.clone(),
-        };
-        match lianwall_core::gpu::query_vram(backend).await {
-            Ok(_) => tracing::info!("Custom VRAM command validated OK"),
-            Err(e) => {
-                tracing::error!(
-                    "Custom VRAM command trial run failed: {}, disabling GPU monitor",
-                    e
-                );
-                return;
-            }
-        }
-    }
-
-    while !state.is_shutting_down() {
+    let mut config_events = event_bus.subscribe();
+    let mut timer = interval(Duration::from_secs(
+        state.get_config().await.vram.check_interval.max(1),
+    ));
+    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    'monitor: while !state.is_shutting_down() {
         tokio::select! {
-            _ = timer.tick() => {
-                // 手动覆盖状态下，跳过自动检测
-                if state.vram_override.read().await.is_some() {
-                    continue;
-                }
-                let config = state.get_config().await;
-
-                // 使用 check() 函数做降级/升级决策
-                let action = {
-                    let mut gpu_state_guard = state.gpu_state.write().await;
-                    if let Some(ref mut vram_state) = *gpu_state_guard {
-                        match lianwall_core::gpu::check(vram_state, &config.vram) {
-                            Ok(action) => action,
-                            Err(e) => {
-                                tracing::debug!("GPU check error: {}", e);
-                                lianwall_core::gpu::VramAction::Keep
-                            }
-                        }
-                    } else {
-                        lianwall_core::gpu::VramAction::Keep
+            _ = shutdown_rx.recv() => break,
+            event = config_events.recv() => {
+                if matches!(event, Ok(Event::ConfigChanged { ref key, .. }) if key == "all" || key.starts_with("vram.")) {
+                    let config = state.get_config().await;
+                    timer = interval(Duration::from_secs(config.vram.check_interval.max(1)));
+                    timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    if !config.vram.enabled {
+                        *state.gpu_state.write().await = None;
+                        *state.gpu_snapshot.write().await = crate::state::GpuSnapshot::empty();
                     }
-                };
-
-                // 根据决策执行操作
-                match action {
-                    lianwall_core::gpu::VramAction::Downgrade => {
-                        tracing::warn!("VRAM low, downgrading to image mode");
-                        // 切换到图片模式
-                        let current_mode = *state.engine.mode.read().await;
-                        if current_mode == WallMode::Video {
-                            // 发送 Next 命令切换到新模式的壁纸
-                            let (response_tx, _) = tokio::sync::oneshot::channel();
-                            let _ = cmd_tx.send(CommandMsg {
-                                request: Request::Next {
-                                    trigger_hint: Some(WallpaperTrigger::VramDowngrade),
-                                },
-                                response_tx,
-                            }).await;
-                        }
-                    }
-                    lianwall_core::gpu::VramAction::Upgrade => {
-                        tracing::info!("VRAM recovered, upgrading to video mode");
-                        // 切换回视频模式
-                        let current_mode = *state.engine.mode.read().await;
-                        if current_mode == WallMode::Image {
-                            // 发送 Next 命令切换到新模式的壁纸
-                            let (response_tx, _) = tokio::sync::oneshot::channel();
-                            let _ = cmd_tx.send(CommandMsg {
-                                request: Request::Next {
-                                    trigger_hint: Some(WallpaperTrigger::VramUpgrade),
-                                },
-                                response_tx,
-                            }).await;
-                        }
-                    }
-                    lianwall_core::gpu::VramAction::Keep => {
-                        // 保持当前状态，不做任何操作
-                    }
-                }
-
-                // 更新 GPU 快照（供查询使用）
-                let backend_for_query = {
-                    let gpu_state = state.gpu_state.read().await;
-                    gpu_state.as_ref().map(|s| s.backend.clone())
-                        .unwrap_or(lianwall_core::gpu::GpuBackend::None)
-                };
-                if let Ok(vram_info) = lianwall_core::gpu::query_vram(backend_for_query.clone()).await {
-                    let degraded = {
-                        let gpu_state = state.gpu_state.read().await;
-                        gpu_state.as_ref().map(|s| s.degraded).unwrap_or(false)
-                    };
-
-                    state.update_gpu_snapshot(vram_info.clone(), degraded, backend_for_query).await;
-                    event_bus.publish(Event::GpuStateUpdated {
-                        action,
-                        vram_info: Some(vram_info),
-                    });
                 }
             }
-
-            _ = shutdown_rx.recv() => {
-                tracing::info!("GPU monitor shutting down");
-                break;
+            _ = timer.tick() => {
+                let config = state.get_config().await;
+                if !config.vram.enabled || state.vram_override.read().await.is_some() { continue; }
+                let backend = match config.vram.backend {
+                    lianwall_core::config::VramBackend::Auto => lianwall_core::gpu::detect_backend().await,
+                    lianwall_core::config::VramBackend::Custom => GpuBackend::Custom { command: config.vram.custom_command.clone() },
+                };
+                let sample = tokio::select! {
+                    _ = shutdown_rx.recv() => break 'monitor,
+                    result = lianwall_core::gpu::query_vram(backend.clone()) => result,
+                };
+                let info = match sample {
+                    Ok(info) => info,
+                    Err(error) => { tracing::debug!(%error, "GPU query failed; retaining previous state"); continue; }
+                };
+                let latest = state.get_config().await;
+                if !latest.vram.enabled || latest.vram.backend != config.vram.backend
+                    || latest.vram.custom_command != config.vram.custom_command
+                    || state.vram_override.read().await.is_some() { continue; }
+                let (action, degraded) = {
+                    let mut guard = state.gpu_state.write().await;
+                    let vram = guard.get_or_insert_with(|| VramState::new(backend.clone()));
+                    vram.backend = backend.clone();
+                    let action = lianwall_core::gpu::decide(vram, &latest.vram, &info);
+                    (action, vram.degraded)
+                };
+                state.update_gpu_snapshot(info.clone(), degraded, backend).await;
+                event_bus.publish(Event::GpuStateUpdated { action, vram_info: Some(info) });
+                let current = *state.engine.mode.read().await;
+                let trigger = match action {
+                    VramAction::Downgrade if current == WallMode::Video => Some(WallpaperTrigger::VramDowngrade),
+                    VramAction::Upgrade if current == WallMode::Image => Some(WallpaperTrigger::VramUpgrade),
+                    _ => None,
+                };
+                if let Some(trigger) = trigger {
+                    let (response_tx, _) = tokio::sync::oneshot::channel();
+                    let _ = cmd_tx.send(CommandMsg { request: Request::Next { trigger_hint: Some(trigger) }, response_tx }).await;
+                }
             }
         }
     }
-
     tracing::info!("GPU monitor stopped");
+}
+
+#[cfg(test)]
+mod gpu_regression_tests {
+    use super::*;
+    #[tokio::test]
+    async fn monitoring_can_be_enabled_at_runtime_and_queries_only_once() {
+        let directory = tempfile::tempdir().unwrap();
+        let marker = directory.path().join("queries");
+        let mut config: lianwall_core::config::Config =
+            toml::from_str(lianwall_core::config::DEFAULT_CONFIG_TOML).unwrap();
+        config.vram.enabled = false;
+        config.vram.check_interval = 60;
+        config.vram.backend = lianwall_core::config::VramBackend::Custom;
+        config.vram.custom_command = format!(
+            "printf x >> '{}'; printf 'used_mb=1\ntotal_mb=1024\n'",
+            marker.display()
+        );
+        let state = SharedState::init(config).await.unwrap();
+        let events = EventBus::new(32);
+        let (sender, _receiver) = tokio::sync::mpsc::channel(8);
+        let task = tokio::spawn(gpu_monitor(state.clone(), events.clone(), sender));
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(!marker.exists());
+        state.config.write().await.vram.enabled = true;
+        events.publish(Event::ConfigChanged {
+            key: "vram.enabled".into(),
+            old_value: serde_json::json!(false),
+            new_value: serde_json::json!(true),
+        });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if state.gpu_snapshot.read().await.vram_info.is_some() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&marker).unwrap(), b"x");
+        state.config.write().await.vram.enabled = false;
+        events.publish(Event::ConfigChanged {
+            key: "vram.enabled".into(),
+            old_value: serde_json::json!(true),
+            new_value: serde_json::json!(false),
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if state.gpu_state.read().await.is_none() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(state.gpu_snapshot.read().await.vram_info.is_none());
+        state.trigger_shutdown();
+        task.await.unwrap();
+    }
 }
 
 #[cfg(test)]

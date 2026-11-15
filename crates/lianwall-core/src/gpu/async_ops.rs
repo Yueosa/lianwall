@@ -7,34 +7,16 @@
 //! - 每隔几秒调用一次，同步会周期性阻塞 daemon
 //! - 异步化后可以并发处理其他请求
 
-use tokio::process::Command;
-
 use super::error::GpuError;
 use super::r#struct::{GpuBackend, VramInfo};
 
 // ==================== 异步检测 ====================
 
-/// 异步检测命令是否可用
-async fn is_command_available_async(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .await
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
-/// 异步检测可用的 GPU 后端
+/// Executable discovery does not execute PATH helpers.
 pub async fn detect_backend() -> GpuBackend {
-    // 并发检测
-    let (nvidia, rocm) = tokio::join!(
-        is_command_available_async("nvidia-smi"),
-        is_command_available_async("rocm-smi")
-    );
-
-    if nvidia {
+    if crate::engine::executable_in_path("nvidia-smi") {
         GpuBackend::NvidiaSmi
-    } else if rocm {
+    } else if crate::engine::executable_in_path("rocm-smi") {
         GpuBackend::RocmSmi
     } else {
         GpuBackend::None
@@ -43,34 +25,8 @@ pub async fn detect_backend() -> GpuBackend {
 
 // ==================== nvidia-smi ====================
 
-/// 异步查询 nvidia-smi 显存信息
-async fn query_nvidia_smi_async() -> Result<VramInfo, GpuError> {
-    let output = Command::new("nvidia-smi")
-        .args([
-            "--query-gpu=memory.total,memory.used",
-            "--format=csv,noheader,nounits",
-        ])
-        .output()
-        .await
-        .map_err(|e| GpuError::CommandFailed {
-            command: "nvidia-smi".to_string(),
-            message: e.to_string(),
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GpuError::CommandFailed {
-            command: "nvidia-smi".to_string(),
-            message: stderr.to_string(),
-        });
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_nvidia_smi_output(&stdout)
-}
-
 /// 解析 nvidia-smi 输出
-fn parse_nvidia_smi_output(output: &str) -> Result<VramInfo, GpuError> {
+pub(super) fn parse_nvidia_smi_output(output: &str) -> Result<VramInfo, GpuError> {
     let line = output.lines().next().ok_or_else(|| GpuError::ParseFailed {
         command: "nvidia-smi".to_string(),
         message: "Empty output".to_string(),
@@ -100,31 +56,8 @@ fn parse_nvidia_smi_output(output: &str) -> Result<VramInfo, GpuError> {
 
 // ==================== rocm-smi ====================
 
-/// 异步查询 rocm-smi 显存信息
-async fn query_rocm_smi_async() -> Result<VramInfo, GpuError> {
-    let output = Command::new("rocm-smi")
-        .args(["--showmeminfo", "vram", "--csv"])
-        .output()
-        .await
-        .map_err(|e| GpuError::CommandFailed {
-            command: "rocm-smi".to_string(),
-            message: e.to_string(),
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GpuError::CommandFailed {
-            command: "rocm-smi".to_string(),
-            message: stderr.to_string(),
-        });
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_rocm_smi_output(&stdout)
-}
-
 /// 解析 rocm-smi 输出
-fn parse_rocm_smi_output(output: &str) -> Result<VramInfo, GpuError> {
+pub(super) fn parse_rocm_smi_output(output: &str) -> Result<VramInfo, GpuError> {
     let data_line = output
         .lines()
         .nth(1) // 跳过标题
@@ -193,38 +126,16 @@ pub(super) fn parse_custom_output(output: &str) -> Result<VramInfo, GpuError> {
     }
 }
 
-/// 异步执行自定义命令并解析显存信息
-async fn query_custom_async(command: &str) -> Result<VramInfo, GpuError> {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .output()
-        .await
-        .map_err(|e| GpuError::CommandFailed {
-            command: command.to_string(),
-            message: e.to_string(),
-        })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(GpuError::CommandFailed {
-            command: command.to_string(),
-            message: stderr.to_string(),
-        });
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    parse_custom_output(&stdout)
-}
-
 /// 异步查询显存信息
 pub async fn query_vram(backend: GpuBackend) -> Result<VramInfo, GpuError> {
-    match backend {
-        GpuBackend::NvidiaSmi => query_nvidia_smi_async().await,
-        GpuBackend::RocmSmi => query_rocm_smi_async().await,
-        GpuBackend::Custom { command } => query_custom_async(&command).await,
-        GpuBackend::None => Err(GpuError::NoBackend),
+    if backend == GpuBackend::None {
+        return Err(GpuError::NoBackend);
     }
+    let report = super::probe_vram(backend).await;
+    report.info().ok_or_else(|| GpuError::CommandFailed {
+        command: report.backend,
+        message: report.error.unwrap_or_else(|| "GPU query failed".into()),
+    })
 }
 
 #[cfg(test)]

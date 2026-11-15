@@ -51,12 +51,19 @@ echo ""
 # =========================
 # 🔨 编译
 # =========================
-DEST="build/${VERSION}"
+BUILD_FEATURES=()
+FLAVOR=""
+if [[ "${LIANWALL_NATIVE_IMAGE:-1}" == "0" ]]; then
+    BUILD_FEATURES=(--no-default-features)
+    FLAVOR="-external"
+    warn "External-only build; select awww/mpvpaper in configuration"
+fi
+DEST="build/${VERSION}${FLAVOR}"
 mkdir -p "$DEST"
 
 info "Building release binaries..."
 
-cargo build --locked --release --package lianwall-cli --package lianwall-daemon
+cargo build --locked --release --package lianwall-cli --package lianwall-daemon "${BUILD_FEATURES[@]}"
 
 # 复制产物
 cp target/release/lianwall "$DEST/lianwall_${VERSION}_linux_x86_64"
@@ -80,9 +87,17 @@ cat "checksums_${VERSION}.txt"
 cd - > /dev/null
 
 echo ""
-success "Ready for release!"
+if [[ -n "$FLAVOR" ]]; then
+    success "Experimental build complete (do not publish as a stable release)"
+else
+    success "Ready for release!"
+fi
 echo ""
-echo "Files to upload to GitHub Release:"
+if [[ -n "$FLAVOR" ]]; then
+    echo "Local experimental artifacts:"
+else
+    echo "Files to upload to GitHub Release:"
+fi
 echo "  - ${DEST}/lianwall_${VERSION}_linux_x86_64"
 echo "  - ${DEST}/lianwalld_${VERSION}_linux_x86_64"
 echo "  - ${DEST}/checksums_${VERSION}.txt"

@@ -36,6 +36,6 @@ pub use time_range::{TimePoint, TimeRange, next_key_point};
 // 扫描器导出
 pub use scanner::{
     ParallelScanConfig, ScanProgress, ScanResult, ScannedWallpaper, collect_time_points,
-    filter_active, scan_directory_async, scan_directory_streaming, scan_with_rayon,
+    filter_active, is_video_path, scan_directory_async, scan_directory_streaming, scan_with_rayon,
     scan_with_rayon_progress,
 };

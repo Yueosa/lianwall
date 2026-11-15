@@ -26,7 +26,10 @@ pub use directory::{handle_reload, handle_rescan};
 pub use hook::handle_hook;
 pub use lifecycle::{handle_restart, handle_start, handle_stop};
 pub use lock::{handle_lock, handle_toggle_lock, handle_unlock};
-pub use query::{handle_space, handle_status, handle_time};
+pub use query::{
+    handle_engine, handle_favorite, handle_library, handle_logs, handle_outputs, handle_space,
+    handle_status, handle_time,
+};
 pub use rotation::handle_rotation;
 pub use vram::handle_vram;
 pub use wallpaper::{handle_mode, handle_next, handle_prev, handle_set, handle_switch};

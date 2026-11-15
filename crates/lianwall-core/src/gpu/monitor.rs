@@ -58,7 +58,14 @@ pub fn check(state: &mut VramState, config: &VramConfig) -> Result<VramAction, G
     // 查询显存
     let info = query_vram_sync(state.backend.clone())?;
 
-    // 决策
+    Ok(decide(state, config, &info))
+}
+
+/// Pure decision using an already collected sample (no second process).
+pub fn decide(state: &mut VramState, config: &VramConfig, info: &super::VramInfo) -> VramAction {
+    if !config.enabled || state.backend == GpuBackend::None {
+        return VramAction::Keep;
+    }
     let action = if info.free_percent < config.threshold_percent {
         // 显存不足
         if state.degraded {
@@ -90,7 +97,7 @@ pub fn check(state: &mut VramState, config: &VramConfig) -> Result<VramAction, G
         VramAction::Keep => {}
     }
 
-    Ok(action)
+    action
 }
 
 #[cfg(test)]

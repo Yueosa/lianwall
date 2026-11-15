@@ -5,8 +5,10 @@
 //! - Command: 修改操作，通过 CommandQueue 串行执行
 //! - Subscribe: 订阅管理，由 Connection 处理
 
-mod query;
 mod command;
+mod diagnostics;
+mod engine;
+mod query;
 
-pub use query::handle_query;
 pub use command::handle_command;
+pub use query::handle_query;

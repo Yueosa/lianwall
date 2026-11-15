@@ -13,8 +13,8 @@
 
 mod default;
 mod error;
-mod ops;
 mod migration;
+mod ops;
 mod r#struct;
 mod values;
 

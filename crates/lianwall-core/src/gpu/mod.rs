@@ -20,12 +20,14 @@
 mod async_ops;
 mod error;
 mod monitor;
+mod probe;
+pub use probe::{VramProbe, probe_vram};
 mod nvidia_smi;
 mod rocm_smi;
 mod r#struct;
 
 pub use error::GpuError;
-pub use monitor::{check, init, init_with_config};
+pub use monitor::{check, decide, init, init_with_config};
 pub use r#struct::{GpuBackend, VramAction, VramInfo, VramState};
 
 // 异步 API（主要接口）
@@ -36,10 +38,10 @@ use std::process::Command;
 
 /// 同步检测可用的 GPU 后端（轻量级）
 pub fn detect_backend_sync() -> GpuBackend {
-    if is_command_available("nvidia-smi") {
+    if crate::engine::executable_in_path("nvidia-smi") {
         return GpuBackend::NvidiaSmi;
     }
-    if is_command_available("rocm-smi") {
+    if crate::engine::executable_in_path("rocm-smi") {
         return GpuBackend::RocmSmi;
     }
     GpuBackend::None
@@ -71,15 +73,6 @@ pub fn query_vram_sync(backend: GpuBackend) -> Result<VramInfo, GpuError> {
         }
         GpuBackend::None => Err(GpuError::NoBackend),
     }
-}
-
-/// 检查命令是否可用
-fn is_command_available(cmd: &str) -> bool {
-    Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
 }
 
 #[cfg(test)]

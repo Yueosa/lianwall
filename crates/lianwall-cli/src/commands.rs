@@ -47,6 +47,35 @@ pub enum Command {
     /// Show daemon status
     Status,
 
+    /// Show engine discovery and actual native decoder diagnostics
+    Engine,
+
+    /// Discover outputs in the daemon Wayland session
+    Outputs,
+
+    /// Read recent service logs (bounded snapshot, not a stream)
+    Logs {
+        #[arg(long, value_parser=["trace","debug","info","warn","error"])]
+        level: Option<String>,
+        #[arg(long, default_value_t=128, value_parser=clap::value_parser!(u16).range(1..=128))]
+        limit: u16,
+    },
+
+    /// List persistent favorites and wallpaper usage metadata (one page)
+    Library {
+        #[arg(long, default_value_t = 0)]
+        offset: usize,
+        #[arg(long, default_value_t = 128, value_parser = clap::value_parser!(u16).range(1..=128))]
+        limit: u16,
+    },
+
+    /// Favorite a known wallpaper; --remove clears the favorite
+    Favorite {
+        path: PathBuf,
+        #[arg(long)]
+        remove: bool,
+    },
+
     /// Show vector space information
     Space {
         /// Show Video mode space
@@ -146,9 +175,9 @@ pub enum Command {
 
     /// Subscribe to daemon events (for debugging)
     ///
-    /// Available event types: wallpaper, status, config, space, vram, time, error, all
+    /// Available event types: wallpaper, status, config, space, vram, time, scan, error, engine, library, all
     Subscribe {
-        /// Event types to subscribe (default: all)
+        /// Event types (default: legacy all; use all engine library to add diagnostics and favorites)
         #[arg(default_value = "all")]
         events: Vec<String>,
     },
@@ -179,6 +208,9 @@ pub enum ConfigAction {
 
 #[derive(Subcommand, Debug)]
 pub enum VramAction {
+    /// Query saved settings once without changing monitoring or wallpaper state
+    Test,
+
     /// Force downgrade to image mode (simulate low VRAM)
     Downgrade,
 

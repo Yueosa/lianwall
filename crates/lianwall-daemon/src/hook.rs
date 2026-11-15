@@ -344,9 +344,10 @@ fn map_event(event: &Event) -> Option<HookContext> {
         }
 
         // 内部事件，不触发 hook
-        Event::SchedulerTick | Event::ScanProgress { .. } | Event::EngineStateChanged { .. } => {
-            None
-        }
+        Event::LibraryChanged { .. }
+        | Event::SchedulerTick
+        | Event::ScanProgress { .. }
+        | Event::EngineStateChanged { .. } => None,
     }
 }
 
