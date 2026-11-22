@@ -805,3 +805,9 @@ lianwall logs --level warn --limit 128 --json
 `vram test`只测试已保存读取配置，不改变监控、壁纸模式或暂停状态。返回一个`VramTest` payload对象，包含`schema_version`、`backend`、`success`、读数、命令输出、退出码、超时/截断标记、耗时与error。查询成功但无可用后端、命令失败或数据无效时，**退出码仍为0，脚本需检查对象的`success`字段**；这是一次诊断结果，不能等同于成功读数。连接/协议错误沿用非零退出码与既有错误对象。GUI另支持测试未保存命令。
 
 `logs`返回一个`Logs` payload对象，字段包括`schema_version`、`entries`、`path`、`persistence_error`、`dropped_disk_entries`、`active_filter`和`environment_override`。每条entry为`sequence/timestamp/level/line`；时间为UTC RFC3339，记录从旧到新。`--level`为最低严重程度，`--limit`为1–128，默认128。只读取最近内存快照，不能用它恢复过滤掉的消息或假定完整历史。持久日志路径、轮转限制和`RUST_LOG`优先规则见[Daemon API](DAEMON-API.md)。
+
+### 时间段目录
+
+空间条目的可选字段 `time_constraints` 按从外到内列出本地时间范围，例如 `["08:00–18:00", "12:00–13:30"]`。所有范围必须同时满足，含起点、不含终点；跨午夜范围延续到次日。无约束时省略该字段。
+
+`GetLibrary` 的条目可附带 `scanned_time_constraints`，格式同上。只有本次扫描中仍存在且受时间限制的文件带此字段。图库将其与当前模式的 `GetSpace` 合并，用于浏览和收藏时段外的壁纸；轮换候选仍由 `GetSpace` 决定。

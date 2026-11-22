@@ -121,7 +121,15 @@ async fn main() -> anyhow::Result<()> {
             video_wallpapers
                 .iter()
                 .chain(image_wallpapers.iter())
-                .map(|item| item.path.clone()),
+                .map(|item| {
+                    (
+                        item.path.clone(),
+                        item.time_constraints
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                    )
+                }),
         )
         .await;
 

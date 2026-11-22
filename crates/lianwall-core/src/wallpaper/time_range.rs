@@ -55,6 +55,16 @@ pub struct TimeRange {
     pub end: TimePoint,
 }
 
+impl std::fmt::Display for TimeRange {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:02}:{:02}–{:02}:{:02}",
+            self.start.hour, self.start.minute, self.end.hour, self.end.minute
+        )
+    }
+}
+
 impl TimeRange {
     /// 判断给定时间是否在范围内
     pub fn is_active(&self, time: &TimePoint) -> bool {

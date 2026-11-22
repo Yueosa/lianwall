@@ -786,6 +786,10 @@ pub struct SpaceSnapshot {
 /// 单个壁纸点（用于可视化）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WallpaperPoint {
+    /// Local-time constraints from outer to inner directory; every range must match.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub time_constraints: Vec<String>,
+
     /// 索引
     pub index: usize,
 

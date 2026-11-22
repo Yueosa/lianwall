@@ -6,6 +6,9 @@ use std::path::PathBuf;
 pub struct LibraryEntry {
     pub path: PathBuf,
     pub favorite: bool,
+    /// Directory windows from the most recent scan; omitted for unrestricted or absent paths.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scanned_time_constraints: Vec<String>,
     /// Unix seconds: first discovered by this daemon, not filesystem creation time.
     pub added_at: u64,
     pub last_used: Option<u64>,

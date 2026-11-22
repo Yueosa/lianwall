@@ -457,17 +457,13 @@ pub fn collect_time_points(wallpapers: &[ScannedWallpaper]) -> BTreeSet<TimePoin
 
 /// 根据当前时间过滤活跃壁纸
 pub fn filter_active(wallpapers: &[ScannedWallpaper]) -> Vec<&ScannedWallpaper> {
-    let now = super::time_range::TimePoint::now();
+    filter_active_at(wallpapers, TimePoint::now())
+}
+
+fn filter_active_at(wallpapers: &[ScannedWallpaper], now: TimePoint) -> Vec<&ScannedWallpaper> {
     wallpapers
         .iter()
-        .filter(|w| {
-            if w.time_constraints.is_empty() {
-                true // 无时间约束，始终可用
-            } else {
-                // 任一时间段包含当前时间即可
-                w.time_constraints.iter().any(|range| range.is_active(&now))
-            }
-        })
+        .filter(|w| w.time_constraints.iter().all(|range| range.is_active(&now)))
         .collect()
 }
 
@@ -590,6 +586,31 @@ mod tests {
 
         assert_eq!(constraints.len(), 1, "应该有 1 个时间约束");
         assert!(!time_points.is_empty(), "应该有时间点");
+    }
+
+    #[test]
+    fn test_nested_time_directories_intersect() {
+        for (path, hour, minute, active) in [
+            ("08-18/1200-1330/a.jpg", 10, 0, false),
+            ("08-18/1200-1330/a.jpg", 12, 0, true),
+            ("08-18/1200-1330/a.jpg", 13, 30, false),
+            ("23-06/01-03/a.jpg", 23, 30, false),
+            ("23-06/01-03/a.jpg", 2, 0, true),
+            ("08-10/12-14/a.jpg", 9, 0, false),
+            ("ordinary/a.jpg", 0, 0, true),
+        ] {
+            let path = Path::new("/library").join(path);
+            let (time_constraints, _) =
+                parse_time_constraints_from_path(&path, Path::new("/library"));
+            let items = [ScannedWallpaper {
+                path,
+                time_constraints,
+            }];
+            assert_eq!(
+                !filter_active_at(&items, TimePoint::new(hour, minute)).is_empty(),
+                active
+            );
+        }
     }
 
     #[test]

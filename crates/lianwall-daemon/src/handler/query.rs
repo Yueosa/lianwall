@@ -585,6 +585,7 @@ async fn get_space(state: &Arc<SharedState>, mode: Option<WallMode>) -> Response
             let is_current = space.current_index == Some(i);
 
             WallpaperPoint {
+                time_constraints: w.time_constraints.iter().map(ToString::to_string).collect(),
                 index: i,
                 filename,
                 path: w.path.clone(),

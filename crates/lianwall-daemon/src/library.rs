@@ -14,6 +14,7 @@ struct FileData {
     entries: Vec<LibraryEntry>,
 }
 struct Inner {
+    schedules: BTreeMap<PathBuf, Vec<String>>,
     entries: BTreeMap<PathBuf, LibraryEntry>,
     active: Option<(PathBuf, Instant)>,
     revision: u64,
@@ -32,6 +33,7 @@ fn now() -> u64 {
 impl Default for LibraryStore {
     fn default() -> Self {
         Self(Mutex::new(Inner {
+            schedules: BTreeMap::new(),
             entries: BTreeMap::new(),
             active: None,
             revision: 0,
@@ -92,11 +94,15 @@ impl LibraryStore {
             }
         }
     }
-    pub async fn discover(&self, paths: impl IntoIterator<Item = PathBuf>) {
+    pub async fn discover(&self, items: impl IntoIterator<Item = (PathBuf, Vec<String>)>) {
         let mut inner = self.0.lock().await;
         let timestamp = now();
         let mut changed = false;
-        for path in paths {
+        let mut schedules = BTreeMap::new();
+        for (path, ranges) in items {
+            if !ranges.is_empty() {
+                schedules.insert(path.clone(), ranges);
+            }
             if let std::collections::btree_map::Entry::Vacant(slot) =
                 inner.entries.entry(path.clone())
             {
@@ -107,6 +113,10 @@ impl LibraryStore {
                 });
                 changed = true;
             }
+        }
+        if inner.schedules != schedules {
+            inner.schedules = schedules;
+            inner.revision = inner.revision.saturating_add(1);
         }
         if changed {
             inner.revision = inner.revision.saturating_add(1);
@@ -166,6 +176,11 @@ impl LibraryStore {
             .take(limit.clamp(1, 128))
             .cloned()
             .map(|mut entry| {
+                entry.scanned_time_constraints = inner
+                    .schedules
+                    .get(&entry.path)
+                    .cloned()
+                    .unwrap_or_default();
                 if let Some((path, started)) = &inner.active {
                     if path == &entry.path {
                         entry.display_seconds = entry
@@ -252,12 +267,28 @@ async fn persist(inner: &mut Inner) -> Option<String> {
 mod tests {
     use super::*;
     #[tokio::test]
+    async fn rescan_drops_schedule_but_preserves_favorite() {
+        let store = LibraryStore::default();
+        let path = PathBuf::from("/library/08-18/wall.jpg");
+        let ranges = vec!["08:00–18:00".to_owned()];
+        store.discover([(path.clone(), ranges.clone())]).await;
+        store.favorite(&path, true).await.unwrap();
+        let before = store.snapshot(0, 128).await;
+        assert_eq!(before.entries[0].scanned_time_constraints, ranges);
+        store.discover([]).await;
+        let after = store.snapshot(0, 128).await;
+        assert!(after.entries[0].scanned_time_constraints.is_empty());
+        assert!(after.entries[0].favorite);
+        assert!(after.revision > before.revision);
+    }
+
+    #[tokio::test]
     async fn test_favorite_and_usage_survive_restart_without_offline_time() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.json");
         let store = LibraryStore::default();
         store.open(path.clone()).await;
-        store.discover([PathBuf::from("/wall.jpg")]).await;
+        store.discover([(PathBuf::from("/wall.jpg"), vec![])]).await;
         store.favorite(Path::new("/wall.jpg"), true).await.unwrap();
         store.activate(Path::new("/wall.jpg")).await;
         store.activate(Path::new("/wall.jpg")).await;
@@ -286,7 +317,7 @@ mod tests {
             std::fs::write(&path, content).unwrap();
             let store = LibraryStore::default();
             store.open(path.clone()).await;
-            store.discover([PathBuf::from("/wall.jpg")]).await;
+            store.discover([(PathBuf::from("/wall.jpg"), vec![])]).await;
             assert!(store.favorite(Path::new("/wall.jpg"), true).await.is_err());
             store.activate(Path::new("/wall.jpg")).await;
             store.checkpoint().await;
@@ -302,7 +333,7 @@ mod tests {
         let store = LibraryStore::default();
         store.open(path.clone()).await;
         store
-            .discover((0..260).map(|n| PathBuf::from(format!("/wall-{n:03}.jpg"))))
+            .discover((0..260).map(|n| (PathBuf::from(format!("/wall-{n:03}.jpg")), vec![])))
             .await;
         let first = store.snapshot(0, 9999).await;
         assert_eq!(first.entries.len(), 128);

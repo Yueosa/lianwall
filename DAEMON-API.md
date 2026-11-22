@@ -1374,3 +1374,9 @@ CLI查询本身成功退出；调用方应检查available。协议/传输错误�
 这是最近日志快照，不是无限历史或实时订阅。内存保留1024条，单行最多2KiB；返回记录由旧到新。文件位于`$XDG_STATE_HOME/lianwall/daemon.jsonl`，默认`~/.local/state/lianwall/daemon.jsonl`，采用JSONL，单文件2MiB，另留一份`daemon.jsonl.1`。文件线程有界队列异步写入，不阻塞渲染/请求线程；写入失败或队列满仍可查看内存记录，通过error与丢弃计数报告。文件写入为尽力保存，强制退出可能丢失排队记录。正常关闭排空队列；重启加载当前文件中最近有效记录，上一份轮转文件可在日志目录单独查看。新建文件权限0600。
 
 `daemon.log_level`保存成功或`ReloadConfig`后即时更新过滤器；显式非空`RUST_LOG`对当前进程优先，`environment_override`与`active_filter`用于显示实际设置。已被过滤的消息不能事后恢复。日志系统在取得配置与socket所有权后初始化，此前启动失败仍输出stderr。此接口收集daemon的Rust tracing记录，不包含GUI自身Qt日志或第三方引擎全部输出。GUI导出当前显示记录为UTF-8文本，不自动附带完整配置或Hook脚本。
+
+### 时间段目录
+
+空间条目的可选字段 `time_constraints` 按从外到内列出本地时间范围，例如 `["08:00–18:00", "12:00–13:30"]`。所有范围必须同时满足，含起点、不含终点；跨午夜范围延续到次日。无约束时省略该字段。
+
+`GetLibrary` 的条目可附带 `scanned_time_constraints`，格式同上。只有本次扫描中仍存在且受时间限制的文件带此字段。图库将其与当前模式的 `GetSpace` 合并，用于浏览和收藏时段外的壁纸；轮换候选仍由 `GetSpace` 决定。

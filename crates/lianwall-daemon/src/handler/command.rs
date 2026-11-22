@@ -832,7 +832,15 @@ async fn handle_rescan(state: &Arc<SharedState>, event_bus: &EventBus) -> Respon
         all_wallpapers.extend(image_wallpapers.clone());
         state
             .library
-            .discover(all_wallpapers.iter().map(|item| item.path.clone()))
+            .discover(all_wallpapers.iter().map(|item| {
+                (
+                    item.path.clone(),
+                    item.time_constraints
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                )
+            }))
             .await;
 
         // 保存原始扫描总数（过滤前）到 state，供 status 查询
