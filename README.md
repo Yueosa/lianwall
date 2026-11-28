@@ -4,7 +4,7 @@
 
 智能动态壁纸管理器 - 基于黄金角算法的壁纸轮换系统
 
-[![Version](https://img.shields.io/badge/version-6.0.1-blue.svg)](https://github.com/Yueosa/lianwall/releases)
+[![Version](https://img.shields.io/badge/version-6.0.2-blue.svg)](https://github.com/Yueosa/lianwall/releases)
 [![License](https://img.shields.io/badge/license-LianWall-green.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Wayland-blueviolet.svg)](https://wayland.freedesktop.org/)
 
@@ -12,7 +12,7 @@
 
 awww/mpvpaper 需要合成器提供相应协议；不再承诺“全 Wayland / Linux / BSD 可用”。
 其他合成器、发行版和显卡组合属于未经验证环境，欢迎反馈，但不承诺逐个平台适配。
-6.0.1 默认包含内置图片/视频引擎；awww/mpvpaper为可选后端。请配套GUI2.0.2，升级与兼容性见[发行说明](changelogs/CHANGELOG-6.0.1.md)。
+6.0.2 默认包含内置图片/视频引擎；awww/mpvpaper为可选后端。请配套GUI2.0.3，升级与兼容性见[发行说明](changelogs/CHANGELOG-6.0.2.md)。
 
 | 文档 | 说明 |
 |------|------|
@@ -128,6 +128,8 @@ lianwall mode image      # 切换到静态壁纸模式
 ---
 
 ## 🕐 时间段目录（高级功能）
+
+目录时段限制自动轮换。手动设置以及启动时恢复该模式最近成功播放的壁纸可跨时段；恢复失败时再选择当前候选。
 
 通过文件夹命名来控制壁纸在特定时间段出现，**支持无限嵌套**：
 
@@ -530,7 +532,7 @@ LianWall License — 详见 [LICENSE](LICENSE) 文件
 
 ### 外部引擎边界
 
-请配套使用GUI2.0.2与daemon6.0.1。awww 与 awww-daemon 必须成对存在于 PATH；检测不再依赖 `which`。
+请配套使用GUI2.0.3与daemon6.0.2。awww 与 awww-daemon 必须成对存在于 PATH；检测不再依赖 `which`。
 现代 awww 使用本 daemon 独占命名空间（需支持 `--namespace`），不再按进程名全局 pkill。
 legacy swww 仍可检测回退，但共享端点已有外部 daemon 时明确拒绝接管；使用前请自行停止它。
 其他壁纸程序可能遮挡本程序表面，调试时请先排除同屏竞争。
@@ -562,6 +564,6 @@ lianwall next
 
 已验证作者本机Hyprland/NVIDIA、单输出SDR，不承诺所有Wayland合成器。多输出、HDR、音频不在内置后端本版支持范围。其他环境可自行选择外部后端，但不代表已验证兼容。
 
-源码构建需要C编译器、pkg-config、wayland-scanner、wayland-protocols与Wayland/Vulkan/libplacebo/FFmpeg/lcms2开发文件。正式`./build.sh`输出`build/6.0.1/`；非系统Vulkan头文件可用`VULKAN_HEADERS=/path/to/include`。`LIANWALL_NATIVE_IMAGE=0 ./build.sh`生成外部专用包，配置需选择awww/mpvpaper。
+源码构建需要C编译器、pkg-config、wayland-scanner、wayland-protocols与Wayland/Vulkan/libplacebo/FFmpeg/lcms2开发文件。正式`./build.sh`输出`build/6.0.2/`；非系统Vulkan头文件可用`VULKAN_HEADERS=/path/to/include`。`LIANWALL_NATIVE_IMAGE=0 ./build.sh`生成外部专用包，配置需选择awww/mpvpaper。
 
-当前x86_64发行二进制要求GLIBC≥2.39、libplacebo.so.387、FFmpeg9（avformat/avcodec63、avutil61、swscale10）以及Vulkan loader、Wayland、lcms2。其他ABI请源码构建。详细升级规则与测试范围见[6.0.1日志](changelogs/CHANGELOG-6.0.1.md)。
+当前x86_64发行二进制要求GLIBC≥2.39、libplacebo.so.387、FFmpeg9（avformat/avcodec63、avutil61、swscale10）以及Vulkan loader、Wayland、lcms2。其他ABI请源码构建。详细升级规则与测试范围见[6.0.2日志](changelogs/CHANGELOG-6.0.2.md)。
