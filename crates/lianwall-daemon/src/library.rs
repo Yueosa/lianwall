@@ -11,9 +11,18 @@ use tokio::sync::Mutex;
 #[derive(Default, Serialize, Deserialize)]
 struct FileData {
     schema_version: u32,
+    #[serde(default)]
+    last_played: LastPlayed,
     entries: Vec<LibraryEntry>,
 }
+#[derive(Clone, Default, Serialize, Deserialize)]
+struct LastPlayed {
+    video: Option<PathBuf>,
+    image: Option<PathBuf>,
+}
+
 struct Inner {
+    last_played: LastPlayed,
     schedules: BTreeMap<PathBuf, Vec<String>>,
     entries: BTreeMap<PathBuf, LibraryEntry>,
     active: Option<(PathBuf, Instant)>,
@@ -33,6 +42,7 @@ fn now() -> u64 {
 impl Default for LibraryStore {
     fn default() -> Self {
         Self(Mutex::new(Inner {
+            last_played: LastPlayed::default(),
             schedules: BTreeMap::new(),
             entries: BTreeMap::new(),
             active: None,
@@ -53,7 +63,7 @@ impl LibraryStore {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Ok(FileData {
                         schema_version: 1,
-                        entries: vec![],
+                        ..Default::default()
                     });
                 }
                 Err(e) => return Err(e.to_string()),
@@ -82,6 +92,7 @@ impl LibraryStore {
         inner.file = Some(path);
         match loaded {
             Ok(data) => {
+                inner.last_played = data.last_played;
                 inner.entries = data
                     .entries
                     .into_iter()
@@ -123,6 +134,24 @@ impl LibraryStore {
             persist(&mut inner).await;
         }
     }
+    pub async fn restore_path(&self, video: bool, legacy: Option<&Path>) -> Option<PathBuf> {
+        let inner = self.0.lock().await;
+        let saved = if video {
+            &inner.last_played.video
+        } else {
+            &inner.last_played.image
+        };
+        saved.as_deref().or(legacy).map(Path::to_owned).or_else(|| {
+            // Older libraries only recorded a timestamp when playback succeeded.
+            inner
+                .entries
+                .values()
+                .filter(|entry| lianwall_core::wallpaper::is_video_path(&entry.path) == video)
+                .filter_map(|entry| Some((entry.last_used?, &entry.path)))
+                .max()
+                .map(|(_, path)| path.clone())
+        })
+    }
     pub async fn activate(&self, path: &Path) {
         let mut inner = self.0.lock().await;
         if inner
@@ -133,6 +162,11 @@ impl LibraryStore {
             return;
         }
         settle(&mut inner);
+        if lianwall_core::wallpaper::is_video_path(path) {
+            inner.last_played.video = Some(path.to_owned());
+        } else {
+            inner.last_played.image = Some(path.to_owned());
+        }
         let entry = inner
             .entries
             .entry(path.to_owned())
@@ -232,6 +266,7 @@ async fn persist(inner: &mut Inner) -> Option<String> {
     };
     let data = FileData {
         schema_version: 1,
+        last_played: inner.last_played.clone(),
         entries: inner.entries.values().cloned().collect(),
     };
     let result = tokio::task::spawn_blocking(move || -> Result<(), String> {

@@ -99,18 +99,7 @@ impl Fixture {
             config,
         })
         .unwrap();
-        let daemon = Command::new(env!("CARGO_BIN_EXE_lianwalld"))
-            .env("PATH", &bin)
-            .env("ENGINE_FIXTURE", dir.path())
-            .env("HOME", dir.path())
-            .env("XDG_CONFIG_HOME", dir.path().join("config"))
-            .env("XDG_CACHE_HOME", dir.path().join("cache"))
-            .env("XDG_DATA_HOME", dir.path().join("data"))
-            .env("XDG_STATE_HOME", dir.path().join("state"))
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
+        let daemon = Self::spawn(dir.path());
         let fixture = Self {
             dir,
             daemon,
@@ -123,6 +112,20 @@ impl Fixture {
         }
         assert_eq!(fixture.request(json!({"cmd":"Ping"}))["type"], "Pong");
         fixture
+    }
+    fn spawn(dir: &std::path::Path) -> Child {
+        Command::new(env!("CARGO_BIN_EXE_lianwalld"))
+            .env("PATH", dir.join("bin"))
+            .env("ENGINE_FIXTURE", dir)
+            .env("HOME", dir)
+            .env("XDG_CONFIG_HOME", dir.join("config"))
+            .env("XDG_CACHE_HOME", dir.join("cache"))
+            .env("XDG_DATA_HOME", dir.join("data"))
+            .env("XDG_STATE_HOME", dir.join("state"))
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap()
     }
     fn request(&self, mut request: Value) -> Value {
         request["id"] = json!(42);
@@ -258,5 +261,30 @@ fn legacy_pair_works_and_reports_its_actual_engine_name() {
     let image = fixture.file("legacy.png");
     assert_eq!(fixture.set(&image)["type"], "Ok");
     assert_eq!(fixture.status()["engine"], "swww");
+    fixture.shutdown();
+}
+
+#[test]
+fn manual_video_outside_rotation_is_restored_after_restart() {
+    let mut fixture = Fixture::new(false);
+    let folder = fixture.dir.path().join("videos/00-01/02-03");
+    fs::create_dir_all(&folder).unwrap();
+    let video = folder.join("manual.mp4");
+    fs::write(&video, "fixture").unwrap();
+    assert_eq!(fixture.set(&video)["type"], "Ok");
+    fixture.shutdown();
+    fixture.daemon = Fixture::spawn(fixture.dir.path());
+    let start = Instant::now();
+    loop {
+        if UnixStream::connect(&fixture.socket).is_ok()
+            && fixture.status()["current"] == json!(video)
+        {
+            break;
+        }
+        assert!(start.elapsed() < Duration::from_secs(8));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let space = fixture.request(json!({"cmd":"GetSpace","mode":"Video"}));
+    assert!(space["payload"]["items"].as_array().unwrap().is_empty());
     fixture.shutdown();
 }

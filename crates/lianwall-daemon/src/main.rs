@@ -244,46 +244,37 @@ async fn main() -> anyhow::Result<()> {
     // 应用初始壁纸
     {
         let mode = *state.engine.mode.read().await;
-        let has_current = match mode {
-            lianwall_core::config::WallMode::Video => {
-                state.video_space.read().await.current_index.is_some()
+        let video = mode == lianwall_core::config::WallMode::Video;
+        let legacy = weights.as_ref().and_then(|weights| {
+            if video {
+                &weights.video
+            } else {
+                &weights.image
             }
-            lianwall_core::config::WallMode::Image => {
-                state.image_space.read().await.current_index.is_some()
-            }
-        };
-
-        if has_current {
-            // 恢复上次的壁纸：发送 SetWallpaper 命令
-            let path = match mode {
-                lianwall_core::config::WallMode::Video => {
-                    let space = state.video_space.read().await;
-                    space
-                        .current_index
-                        .and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
-                }
-                lianwall_core::config::WallMode::Image => {
-                    let space = state.image_space.read().await;
-                    space
-                        .current_index
-                        .and_then(|idx| space.items.get(idx).map(|i| i.path.clone()))
-                }
-            };
-
-            if let Some(path) = path {
+            .current_path
+            .as_deref()
+        });
+        let mut restored = false;
+        if let Some(path) = state.library.restore_path(video, legacy).await {
+            if path.is_file() {
                 tracing::info!("Restoring last wallpaper: {:?}", path);
-                let (response_tx, _) = tokio::sync::oneshot::channel();
-                let _ = cmd_queue
+                let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+                if cmd_queue
                     .sender()
                     .send(command::CommandMsg {
                         request: lianwall_core::socket::Request::SetWallpaper { path },
                         response_tx,
                     })
-                    .await;
+                    .await
+                    .is_ok()
+                {
+                    restored = matches!(response_rx.await, Ok(lianwall_core::socket::Response::Ok));
+                }
             }
-        } else {
+        }
+        if !restored {
             // 没有上次记录，抽一张新的
-            tracing::info!("No previous wallpaper, selecting new one");
+            tracing::info!("No restorable wallpaper, selecting a rotation candidate");
             let (response_tx, _) = tokio::sync::oneshot::channel();
             let _ = cmd_queue
                 .sender()
